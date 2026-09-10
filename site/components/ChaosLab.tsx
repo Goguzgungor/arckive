@@ -18,7 +18,7 @@ export default function ChaosLab() {
   const [log, setLog] = useState<LogLine[]>([
     {
       t: "t+0.0s",
-      text: "✓ usdc-arc · phase=Live · cursor=head · lag=0 · gaps=0",
+      text: "usdc-arc · phase=Live · cursor=head · lag=0 · gaps=0",
       cls: "ok",
     },
   ]);
@@ -47,7 +47,7 @@ export default function ChaosLab() {
             const nc = lag > 1 ? c + Math.min(lag, 4) : nh;
             if (lag > 1 && nc >= nh && catchingUp.current) {
               catchingUp.current = false;
-              push("✓ caught up — cursor = head, lag 0, gaps 0", "ok");
+              push("caught up — cursor = head, lag 0, gaps 0", "ok");
               // heal the pool quietly so the demo can run again
               setTimeout(() => {
                 setPrimary("up");
@@ -81,7 +81,7 @@ export default function ChaosLab() {
     later(() => push("circuit open for rpc-primary.arc — rotating pool", "warn"), 900);
     later(() => {
       setBackup("up");
-      push("failover → rpc-backup.arc (chainId ✓ · head advancing ✓)", "ok");
+      push("failover → rpc-backup.arc (chainId ok · head advancing)", "ok");
       catchingUp.current = true;
     }, 2100);
   };
@@ -105,82 +105,80 @@ export default function ChaosLab() {
   const lag = head - cursor;
 
   return (
-    <div className="term chaos-panel">
-      <div className="term-bar">
-        <span className="term-dot" />
-        <span className="term-dot" />
-        <span className="term-dot" />
-        <span className="term-title">chaos lab — try to lose data</span>
-        <span className="status-live term-title" style={{ marginLeft: "auto" }}>
-          <span className="pulse-dot" />
+    <div className="chaos">
+      <div className="chaos-head">
+        <b>Chaos lab — try to lose data</b>
+        <span className="simulated">
+          <span className="dot on" />
           simulated
         </span>
       </div>
-      <div className="term-body">
-        <div className="chaos-top">
-          <span className={`chip ${primary === "up" ? "up" : "down"}`}>
-            <span className="led" />
-            rpc-primary.arc
-          </span>
-          <span className={`chip ${backup === "up" ? "up" : "standby"}`}>
-            <span className="led" />
-            rpc-backup.arc
-          </span>
-          <span className={`chip ${worker === "up" ? "up" : "down"}`}>
-            <span className="led" />
-            worker pod
-          </span>
-        </div>
 
-        <div className="chaos-stats">
-          <div className="stat">
-            <div className="k">chain head</div>
-            <div className="v">{fmt(head)}</div>
-          </div>
-          <div className="stat">
-            <div className="k">cursor</div>
-            <div className="v">{fmt(cursor)}</div>
-          </div>
-          <div className="stat">
-            <div className="k">lag</div>
-            <div className={`v ${lag > 0 ? "amber" : "green"}`}>{fmt(lag)}</div>
-          </div>
-          <div className="stat">
-            <div className="k">gaps</div>
-            <div className="v green">0</div>
-          </div>
-        </div>
+      <div className="chips">
+        <span className={`chip ${primary === "up" ? "up" : "down"}`}>
+          <span className="led" />
+          rpc-primary.arc
+        </span>
+        <span className={`chip ${backup === "up" ? "up" : "standby"}`}>
+          <span className="led" />
+          rpc-backup.arc
+        </span>
+        <span className={`chip ${worker === "up" ? "up" : "down"}`}>
+          <span className="led" />
+          worker pod
+        </span>
+      </div>
 
-        <div className="chaos-log" ref={logBox}>
-          {log.map((l, i) => (
-            <div key={i} className={l.cls}>
-              <span className="ts">{l.t}</span>
-              {l.text}
-            </div>
-          ))}
+      <div className="tiles">
+        <div className="tile">
+          <small>chain head</small>
+          <b>{fmt(head)}</b>
         </div>
+        <div className="tile">
+          <small>cursor</small>
+          <b>{fmt(cursor)}</b>
+        </div>
+        <div className="tile">
+          <small>lag</small>
+          <b className={lag > 0 ? "warn" : "ok"}>{fmt(lag)}</b>
+        </div>
+        <div className="tile">
+          <small>gaps</small>
+          <b className="ok">0</b>
+        </div>
+      </div>
 
-        <div className="chaos-controls">
-          <button
-            type="button"
-            className="chaos-btn"
-            onClick={killRpc}
-            disabled={busy !== null || primary === "down"}
-          >
-            ⚡ kill primary rpc
-          </button>
-          <button
-            type="button"
-            className="chaos-btn"
-            onClick={crashWorker}
-            disabled={busy !== null}
-          >
-            ☠ crash worker pod
-          </button>
-          <span className="invariant">
-            the invariant: <b>gaps stay 0</b>
-          </span>
-        </div>
+      <div className="chaos-controls">
+        <button
+          type="button"
+          className="chaos-btn"
+          onClick={killRpc}
+          disabled={busy !== null || primary === "down"}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+          Kill primary RPC
+        </button>
+        <button
+          type="button"
+          className="chaos-btn"
+          onClick={crashWorker}
+          disabled={busy !== null}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+          Delete worker pod
+        </button>
+        <span className="invariant">
+          the invariant: <b>gaps stay 0</b>
+        </span>
+      </div>
+
+      <div className="log-box" ref={logBox}>
+        {log.map((l, i) => (
+          <div key={i} className={`log ${l.cls ?? ""}`}>
+            <span className="ts">{l.t}</span>
+            <span>{l.text}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -1,0 +1,399 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;700;800&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #000000; color: #ffffff; font-family: "Public Sans", "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    a { color: #ffffff; } a:hover { color: #fbcd83; }
+    h1, h2, h3 { margin: 0; color: #ffffff; font-weight: 700; }
+    p { margin: 0; }
+    code { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 0.92em; color: #ffffff; background: #1a1a1a; padding: 1px 6px; border-radius: 4px; }
+    pre { margin: 0; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.7; color: #ffffff; white-space: pre; overflow-x: auto; }
+    .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px; }
+    .util a { font-size: 14px; color: #d6d6d6; text-decoration: none; }
+    .util a:hover { color: #ffffff; }
+    .nav a { font-size: 16px; color: #ffffff; text-decoration: none; }
+    .btn { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-size: 15px; font-weight: 700; padding: 11px 18px; border-radius: 5px; background: #fbcd83; color: #000000; white-space: nowrap; }
+    .btn:hover { background: #ffd993; color: #000000; }
+    .btn-line { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-size: 15px; font-weight: 700; padding: 10px 18px; border-radius: 5px; border: 1px solid #ffffff; color: #ffffff; white-space: nowrap; }
+    .btn-line:hover { background: #1a1a1a; color: #ffffff; }
+    .sec-label { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #a3a3a3; }
+    .sec-no { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: #fbcd83; }
+    .lede { font-size: 18px; line-height: 1.55; color: #d6d6d6; max-width: 66ch; }
+    .tab { font-size: 14px; font-weight: 700; padding: 7px 14px; border-radius: 5px; color: #ffffff; border: 1px solid #ffffff; white-space: nowrap; }
+    .tab.on { background: #ffffff; color: #000000; }
+    .step { background: #1a1a1a; border-radius: 5px; padding: 22px 22px 24px; display: flex; flex-direction: column; gap: 12px; }
+    .step h3 { font-size: 20px; line-height: 1.25; }
+    .step p { font-size: 15px; color: #a3a3a3; line-height: 1.5; }
+    .code { background: #000000; border-radius: 5px; padding: 14px 16px; overflow-x: auto; }
+    .k { color: #fbcd83; } .s { color: #3ecf8e; } .c { color: #a3a3a3; }
+    .node { background: #000000; border-radius: 5px; padding: 10px 14px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; text-align: center; color: #ffffff; }
+    .node.hot { background: #fbcd83; color: #000000; font-weight: 700; }
+    .link { font-size: 13px; color: #a3a3a3; text-align: center; }
+    .row { display: flex; justify-content: space-between; gap: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; padding: 7px 0; border-top: 1px solid #2a2a2a; }
+    .row b { color: #3ecf8e; font-weight: 700; }
+    .cover { width: 150px; height: 210px; border-radius: 3px; padding: 14px 12px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; flex-shrink: 0; }
+    .cover .t { font-size: 17px; font-weight: 800; line-height: 1.15; word-break: break-all; }
+    .cover .s { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.75; }
+    .book { display: flex; flex-direction: column; gap: 8px; width: 150px; flex-shrink: 0; }
+    .book b { font-size: 16px; font-weight: 700; line-height: 1.25; }
+    .book span { font-size: 11px; color: #a3a3a3; line-height: 1.45; }
+    .card { background: #1a1a1a; border-radius: 5px; padding: 18px 20px; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .badge { width: 96px; height: 60px; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #000000; }
+    .badge small { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+    .badge b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .card h3 { font-size: 19px; line-height: 1.25; }
+    .card .meta { font-size: 14px; color: #a3a3a3; margin-top: 6px; }
+    .mech { padding: 14px 0; border-top: 1px solid #2a2a2a; display: flex; flex-direction: column; gap: 4px; }
+    .mech b { font-size: 17px; font-weight: 700; }
+    .mech p { font-size: 15px; color: #a3a3a3; }
+    .tile { background: #1a1a1a; border-radius: 5px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+    .tile small { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #a3a3a3; }
+    .tile b { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 17px; font-weight: 700; }
+    .chaos-btn { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; padding: 9px 14px; border-radius: 5px; background: #fb9688; color: #000000; white-space: nowrap; }
+    .log { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; padding: 6px 0; border-top: 1px solid #2a2a2a; }
+    .log .t { color: #a3a3a3; }
+    .ok { color: #3ecf8e; } .warn { color: #fbcd83; } .err { color: #fb9688; } .dim { color: #a3a3a3; }
+    .stat b { display: block; font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .stat span { display: block; font-size: 15px; color: #d6d6d6; margin-top: 12px; line-height: 1.5; }
+    .hours td { padding: 9px 0; font-size: 15px; border-bottom: 1px solid #2a2a2a; }
+    .hours th { text-align: left; padding: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #a3a3a3; border-bottom: 1px solid #ffffff; }
+    .hours .num { font-variant-numeric: tabular-nums; text-align: right; }
+    .compare { width: 100%; border-collapse: collapse; min-width: 720px; }
+    .compare th { text-align: left; padding: 12px 16px; font-size: 14px; font-weight: 700; border-bottom: 1px solid #ffffff; }
+    .compare td { padding: 14px 16px; font-size: 15px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
+    .compare td.they { color: #a3a3a3; }
+    .compare .us { background: #1a1a1a; }
+    .compare th.us { color: #fbcd83; }
+    .compare td.us { font-weight: 700; }
+    .foot a { color: #d6d6d6; text-decoration: none; font-size: 15px; }
+    .foot a:hover { color: #ffffff; }
+    .hide-m { display: flex; }
+    @media (max-width: 900px) {
+      .wrap { padding-left: 20px !important; padding-right: 20px !important; }
+      .hide-m { display: none !important; }
+      .g2, .g3, .g4, .g12 { grid-template-columns: minmax(0, 1fr) !important; }
+      .hero-h1 { font-size: 36px !important; }
+      .search-row { flex-wrap: wrap; height: auto !important; padding: 16px 0 !important; }
+      .search-row .q { width: 100%; }
+      .search-row .hint { border-left: 0 !important; padding-left: 0 !important; }
+      .scroll-x { overflow-x: auto !important; }
+      .shelf-head { flex-direction: column; align-items: flex-start !important; }
+      .stat b { font-size: 36px; }
+      .foot-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 24px !important; }
+      .foot-bottom { flex-direction: column; gap: 6px; }
+      .cmd { flex-direction: column; align-items: stretch !important; }
+      .cmd code { white-space: normal !important; word-break: break-all; }
+    }
+  </style>
+</helmet>
+
+<div style="background: #000000;">
+
+  <!-- utility row -->
+  <div class="util" style="border-bottom: 1px solid #2a2a2a;">
+    <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; height: 40px;">
+      <span style="font-size: 14px; color: #a3a3a3;">Kubernetes-native event indexer for Arc</span>
+      <div style="display: flex; align-items: center; gap: 22px;">
+        <a class="hide-m" href="#status">Status</a>
+        <a class="hide-m" href="#docs">Documentation</a>
+        <a class="hide-m" href="https://github.com/Goguzgungor/arclight">GitHub</a>
+        <a class="hide-m" href="#cta">Install</a>
+        <span style="font-size: 12px; color: #d6d6d6; border: 1px solid #2a2a2a; border-radius: 5px; padding: 2px 8px;">v1alpha1</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- nav -->
+  <div class="nav" id="top">
+    <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; height: 72px;">
+      <a href="#top" style="display: flex; align-items: center; gap: 12px; text-decoration: none;">
+        <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22" fill="none" stroke="#2a2a2a" stroke-width="6"></circle><path d="M32 10 A22 22 0 0 1 51 21" fill="none" stroke="#5fa5ef" stroke-width="6" stroke-linecap="round"></path><circle cx="51" cy="21" r="5" fill="#ffffff"></circle></svg>
+        <span style="font-size: 22px; font-weight: 800; letter-spacing: -0.01em; color: #ffffff;">Arckive</span>
+      </a>
+      <div style="display: flex; align-items: center; gap: 28px;">
+        <a class="hide-m" href="#how">How it works</a>
+        <a class="hide-m" href="#reliability">Reliability</a>
+        <a class="hide-m" href="#benchmarks">Benchmarks</a>
+        <a class="hide-m" href="#compare">Compare</a>
+        <a class="btn" href="#cta" style="padding: 9px 16px; font-size: 14px;">Get started</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- catalogue search row -->
+  <div style="background: #111111; border-top: 1px solid #2a2a2a; border-bottom: 1px solid #2a2a2a;">
+    <div class="wrap search-row" style="display: flex; align-items: center; gap: 16px; height: 84px;">
+      <div class="q" style="flex-grow: 1; display: flex; align-items: center; gap: 12px; background: #1a1a1a; border-radius: 5px; padding: 0 16px; height: 48px; min-width: 0;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <span class="mono" style="font-size: 14px; color: #d6d6d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">SELECT "from", "to", value FROM usdc_transfer WHERE value &gt; 1000000000 ORDER BY block_number DESC;</span>
+      </div>
+      <span style="font-size: 18px; font-weight: 700; padding: 0 6px;">Search</span>
+      <span class="hint" style="font-size: 13px; color: #a3a3a3; white-space: nowrap; border-left: 1px solid #2a2a2a; padding-left: 16px;">Plain SQL · your Postgres · no API in between</span>
+    </div>
+  </div>
+
+  <!-- hero -->
+  <div class="wrap g12" style="padding: 64px 40px 56px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 64px; align-items: center;">
+    <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 22px;">
+      <h1 class="hero-h1" style="font-size: 48px; line-height: 1.1; letter-spacing: -0.01em; max-width: 16ch;">Your chain events, in your own Postgres.</h1>
+      <p style="font-size: 20px; line-height: 1.5; color: #d6d6d6; max-width: 52ch;">Give it an ABI, a contract address, and an RPC. Arckive streams every on-chain event into your own PostgreSQL — <b style="color: #ffffff; font-weight: 700;">one table per event, reliable and gap-free</b> — from a single YAML manifest.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px;">
+        <a class="btn" href="#how">See the one manifest</a>
+        <a class="btn-line" href="#reliability">Try to break it</a>
+      </div>
+      <p style="font-size: 13px; color: #a3a3a3;">Runs in your cluster · Apache-2.0 · arckive.org/v1alpha1</p>
+    </div>
+
+    <div style="background: #1a1a1a; border-radius: 5px; padding: 20px 22px 14px;">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: #3ecf8e; display: inline-block;"></span>
+        <span style="font-size: 14px; font-weight: 700;">Open now · usdc-arc is Live</span>
+        <span class="mono" style="font-size: 12px; color: #a3a3a3; margin-left: auto;">kubectl get indexers</span>
+      </div>
+      <div class="scroll-x">
+        <table class="hours" style="width: 100%; border-collapse: collapse;">
+          <thead><tr><th>Name</th><th>Phase</th><th class="num">Current</th><th class="num">Head</th><th class="num">Lag</th></tr></thead>
+          <tbody>
+            <tr><td style="font-weight: 700;">usdc-arc</td><td style="color: #3ecf8e;">Live</td><td class="num">8,123,456</td><td class="num">8,123,456</td><td class="num">0</td></tr>
+            <tr><td style="font-weight: 700;">eurc-arc</td><td style="color: #3ecf8e;">Live</td><td class="num">8,123,456</td><td class="num">8,123,456</td><td class="num">0</td></tr>
+            <tr><td style="font-weight: 700;">dex-pool</td><td style="color: #fbcd83;">Backfilling</td><td class="num">8,101,338</td><td class="num">8,123,456</td><td class="num">22,118</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size: 12px; color: #a3a3a3; margin-top: 10px;">Status is patched onto the resource itself. No dashboard to log into.</p>
+    </div>
+  </div>
+
+  <!-- notice: the gap -->
+  <div style="background: #fbcd83; color: #000000;">
+    <div class="wrap" style="display: flex; gap: 18px; align-items: baseline; padding: 16px 40px; font-size: 15px; line-height: 1.5;">
+      <span style="font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;">The gap</span>
+      <span>Dune is delayed and rate-limited. Raw logs leave reorgs and back-fill to you. The Graph means subgraphs and heavy ops. There was no declarative path to your events, in your Postgres, in plain SQL.</span>
+    </div>
+  </div>
+
+  <!-- 01 how it works -->
+  <div id="how" class="wrap" style="padding: 64px 40px 56px; display: flex; flex-direction: column; gap: 26px;">
+    <div style="display: flex; align-items: baseline; gap: 14px;"><span class="sec-no">01</span><span class="sec-label">How it works</span></div>
+    <h2 style="font-size: 36px; line-height: 1.1;">Declare it. The operator does the rest.</h2>
+    <p class="lede">One <code>Indexer</code> resource describes what you want. A Kubernetes operator keeps it true — database, schema, listener, optional read API.</p>
+
+    <div class="g3" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 8px;">
+      <div class="step">
+        <span class="sec-label" style="color: #fbcd83;">Step 1</span>
+        <h3>Write one manifest</h3>
+        <p>Contracts, ABI ref, RPC pool, storage mode — the whole setup.</p>
+        <div class="code"><pre><span class="k">kind</span>: Indexer
+<span class="k">metadata</span>: { <span class="k">name</span>: usdc-arc }
+<span class="k">spec</span>:
+  <span class="k">rpc</span>: <span class="c"># health-checked failover</span>
+    - <span class="s">https://rpc.arc.example</span>
+  <span class="k">storage</span>: { <span class="k">mode</span>: Embedded }
+  <span class="k">contracts</span>:
+    - <span class="k">address</span>: <span class="s">"0xA0b8…eB48"</span>
+      <span class="k">abi</span>: { <span class="k">configMapRef</span>: usdc-abi }
+      <span class="k">startBlock</span>: 0</pre></div>
+      </div>
+
+      <div class="step">
+        <span class="sec-label" style="color: #fbcd83;">Step 2</span>
+        <h3>The operator provisions</h3>
+        <p>A reconcile loop turns the spec into running parts — and heals them.</p>
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
+          <div class="node">Indexer CR — 1 YAML</div>
+          <div class="link">↓ reconciles</div>
+          <div class="node hot">Arckive Operator</div>
+          <div class="link">↓ provisions</div>
+          <div class="node">postgres · schema · worker · read API</div>
+        </div>
+        <p style="color: #d6d6d6; margin-top: 4px;">Pod dies? Config drifts? It converges back.</p>
+      </div>
+
+      <div class="step">
+        <span class="sec-label" style="color: #fbcd83;">Step 3</span>
+        <h3>Query plain SQL</h3>
+        <p>Each event is a table in your Postgres. No API between you and your data.</p>
+        <div class="code"><pre><span class="c">-- one table per event</span>
+<span class="k">SELECT</span> "from", "to", value
+<span class="k">FROM</span> usdc_transfer
+<span class="k">WHERE</span> value &gt; 1000000000
+<span class="k">ORDER BY</span> block_number <span class="k">DESC</span>;</pre>
+          <div style="margin-top: 10px;">
+            <div class="row"><span>0x3786…39b3 <span class="dim">→</span> 0xdbcc…38db</span><b>3,020.95</b></div>
+            <div class="row"><span>0xb51a…159a <span class="dim">→</span> 0xa7b3…5993</span><b>3,454.57</b></div>
+            <div class="row"><span>0x9f21…c04a <span class="dim">→</span> 0x53d0…b7da</span><b>60,884.96</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size: 14px; color: #a3a3a3;">ABI in → tables out · empty events list = every event · <code>startBlock: 0</code> backfills from genesis</p>
+  </div>
+
+  <!-- on the shelves now -->
+  <div style="background: #111111; border-top: 1px solid #2a2a2a; border-bottom: 1px solid #2a2a2a;">
+    <div class="wrap" style="padding: 48px 40px 52px; display: flex; flex-direction: column; gap: 22px;">
+      <div class="shelf-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px;">
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <h2 style="font-size: 32px; line-height: 1.1;">On the shelves now</h2>
+          <p style="font-size: 15px; color: #a3a3a3;">Schema <code style="background: #000000;">idx_usdc_arc</code> · one table per event, typed from the ABI, unique on (block, tx, log).</p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <span class="tab on">Event tables</span>
+          <span class="tab">Views</span>
+          <span class="tab">Control tables</span>
+        </div>
+      </div>
+      <div class="scroll-x" style="display: flex; gap: 24px; overflow: hidden; padding-bottom: 4px;">
+        <div class="book"><div class="cover" style="background: #fbcd83; color: #000000;"><span class="t">usdc_<br>transfer</span><span class="s">idx_usdc_arc</span></div><b>usdc_transfer</b><span>Transfer(address,address,uint256)<br>8,123,456 rows</span></div>
+        <div class="book"><div class="cover" style="background: #fb9688; color: #000000;"><span class="t">usdc_<br>approval</span><span class="s">idx_usdc_arc</span></div><b>usdc_approval</b><span>Approval(address,address,uint256)<br>1,904,211 rows</span></div>
+        <div class="book"><div class="cover" style="background: #085c58; color: #ffffff;"><span class="t">usdc_<br>mint</span><span class="s">idx_usdc_arc</span></div><b>usdc_mint</b><span>Mint(address,uint256)<br>41,208 rows</span></div>
+        <div class="book"><div class="cover" style="background: #dac9bc; color: #000000;"><span class="t">usdc_<br>burn</span><span class="s">idx_usdc_arc</span></div><b>usdc_burn</b><span>Burn(address,uint256)<br>37,990 rows</span></div>
+        <div class="book"><div class="cover" style="background: #5fa5ef; color: #000000;"><span class="t">usdc_<br>blacklisted</span><span class="s">idx_usdc_arc</span></div><b>usdc_blacklisted</b><span>Blacklisted(address)<br>112 rows</span></div>
+        <div class="book"><div class="cover" style="background: #111111; color: #d6d6d6; border: 1px dashed #4a4a4a;"><span class="t">_cursor<br>_meta<br>_dead_letter</span><span class="s">control</span></div><b>Control tables</b><span>Checkpoint, schema version, undecodable logs (0)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 02 reliability -->
+  <div id="reliability" class="wrap" style="padding: 64px 40px 56px; display: flex; flex-direction: column; gap: 26px;">
+    <div style="display: flex; align-items: baseline; gap: 14px;"><span class="sec-no">02</span><span class="sec-label">Reliability</span></div>
+    <h2 style="font-size: 36px; line-height: 1.1;">Even if the network blips, no data is lost.</h2>
+
+    <div class="g12" style="display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 48px; align-items: start; margin-top: 8px;">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <p class="lede">A poll-based backbone chosen for loss-free, self-healing ingestion — not just latency. Don’t take our word for it: break something.</p>
+        <div style="display: flex; flex-direction: column;">
+          <div class="mech"><b>Cursor + checkpoint</b><p>The last processed block lives in Postgres. After any crash it resumes exactly there.</p></div>
+          <div class="mech"><b>Gap-free backfill</b><p>Event inserts and cursor advance share one transaction — a commit, or nothing.</p></div>
+          <div class="mech"><b>Reorg-safe on Arc</b><p>Indexes to the <code>finalized</code> tag — BFT finality means finalized blocks never reorg.</p></div>
+          <div class="mech" style="border-bottom: 1px solid #2a2a2a;"><b>RPC failover</b><p>A health-checked pool with rotation, backoff, circuit-breaker. A blip never becomes a gap.</p></div>
+        </div>
+      </div>
+
+      <!-- chaos lab -->
+      <div style="background: #1a1a1a; border-radius: 5px; padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <span style="font-size: 16px; font-weight: 700;">Chaos lab — try to lose data</span>
+          <span style="font-size: 12px; color: #a3a3a3; display: inline-flex; align-items: center; gap: 6px;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #3ecf8e; display: inline-block;"></span>simulated</span>
+        </div>
+        <div class="g3" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+          <div class="tile" style="background: #000000;"><small>Head</small><b>8,123,471</b></div>
+          <div class="tile" style="background: #000000;"><small>Cursor</small><b>8,123,471</b></div>
+          <div class="tile" style="background: #000000;"><small>Lag · gaps</small><b class="ok">0 · 0</b></div>
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <span class="chaos-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"></path></svg>Kill primary RPC</span>
+          <span class="chaos-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"></path></svg>Delete worker pod</span>
+        </div>
+        <div style="display: flex; flex-direction: column;">
+          <div class="log"><span class="t">t+0.0s</span><span class="ok">usdc-arc · phase=Live · cursor=head · lag=0 · gaps=0</span></div>
+          <div class="log"><span class="t">t+3.9s</span><span class="err">rpc-primary.arc: timeout — retry 1/3 · 2/3 · 3/3 failed</span></div>
+          <div class="log"><span class="t">t+4.8s</span><span class="warn">circuit open for rpc-primary.arc — rotating pool</span></div>
+          <div class="log"><span class="t">t+6.0s</span><span class="ok">failover → rpc-backup.arc (chainId ok · head advancing)</span></div>
+          <div class="log"><span class="t">t+9.1s</span><span class="err">pod arckive-worker-usdc-arc-7d4f9 deleted (chaos)</span></div>
+          <div class="log"><span class="t">t+10.2s</span><span class="dim">reconcile: desired replicas 1, observed 0 — creating pod</span></div>
+          <div class="log"><span class="t">t+11.7s</span><span class="ok">worker up — resume from checkpoint cursor (kept in postgres)</span></div>
+          <div class="log" style="border-bottom: 1px solid #2a2a2a;"><span class="t">t+14.3s</span><span class="ok">caught up — cursor = head, lag 0, gaps 0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- latest events -->
+  <div style="background: #111111; border-top: 1px solid #2a2a2a; border-bottom: 1px solid #2a2a2a;">
+    <div class="wrap" style="padding: 48px 40px 52px; display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 16px;">
+        <h2 style="font-size: 32px; line-height: 1.1;">Latest events</h2>
+        <a href="#how" style="font-size: 14px; font-weight: 700; white-space: nowrap;">Open in SQL</a>
+      </div>
+      <div class="g4" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;">
+        <div class="card" style="grid-template-columns: minmax(0, 1fr); gap: 12px;"><div class="badge" style="background: #fbcd83;"><small>block</small><b>8,123,456</b></div><div><h3>Transfer · 3,020.95 USDC</h3><div class="meta">0x3786…39b3 → 0xdbcc…38db<br>usdc_transfer · 395 ms after close</div></div></div>
+        <div class="card" style="grid-template-columns: minmax(0, 1fr); gap: 12px;"><div class="badge" style="background: #fb9688;"><small>block</small><b>8,123,455</b></div><div><h3>Transfer · 3,454.57 USDC</h3><div class="meta">0xb51a…159a → 0xa7b3…5993<br>usdc_transfer · 402 ms after close</div></div></div>
+        <div class="card" style="grid-template-columns: minmax(0, 1fr); gap: 12px;"><div class="badge" style="background: #dac9bc;"><small>block</small><b>8,123,454</b></div><div><h3>Approval · 60,884.96 USDC</h3><div class="meta">0x9f21…c04a → 0x53d0…b7da<br>usdc_approval · 388 ms after close</div></div></div>
+        <div class="card" style="grid-template-columns: minmax(0, 1fr); gap: 12px;"><div class="badge" style="background: #5fa5ef;"><small>block</small><b>8,123,453</b></div><div><h3>Transfer · 212.40 USDC</h3><div class="meta">0x1c40…8e21 → 0x77aa…0f3c<br>usdc_transfer · 391 ms after close</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 03 benchmarks -->
+  <div id="benchmarks" class="wrap" style="padding: 64px 40px 56px; display: flex; flex-direction: column; gap: 26px;">
+    <div style="display: flex; align-items: baseline; gap: 14px;"><span class="sec-no">03</span><span class="sec-label">Benchmarks</span></div>
+    <h2 style="font-size: 36px; line-height: 1.1;">Measured, not promised.</h2>
+    <p class="lede">Every number comes from running the real worker against the public Arc testnet and reading only its production surface — Postgres rows and <code>/metrics</code>. Reproduce it with <code>pnpm bench</code>.</p>
+    <div class="g3" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; border-top: 1px solid #ffffff; padding-top: 26px; margin-top: 8px;">
+      <div class="stat"><span style="margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #a3a3a3;">block → SQL, p50</span><b>395 ms</b><span>Block close to queryable row on Arc testnet — live USDC traffic, WebSocket <code>newHeads</code> listening, not polling. Even p99 stays under a second (0.97 s).</span></div>
+      <div class="stat"><span style="margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #a3a3a3;">backfill catch-up</span><b>92.6 blocks/s</b><span>5,107 blocks of real USDC history caught up in 55 seconds over a public RPC — about 48× faster than the chain. Zero RPC errors.</span></div>
+      <div class="stat"><span style="margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #a3a3a3;">burst ingest</span><b>2,628 events/s</b><span>The decode + transactional-SQL write ceiling, measured with WAN latency out of the picture.</span></div>
+    </div>
+    <p style="font-size: 14px; color: #a3a3a3; line-height: 1.6; max-width: 90ch;">The budget is published too: the head signal is consumed straight from the <code>newHeads</code> payload and one parallel <code>eth_getLogs</code> round-trip later the row is committed. The engine itself adds about 40 ms; the rest belongs to how fast the RPC announces blocks, and it shrinks further with a cluster-local Arc node. Full methodology and raw results: <a href="/benchmarks.html">benchmark report</a> · <a href="https://github.com/Goguzgungor/arclight/tree/main/docs/benchmarks">docs/benchmarks</a>.</p>
+  </div>
+
+  <!-- 04 compare -->
+  <div style="background: #111111; border-top: 1px solid #2a2a2a; border-bottom: 1px solid #2a2a2a;">
+    <div id="compare" class="wrap" style="padding: 56px 40px 56px; display: flex; flex-direction: column; gap: 26px;">
+      <div style="display: flex; align-items: baseline; gap: 14px;"><span class="sec-no">04</span><span class="sec-label">Compare</span></div>
+      <h2 style="font-size: 36px; line-height: 1.1;">A specific combination nobody else offers.</h2>
+      <div class="scroll-x" style="overflow: hidden; margin-top: 8px;">
+        <table class="compare">
+          <thead><tr><th></th><th>Dune</th><th>The Graph</th><th>Raw RPC</th><th class="us">Arckive</th></tr></thead>
+          <tbody>
+            <tr><td>Data in your own DB</td><td class="they">No</td><td class="they">Via graph-node</td><td class="they">If you build it</td><td class="us">Yes</td></tr>
+            <tr><td>Plain SQL access</td><td class="they">Dune SQL only</td><td class="they">GraphQL</td><td class="they">Raw JSON</td><td class="us">Yes</td></tr>
+            <tr><td>Reorg &amp; gap handling</td><td class="they">Theirs</td><td class="they">Yes</td><td class="they">On you</td><td class="us">Built-in</td></tr>
+            <tr><td>Setup effort</td><td class="they">Low</td><td class="they">Med–high</td><td class="they">High</td><td class="us">One YAML</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size: 15px; color: #d6d6d6; line-height: 1.55; max-width: 80ch;"><b style="color: #ffffff;">Honest positioning:</b> Dune stays great for ad-hoc analytics; The Graph for hosted multi-chain. Arckive is for teams that want their own Postgres, plain SQL, and K8s-native ops — together.</p>
+    </div>
+  </div>
+
+  <!-- get started -->
+  <div id="cta" class="wrap" style="padding: 64px 40px 64px; display: flex; flex-direction: column; gap: 16px;">
+    <span class="sec-label">Get started</span>
+    <h2 style="font-size: 40px; line-height: 1.1;">One YAML. A running indexer.</h2>
+    <p style="font-size: 18px; color: #d6d6d6;">Runs in your cluster. Your data never leaves it.</p>
+    <div class="cmd" style="display: flex; align-items: center; gap: 12px; background: #1a1a1a; border-radius: 5px; padding: 10px 10px 10px 18px; max-width: 720px; margin-top: 8px;">
+      <code class="mono" style="background: transparent; padding: 0; font-size: 15px; color: #ffffff; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">kubectl apply -f https://arckive.org/install.yaml</code>
+      <span class="btn" style="padding: 9px 14px; font-size: 14px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1.5"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>Copy</span>
+    </div>
+    <p style="font-size: 13px; color: #a3a3a3;">Runs in your cluster · Apache-2.0 · v1alpha1</p>
+  </div>
+
+  <!-- footer -->
+  <div class="foot" style="border-top: 1px solid #2a2a2a;">
+    <div class="wrap foot-grid" style="padding: 48px 40px 24px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px;">
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <h2 style="font-size: 20px;">Arckive</h2>
+        <p style="font-size: 15px; color: #d6d6d6; line-height: 1.5;">Kubernetes-native event indexer for Arc. Your data never leaves your cluster.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <h2 style="font-size: 20px;">Product</h2>
+        <a href="#how">How it works</a><a href="#reliability">Reliability</a><a href="#benchmarks">Benchmarks</a><a href="#compare">Compare</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <h2 style="font-size: 20px;">Documentation</h2>
+        <a href="#docs">Quickstart</a><a href="#docs">Indexer resource</a><a href="#docs">Storage modes</a><a href="/benchmarks.html">Benchmark report</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <h2 style="font-size: 20px;">Contact</h2>
+        <a href="https://github.com/Goguzgungor/arclight">GitHub</a><a href="#issues">Report an issue</a><a href="#status">Service status</a>
+      </div>
+    </div>
+    <div class="wrap foot-bottom" style="padding: 16px 40px 24px; display: flex; justify-content: space-between; font-size: 12px; color: #d6d6d6; border-top: 1px solid #2a2a2a;">
+      <span>© 2026 Arckive · Apache-2.0</span>
+      <span>Kubernetes-native event indexer for Arc · v1alpha1</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

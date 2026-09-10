@@ -1,16 +1,16 @@
 import type { Metadata } from "next";
-import { Archivo, JetBrains_Mono } from "next/font/google";
+import { Public_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const archivo = Archivo({
+const publicSans = Public_Sans({
   subsets: ["latin"],
-  axes: ["wdth"],
+  weight: ["400", "500", "700", "800"],
   variable: "--font-sans",
 });
 
 const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "700"],
   variable: "--font-mono",
 });
 
@@ -31,7 +31,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
-      <body className={`${archivo.variable} ${jetbrains.variable}`}>
+      <body className={`${publicSans.variable} ${jetbrains.variable}`}>
         {children}
       </body>
     </html>

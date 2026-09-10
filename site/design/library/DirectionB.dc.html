@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+  <style>
+    body { margin: 0; background: #fbfaf6; color: #3f3f3b; font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+    a { color: #0f6b46; } a:hover { color: #0a4d32; }
+    h1, h2, h3 { margin: 0; color: #141413; }
+    p { margin: 0; }
+    .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+    .nav-link { font-size: 14.5px; font-weight: 500; color: #d6d6d0; text-decoration: none; }
+    .nav-link:hover { color: #ffffff; }
+    .record { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; padding: 18px 22px; background: #ffffff; border: 1px solid #e1dfd5; }
+    .chip { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.04em; padding: 5px 10px; border-radius: 3px; white-space: nowrap; }
+    .step { display: flex; flex-direction: column; gap: 8px; padding: 26px 0 30px; }
+  </style>
+</helmet>
+
+<div style="background: #fbfaf6;">
+  <!-- nav -->
+  <div style="background: #141413;">
+    <div style="max-width: 1200px; margin: 0 auto; padding: 0 40px; height: 64px; display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <svg width="22" height="22" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22" fill="none" stroke="#4a4a46" stroke-width="6"></circle><path d="M32 10 A22 22 0 0 1 51 21" fill="none" stroke="#3ecf8e" stroke-width="6" stroke-linecap="round"></path><circle cx="51" cy="21" r="5" fill="#ffffff"></circle></svg>
+        <span style="font-weight: 700; font-size: 16px; color: #ffffff; letter-spacing: 0.02em;">Arckive</span>
+        <span style="font-size: 14px; color: #8f8f8a;">/ catalogue</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 28px;">
+        <a class="nav-link" href="#how">How it works</a>
+        <a class="nav-link" href="#reliability">Reliability</a>
+        <a class="nav-link" href="#benchmarks">Benchmarks</a>
+        <a class="nav-link" href="#compare">Compare</a>
+        <a href="#cta" style="text-decoration: none; font-size: 14px; font-weight: 600; background: #ffffff; color: #141413; padding: 8px 16px; border-radius: 3px;">Get started</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- hero: the catalogue search -->
+  <div style="max-width: 1200px; margin: 0 auto; padding: 84px 40px 72px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px;">
+    <div class="mono" style="font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase; color: #0f6b46;">Kubernetes-native event indexer for Arc</div>
+    <h1 style="font-size: 54px; line-height: 1.08; font-weight: 600; letter-spacing: -0.02em; max-width: 18ch;">Your chain events, catalogued in your own Postgres.</h1>
+    <p style="font-size: 19px; line-height: 1.6; max-width: 58ch;">Give it an ABI, a contract address, and an RPC. Arckive streams every on-chain event into your own PostgreSQL — <strong style="color: #141413; font-weight: 600;">one table per event, reliable and gap-free</strong> — from a single YAML manifest.</p>
+
+    <div style="width: 100%; max-width: 860px; margin-top: 18px; display: flex; flex-direction: column; gap: 12px; text-align: left;">
+      <div style="display: flex; background: #ffffff; border: 2px solid #141413; border-radius: 4px; overflow: hidden;">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 0 18px; flex-grow: 1;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#141413" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <span class="mono" style="font-size: 16px; color: #141413;">SELECT "from", "to", value FROM usdc_transfer WHERE value &gt; 1000000000;</span>
+        </div>
+        <span style="background: #141413; color: #ffffff; font-weight: 600; font-size: 15px; padding: 16px 24px; white-space: nowrap;">Search the catalogue</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span class="mono" style="font-size: 12px; color: #8a8a84;">idx_usdc_arc · 8 tables · updated 395 ms ago</span>
+        <span class="mono" style="font-size: 12px; color: #8a8a84;">plain SQL · no API in between</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+        <div class="record" style="border-color: #0f6b46; box-shadow: 0 0 0 1px #0f6b46;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 20px; font-weight: 600; color: #141413;">usdc_transfer</span>
+            <span class="mono" style="font-size: 12.5px; color: #6f6f69;">Call no. idx_usdc_arc.usdc_transfer · 8,123,456 rows · Transfer(address,address,uint256)</span>
+          </div>
+          <span class="chip" style="background: #e2f3ea; color: #0f6b46;">Available · Live · lag 0</span>
+        </div>
+        <div class="record">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 20px; font-weight: 600; color: #141413;">usdc_approval</span>
+            <span class="mono" style="font-size: 12.5px; color: #6f6f69;">Call no. idx_usdc_arc.usdc_approval · 1,904,211 rows · Approval(address,address,uint256)</span>
+          </div>
+          <span class="chip" style="background: #e2f3ea; color: #0f6b46;">Available · Live</span>
+        </div>
+        <div class="record">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 20px; font-weight: 600; color: #141413;">_dead_letter</span>
+            <span class="mono" style="font-size: 12.5px; color: #6f6f69;">Call no. idx_usdc_arc._dead_letter · 0 rows · nothing failed to decode</span>
+          </div>
+          <span class="chip" style="background: #efeee8; color: #6f6f69;">Empty · good</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px;">
+      <a href="#how" style="text-decoration: none; font-size: 15px; font-weight: 600; background: #0f6b46; color: #ffffff; padding: 12px 20px; border-radius: 3px;">See the one manifest</a>
+      <a href="#reliability" style="text-decoration: none; font-size: 15px; font-weight: 600; border: 1px solid #c9c8bf; color: #141413; padding: 12px 20px; border-radius: 3px;">Try to break it</a>
+    </div>
+    <div class="mono" style="font-size: 12px; letter-spacing: 0.04em; color: #8a8a84;">runs in your cluster · apache-2.0 · arckive.org/v1alpha1</div>
+  </div>
+
+  <!-- how it works -->
+  <div id="how" style="border-top: 1px solid #e1dfd5; background: #f3f1ea;">
+    <div style="max-width: 1200px; margin: 0 auto; padding: 0 40px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px;">
+      <div class="step">
+        <span class="mono" style="font-size: 12px; letter-spacing: 0.12em; color: #0f6b46;">1 · ACQUISITION</span>
+        <h3 style="font-size: 21px; font-weight: 600;">Write one manifest</h3>
+        <p style="font-size: 15.5px; color: #6f6f69;">Contracts, ABI ref, RPC pool, storage mode — the whole setup.</p>
+      </div>
+      <div class="step">
+        <span class="mono" style="font-size: 12px; letter-spacing: 0.12em; color: #0f6b46;">2 · CATALOGUING</span>
+        <h3 style="font-size: 21px; font-weight: 600;">The operator provisions</h3>
+        <p style="font-size: 15.5px; color: #6f6f69;">A reconcile loop turns the spec into running parts — and heals them.</p>
+      </div>
+      <div class="step">
+        <span class="mono" style="font-size: 12px; letter-spacing: 0.12em; color: #0f6b46;">3 · READING ROOM</span>
+        <h3 style="font-size: 21px; font-weight: 600;">Query plain SQL</h3>
+        <p style="font-size: 15.5px; color: #6f6f69;">Each event is a table in your Postgres. No API between you and your data.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

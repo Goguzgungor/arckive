@@ -1,0 +1,254 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #f5f3ef; color: #28261b; font-family: "Hind", "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 18px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+    a { color: #1f2a5a; } a:hover { color: #0f1636; }
+    h1, h2, h3 { margin: 0; color: #28261b; font-weight: 300; }
+    p { margin: 0; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px; }
+    .util a { font-size: 14px; font-weight: 500; color: #5a5853; text-decoration: none; }
+    .util a:hover { color: #28261b; }
+    .nav a { font-size: 16px; font-weight: 500; color: #28261b; text-decoration: none; }
+    .pill-dark { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; background: #28261b; color: #fffbfb; font-size: 16px; font-weight: 500; padding: 12px 22px; border-radius: 16px; }
+    .pill-dark:hover { color: #ffffff; background: #000000; }
+    .pill-ghost { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; background: #e8e6dc; color: #28261b; font-size: 16px; font-weight: 500; padding: 12px 22px; border-radius: 16px; }
+    .pill-ghost:hover { background: #dcd9cc; color: #28261b; }
+    .task { display: flex; flex-direction: column; justify-content: space-between; gap: 18px; padding: 28px 28px 24px; border-radius: 24px; min-height: 176px; text-decoration: none; color: #28261b; }
+    .task:hover { color: #28261b; filter: brightness(0.97); }
+    .task h3 { font-size: 22px; font-weight: 500; line-height: 1.2; color: inherit; }
+    .task p { font-size: 16px; font-weight: 400; line-height: 1.45; color: inherit; opacity: 0.85; }
+    .cover { width: 150px; height: 210px; border-radius: 4px; padding: 16px 14px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 1px 0 rgba(40,38,27,0.12), 0 8px 18px -12px rgba(40,38,27,0.35); }
+    .cover .t { font-size: 17px; font-weight: 600; line-height: 1.15; word-break: break-all; }
+    .cover .s { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+    .book { display: flex; flex-direction: column; gap: 10px; width: 150px; }
+    .book b { font-size: 16px; font-weight: 700; color: #28261b; line-height: 1.25; }
+    .book span { font-size: 13px; color: #5a5853; line-height: 1.4; }
+    .chip { font-size: 14px; font-weight: 500; padding: 6px 14px; border-radius: 999px; border: 1px solid #28261b; color: #28261b; }
+    .chip.on { background: #28261b; color: #fffbfb; }
+    .ev { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 22px; align-items: center; padding: 18px 0; border-top: 1px solid #dcd9cc; }
+    .badge { width: 104px; height: 64px; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; box-sizing: border-box; }
+    .badge small { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+    .badge b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .ev h3 { font-size: 20px; font-weight: 500; line-height: 1.25; }
+    .ev .meta { font-size: 14px; color: #5a5853; margin-top: 2px; }
+    .ev .right { font-size: 14px; font-weight: 500; color: #5a5853; white-space: nowrap; }
+    .stat b { display: block; font-size: 52px; font-weight: 300; line-height: 1; color: #28261b; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .stat span { display: block; font-size: 15px; color: #5a5853; margin-top: 10px; }
+    .hours td { padding: 10px 0; font-size: 16px; border-bottom: 1px solid #dcd9cc; vertical-align: top; }
+    .hours th { text-align: left; padding: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5a5853; border-bottom: 1px solid #28261b; }
+    .hours .num { font-variant-numeric: tabular-nums; text-align: right; }
+    .foot a { color: #d6d3ca; text-decoration: none; font-size: 15px; }
+    .foot a:hover { color: #ffffff; }
+  </style>
+</helmet>
+
+<div style="background: #f5f3ef;">
+
+  <!-- notice strip (service alert pattern) -->
+  <div style="background: #1f2a5a; color: #fffbfb;">
+    <div class="wrap" style="display: flex; align-items: center; gap: 16px; min-height: 44px; font-size: 14px;">
+      <span style="font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px;">Notice</span>
+      <span style="opacity: 0.92;">Dune is delayed and rate-limited. Raw logs leave reorgs and back-fill to you. The Graph means subgraphs and heavy ops. There was no declarative path to your events, in your Postgres, in plain SQL.</span>
+    </div>
+  </div>
+
+  <!-- utility row -->
+  <div class="util" style="background: #fffbfb; border-bottom: 1px solid #e8e6dc;">
+    <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; height: 40px;">
+      <span style="font-size: 14px; color: #5a5853;">Kubernetes-native event indexer for Arc</span>
+      <div style="display: flex; align-items: center; gap: 22px;">
+        <a href="#status">Status</a>
+        <a href="#docs">Documentation</a>
+        <a href="#github">GitHub</a>
+        <a href="#install">Install</a>
+        <span style="font-size: 13px; color: #5a5853; border: 1px solid #dcd9cc; border-radius: 999px; padding: 2px 10px;">v1alpha1</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- main nav -->
+  <div class="nav" style="background: #fffbfb;">
+    <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; height: 76px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22" fill="none" stroke="#dcd9cc" stroke-width="6"></circle><path d="M32 10 A22 22 0 0 1 51 21" fill="none" stroke="#1f2a5a" stroke-width="6" stroke-linecap="round"></path><circle cx="51" cy="21" r="5" fill="#28261b"></circle></svg>
+        <span style="font-size: 26px; font-weight: 500; letter-spacing: -0.01em; color: #28261b;">Arckive</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 30px;">
+        <a href="#how">How it works</a>
+        <a href="#reliability">Reliability</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#compare">Compare</a>
+        <a class="pill-dark" href="#cta" style="padding: 10px 18px;">Get started</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- opening-hours line -->
+  <div style="border-top: 1px solid #e8e6dc; border-bottom: 1px solid #e8e6dc; background: #f5f3ef;">
+    <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; height: 44px; font-size: 14px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: #1d7a4b; display: inline-block;"></span>
+        <span style="font-weight: 600;">Open now · usdc-arc is Live on Arc testnet</span>
+        <span style="color: #5a5853;">cursor = head · lag 0 · last row committed 395 ms after block close</span>
+      </div>
+      <a href="#indexers" style="font-weight: 500;">All indexers</a>
+    </div>
+  </div>
+
+  <!-- hero -->
+  <div class="wrap" style="padding: 72px 40px 64px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 72px; align-items: center;">
+    <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 24px;">
+      <h1 style="font-size: 68px; line-height: 1.04; letter-spacing: -0.015em; max-width: 14ch;">Your chain events, in your own Postgres.</h1>
+      <p style="font-size: 22px; line-height: 1.5; color: #5a5853; max-width: 52ch;">Give it an ABI, a contract address, and an RPC. Arckive streams every on-chain event into your own PostgreSQL — one table per event, reliable and gap-free — from a single YAML manifest.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px;">
+        <a class="pill-dark" href="#how">See the one manifest <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+        <a class="pill-ghost" href="#reliability">Try to break it</a>
+      </div>
+      <p style="font-size: 14px; color: #5a5853;">Runs in your cluster · Apache-2.0 · arckive.org/v1alpha1</p>
+    </div>
+
+    <!-- "opening times" table, but for indexers -->
+    <div id="indexers" style="background: #fffbfb; border-radius: 16px; padding: 24px 26px 18px; box-shadow: 0 1px 0 rgba(40,38,27,0.08);">
+      <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px;">
+        <span style="font-size: 20px; font-weight: 500;">Indexers</span>
+        <span style="font-size: 13px; color: #5a5853; font-family: ui-monospace, Menlo, monospace;">kubectl get indexers</span>
+      </div>
+      <table class="hours" style="width: 100%; border-collapse: collapse;">
+        <thead><tr><th>Name</th><th>Phase</th><th class="num">Current</th><th class="num">Head</th><th class="num">Lag</th></tr></thead>
+        <tbody>
+          <tr><td style="font-weight: 500;">usdc-arc</td><td style="color: #1d7a4b; font-weight: 500;">Live</td><td class="num">8,123,456</td><td class="num">8,123,456</td><td class="num">0</td></tr>
+          <tr><td style="font-weight: 500;">eurc-arc</td><td style="color: #1d7a4b; font-weight: 500;">Live</td><td class="num">8,123,456</td><td class="num">8,123,456</td><td class="num">0</td></tr>
+          <tr><td style="font-weight: 500;">dex-pool</td><td style="color: #a0651a; font-weight: 500;">Backfilling</td><td class="num">8,101,338</td><td class="num">8,123,456</td><td class="num">22,118</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size: 13px; color: #5a5853; margin-top: 12px;">Status is patched onto the resource itself. No dashboard to log into.</p>
+    </div>
+  </div>
+
+  <!-- what do you want to do today -->
+  <div id="how" class="wrap" style="padding: 24px 40px 72px; display: flex; flex-direction: column; gap: 28px;">
+    <h2 style="font-size: 44px; line-height: 1.1;">What do you want to do today?</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px;">
+      <a class="task" href="#manifest" style="background: #e8e6dc;">
+        <div style="display: flex; flex-direction: column; gap: 8px;"><h3>Write one manifest</h3><p>Contracts, ABI ref, RPC pool, storage mode — the whole setup in one Indexer resource.</p></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+      <a class="task" href="#operator" style="background: #f3e7a1;">
+        <div style="display: flex; flex-direction: column; gap: 8px;"><h3>Let the operator provision</h3><p>A reconcile loop turns the spec into a database, schema, worker and read API — and heals them.</p></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+      <a class="task" href="#sql" style="background: #cfe3c6;">
+        <div style="display: flex; flex-direction: column; gap: 8px;"><h3>Query plain SQL</h3><p>Each event is a table in your Postgres. No API between you and your data.</p></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+      <a class="task" href="#benchmarks" style="background: #1f2a5a; color: #fffbfb;">
+        <div style="display: flex; flex-direction: column; gap: 8px;"><h3>Read the benchmarks</h3><p>Measured on the public Arc testnet, reading only Postgres rows and /metrics. Reproduce with pnpm bench.</p></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+    </div>
+  </div>
+
+  <!-- on the shelves now: one cover per table -->
+  <div style="background: #fffbfb; border-top: 1px solid #e8e6dc; border-bottom: 1px solid #e8e6dc;">
+    <div class="wrap" style="padding: 56px 40px 60px; display: flex; flex-direction: column; gap: 26px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px;">
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <h2 style="font-size: 36px; line-height: 1.1;">On the shelves now</h2>
+          <p style="font-size: 16px; color: #5a5853;">Schema <span style="font-family: ui-monospace, Menlo, monospace; color: #28261b;">idx_usdc_arc</span> · one table per event, typed from the ABI, unique on (block, tx, log).</p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <span class="chip on">Event tables</span>
+          <span class="chip">Views</span>
+          <span class="chip">Control tables</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 24px; overflow: hidden;">
+        <div class="book"><div class="cover" style="background: #1f2a5a; color: #fffbfb;"><span class="t">usdc_<br>transfer</span><span class="s">idx_usdc_arc</span></div><b>usdc_transfer</b><span>Transfer(address,address,uint256)<br>8,123,456 rows</span></div>
+        <div class="book"><div class="cover" style="background: #f3e7a1; color: #28261b;"><span class="t">usdc_<br>approval</span><span class="s">idx_usdc_arc</span></div><b>usdc_approval</b><span>Approval(address,address,uint256)<br>1,904,211 rows</span></div>
+        <div class="book"><div class="cover" style="background: #cfe3c6; color: #28261b;"><span class="t">usdc_<br>mint</span><span class="s">idx_usdc_arc</span></div><b>usdc_mint</b><span>Mint(address,uint256)<br>41,208 rows</span></div>
+        <div class="book"><div class="cover" style="background: #e8e6dc; color: #28261b;"><span class="t">usdc_<br>burn</span><span class="s">idx_usdc_arc</span></div><b>usdc_burn</b><span>Burn(address,uint256)<br>37,990 rows</span></div>
+        <div class="book"><div class="cover" style="background: #f0c9b8; color: #28261b;"><span class="t">usdc_<br>blacklisted</span><span class="s">idx_usdc_arc</span></div><b>usdc_blacklisted</b><span>Blacklisted(address)<br>112 rows</span></div>
+        <div class="book"><div class="cover" style="background: #fffbfb; color: #5a5853; border: 1px dashed #b9b6ab; box-shadow: none;"><span class="t">_cursor<br>_meta<br>_dead_letter</span><span class="s">control</span></div><b>Control tables</b><span>Checkpoint, schema version, undecodable logs (0)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- latest events -->
+  <div class="wrap" style="padding: 56px 40px 24px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 72px; align-items: start;">
+    <div style="display: flex; flex-direction: column; gap: 14px;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <h2 style="font-size: 36px; line-height: 1.1;">Latest events</h2>
+        <a href="#sql" style="font-size: 15px; font-weight: 500;">Open in SQL</a>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <div class="ev"><div class="badge" style="background: #cfe3c6;"><small>block</small><b>8,123,456</b></div><div><h3>Transfer · 3,020.95 USDC</h3><div class="meta">0x3786…39b3 → 0xdbcc…38db · usdc_transfer</div></div><span class="right">395 ms after close</span></div>
+        <div class="ev"><div class="badge" style="background: #f3e7a1;"><small>block</small><b>8,123,455</b></div><div><h3>Transfer · 3,454.57 USDC</h3><div class="meta">0xb51a…159a → 0xa7b3…5993 · usdc_transfer</div></div><span class="right">402 ms after close</span></div>
+        <div class="ev"><div class="badge" style="background: #f0c9b8;"><small>block</small><b>8,123,454</b></div><div><h3>Approval · 60,884.96 USDC</h3><div class="meta">0x9f21…c04a → 0x53d0…b7da · usdc_approval</div></div><span class="right">388 ms after close</span></div>
+        <div class="ev" style="border-bottom: 1px solid #dcd9cc;"><div class="badge" style="background: #e8e6dc;"><small>block</small><b>8,123,453</b></div><div><h3>Transfer · 212.40 USDC</h3><div class="meta">0x1c40…8e21 → 0x77aa…0f3c · usdc_transfer</div></div><span class="right">391 ms after close</span></div>
+      </div>
+    </div>
+
+    <div id="reliability" style="display: flex; flex-direction: column; gap: 18px; padding-top: 10px;">
+      <h2 style="font-size: 36px; line-height: 1.1;">Even if the network blips, no data is lost.</h2>
+      <p style="font-size: 17px; color: #5a5853;">A poll-based backbone chosen for loss-free, self-healing ingestion — not just latency.</p>
+      <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0;">
+        <li style="padding: 12px 0; border-top: 1px solid #dcd9cc;"><b style="font-weight: 600;">Cursor + checkpoint</b> — the last processed block lives in Postgres; after any crash it resumes exactly there.</li>
+        <li style="padding: 12px 0; border-top: 1px solid #dcd9cc;"><b style="font-weight: 600;">Gap-free backfill</b> — event inserts and cursor advance share one transaction. A commit, or nothing.</li>
+        <li style="padding: 12px 0; border-top: 1px solid #dcd9cc;"><b style="font-weight: 600;">Reorg-safe on Arc</b> — indexes to the finalized tag; BFT finality means finalized blocks never reorg.</li>
+        <li style="padding: 12px 0; border-top: 1px solid #dcd9cc; border-bottom: 1px solid #dcd9cc;"><b style="font-weight: 600;">RPC failover</b> — a health-checked pool with rotation, backoff, circuit-breaker. A blip never becomes a gap.</li>
+      </ul>
+      <a class="pill-ghost" href="#chaos" style="align-self: flex-start;">Try to break it — chaos lab</a>
+    </div>
+  </div>
+
+  <!-- numbers -->
+  <div id="benchmarks" class="wrap" style="padding: 56px 40px 72px; display: flex; flex-direction: column; gap: 28px;">
+    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+      <h2 style="font-size: 36px; line-height: 1.1;">Measured, not promised</h2>
+      <a href="/benchmarks.html" style="font-size: 15px; font-weight: 500;">Benchmark report</a>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; border-top: 1px solid #28261b; padding-top: 28px;">
+      <div class="stat"><b>395 ms</b><span>Block close to queryable row, p50, live USDC traffic on Arc testnet</span></div>
+      <div class="stat"><b>92.6</b><span>Blocks per second on backfill — 5,107 blocks of history in 55 s over a public RPC</span></div>
+      <div class="stat"><b>2,628</b><span>Events per second at the decode + transactional-SQL write ceiling</span></div>
+      <div class="stat"><b>0</b><span>Gaps, dead letters and RPC errors across the runs</span></div>
+    </div>
+  </div>
+
+  <!-- footer -->
+  <div class="foot" id="cta" style="background: #28261b; color: #fffbfb;">
+    <div class="wrap" style="padding: 56px 40px 28px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px;">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 24px; font-weight: 500;">Arckive</span>
+        <p style="font-size: 15px; color: #d6d3ca; line-height: 1.5;">One YAML. A running indexer. Runs in your cluster — your data never leaves it.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #d6d3ca;">Install</span>
+        <code style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #fffbfb; background: rgba(255,255,255,0.08); padding: 10px 12px; border-radius: 6px; line-height: 1.5; word-break: break-all;">kubectl apply -f https://arckive.org/install.yaml</code>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #d6d3ca;">Documentation</span>
+        <a href="#docs">Quickstart</a><a href="#docs">Indexer resource</a><a href="#docs">Storage modes</a><a href="/benchmarks.html">Benchmarks</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #d6d3ca;">Contact</span>
+        <a href="https://github.com/Goguzgungor/arclight">GitHub</a><a href="#issues">Report an issue</a><a href="#status">Service status</a>
+      </div>
+    </div>
+    <div class="wrap" style="padding: 18px 40px 26px; display: flex; justify-content: space-between; font-size: 13px; color: #b9b6ab; border-top: 1px solid rgba(255,255,255,0.12);">
+      <span>© 2026 Arckive · Apache-2.0</span>
+      <span>Kubernetes-native event indexer for Arc · v1alpha1</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

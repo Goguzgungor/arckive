@@ -1,0 +1,20 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Final — E" },
+    { "id": "page-2", "name": "Directions" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html",       "title": "Arckive — desktop",  "page": "page-1", "x": 0,    "y": 0, "w": 1280, "h": 4990 },
+    { "file": "Mobile.dc.html",     "title": "Arckive — phone",    "page": "page-1", "x": 1380, "y": 0, "w": 390,  "h": 9440 },
+    { "file": "DirectionE.dc.html", "title": "E · Night Stacks",   "page": "page-2", "x": 0,    "y": 0, "w": 1280, "h": 2300 },
+    { "file": "DirectionC.dc.html", "title": "C · Reading Room",   "page": "page-2", "x": 1380, "y": 0, "w": 1280, "h": 3040 },
+    { "file": "DirectionB.dc.html", "title": "B · Catalogue",      "page": "page-2", "x": 2760, "y": 0, "w": 1280, "h": 1140 },
+    { "file": "DirectionD.dc.html", "title": "D · Wayfinding",     "page": "page-2", "x": 4140, "y": 0, "w": 1280, "h": 1000 }
+  ],
+  "annotations": [
+    { "id": "final-notes", "page": "page-1", "x": 1860, "y": 0, "w": 440, "text": "Final page in E's language (flat black civic, Deichman-style chips and covers, Oodi-style 'open now' line and stats, Seattle-style utility row).\n\nSections, top to bottom: utility row → nav → SQL search row → hero with the indexers table → 'The gap' notice → 01 How it works (manifest / operator / SQL) → On the shelves now (one cover per table) → 02 Reliability with the chaos lab → Latest events → 03 Benchmarks → 04 Compare → Get started → footer.\n\nAll copy and numbers are from arckive.org today. Placeholders to confirm: the eurc-arc and dex-pool rows in the indexers table, row counts on the covers, the Views / Control tables tabs, and the four 'Latest events' cards (sample rows).\n\nThe phone artboard is the same file at 390px: nav links collapse, grids stack, the cover row and tables scroll sideways." },
+    { "id": "refs", "page": "page-2", "x": 5520, "y": 0, "w": 440, "text": "What was borrowed, and from where (checked on the live sites, 10 Sep 2026):\n\n• Oodi Helsinki — the 'Open today 08:00–21:00 · All opening times' line under the header, and the big-number stats block.\n• Deichman Oslo — black-on-white with flat pastel chips (peach #fbcd83, salmon #fb9688, teal #085c58, beige #dac9bc), 5px radii, event cards with a coloured date badge, a cover grid with title/author under each cover, black footer.\n• British Library — off-white #f5f3ef, warm near-black #28261b, a 68px LIGHT (300) headline, 'What do you want to do today?' pastel pill tiles, one family (Hind).\n• Seattle Public Library — two-tier header (utility row + main nav), a service-alert strip, a search block as a first-class element.\n• NYPL — utility links above the nav, dark grey footer with plain link columns." },
+    { "id": "pick-one", "page": "page-2", "x": 2760, "y": 1260, "w": 420, "text": "History: five directions in round one (A Stacks, B Catalogue, C Reading Room, D Wayfinding, E Night Stacks). Round two rebuilt C and E from real library-site patterns. E was picked; the final build is on page 1." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

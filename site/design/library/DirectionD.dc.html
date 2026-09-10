@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&amp;family=Space+Grotesk:wght@400;500;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #ffffff; color: #262626; font-family: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+    a { color: #0b0b0b; } a:hover { color: #444444; }
+    h1, h2, h3 { margin: 0; color: #0b0b0b; }
+    p { margin: 0; }
+    .sign { font-family: "Anton", "Arial Narrow", Impact, sans-serif; font-weight: 400; text-transform: uppercase; letter-spacing: 0.01em; }
+    .nav-link { font-size: 14.5px; font-weight: 500; color: #d9d9d9; text-decoration: none; text-transform: uppercase; letter-spacing: 0.08em; }
+    .nav-link:hover { color: #ffffff; }
+    .dir-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 16px 0; border-top: 1px solid #333333; }
+    .aisle { display: flex; flex-direction: column; gap: 10px; padding: 30px 28px 34px; border-left: 4px solid #0b0b0b; }
+  </style>
+</helmet>
+
+<div style="background: #ffffff;">
+  <!-- nav -->
+  <div style="background: #0b0b0b;">
+    <div style="max-width: 1200px; margin: 0 auto; padding: 0 40px; height: 64px; display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; align-items: stretch; gap: 0;">
+        <span class="sign" style="background: #ffd400; color: #0b0b0b; font-size: 22px; padding: 4px 14px 2px; display: inline-flex; align-items: center;">ARCKIVE</span>
+        <span style="color: #a3a3a3; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; display: inline-flex; align-items: center; padding-left: 14px;">Event indexer · Arc</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 28px;">
+        <a class="nav-link" href="#how">How it works</a>
+        <a class="nav-link" href="#reliability">Reliability</a>
+        <a class="nav-link" href="#benchmarks">Benchmarks</a>
+        <a class="nav-link" href="#compare">Compare</a>
+        <a class="sign" href="#cta" style="text-decoration: none; font-size: 18px; background: #ffd400; color: #0b0b0b; padding: 6px 16px 4px;">Get started</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- hero: signal-yellow wayfinding -->
+  <div style="background: #ffd400;">
+    <div style="max-width: 1200px; margin: 0 auto; padding: 64px 40px 72px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 56px; align-items: end;">
+      <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 20px;">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#0b0b0b" stroke-width="2.6" stroke-linecap="square" aria-hidden="true"><path d="M4 12h15M13 5l7 7-7 7"></path></svg>
+          <span class="sign" style="font-size: 20px; letter-spacing: 0.06em; color: #0b0b0b;">Kubernetes-native event indexer for Arc</span>
+        </div>
+        <h1 class="sign" style="font-size: 96px; line-height: 0.92; letter-spacing: 0;">Your chain events,<br>in your own<br>Postgres.</h1>
+        <p style="font-size: 19px; line-height: 1.55; max-width: 48ch; color: #262626;">Give it an ABI, a contract address, and an RPC. Arckive streams every on-chain event into your own PostgreSQL — <strong style="color: #0b0b0b; font-weight: 700;">one table per event, reliable and gap-free</strong> — from a single YAML manifest.</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px;">
+          <a class="sign" href="#how" style="text-decoration: none; font-size: 20px; background: #0b0b0b; color: #ffd400; padding: 12px 22px 9px;">See the one manifest</a>
+          <a class="sign" href="#reliability" style="text-decoration: none; font-size: 20px; border: 3px solid #0b0b0b; color: #0b0b0b; padding: 9px 22px 6px;">Try to break it</a>
+        </div>
+        <div style="font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: #5a4c00;">runs in your cluster · apache-2.0 · arckive.org/v1alpha1</div>
+      </div>
+
+      <!-- directory board -->
+      <div style="background: #0b0b0b; color: #ffffff; padding: 22px 26px 8px; box-shadow: 0 30px 40px -30px rgba(0,0,0,0.6);">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 14px;">
+          <span class="sign" style="font-size: 22px; color: #ffd400;">Directory</span>
+          <span style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #a3a3a3;">idx_usdc_arc</span>
+        </div>
+        <div class="dir-row"><span class="sign" style="font-size: 40px; color: #ffd400; line-height: 1;">01</span><div><div class="sign" style="font-size: 20px;">Manifest</div><div style="font-size: 14px; color: #bdbdbd;">write one YAML</div></div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="square" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+        <div class="dir-row"><span class="sign" style="font-size: 40px; color: #ffd400; line-height: 1;">02</span><div><div class="sign" style="font-size: 20px;">Operator</div><div style="font-size: 14px; color: #bdbdbd;">provisions &amp; heals</div></div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="square" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+        <div class="dir-row"><span class="sign" style="font-size: 40px; color: #ffd400; line-height: 1;">03</span><div><div class="sign" style="font-size: 20px;">Reading room</div><div style="font-size: 14px; color: #bdbdbd;">plain SQL, your Postgres</div></div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="square" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+        <div style="border-top: 1px solid #333333; padding: 16px 0 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; letter-spacing: 0.04em;">
+          <div style="display: flex; justify-content: space-between;"><span>usdc_transfer</span><span style="color: #ffd400;">8 101 338 – 8 123 456 · live</span></div>
+          <div style="display: flex; justify-content: space-between;"><span>usdc_approval</span><span style="color: #bdbdbd;">8 101 338 – 8 123 456</span></div>
+          <div style="display: flex; justify-content: space-between;"><span>_dead_letter</span><span style="color: #bdbdbd;">empty</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- aisle signs -->
+  <div id="how" style="max-width: 1200px; margin: 0 auto; padding: 36px 40px 40px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px;">
+    <div class="aisle">
+      <span class="sign" style="font-size: 56px; line-height: 0.9;">01</span>
+      <h3 style="font-size: 22px; font-weight: 700;">Write one manifest</h3>
+      <p style="font-size: 15.5px; color: #555555;">Contracts, ABI ref, RPC pool, storage mode — the whole setup.</p>
+    </div>
+    <div class="aisle">
+      <span class="sign" style="font-size: 56px; line-height: 0.9;">02</span>
+      <h3 style="font-size: 22px; font-weight: 700;">The operator provisions</h3>
+      <p style="font-size: 15.5px; color: #555555;">A reconcile loop turns the spec into running parts — and heals them.</p>
+    </div>
+    <div class="aisle">
+      <span class="sign" style="font-size: 56px; line-height: 0.9;">03</span>
+      <h3 style="font-size: 22px; font-weight: 700;">Query plain SQL</h3>
+      <p style="font-size: 15.5px; color: #555555;">Each event is a table in your Postgres. No API between you and your data.</p>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
