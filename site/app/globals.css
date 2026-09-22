@@ -1414,3 +1414,73 @@ pre {
     justify-content: flex-end;
   }
 }
+
+/* ————— GitHub star asks ————— */
+
+.star-btn .star-count {
+  border-left: 1px solid currentColor;
+  padding-left: 8px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.star-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  margin-bottom: 4px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.star-pill svg {
+  color: var(--amber);
+}
+
+.star-pill:hover {
+  border-color: var(--amber);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.star-ask {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  max-width: 720px;
+  margin-top: 22px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.star-ask p {
+  flex: 1 1 320px;
+  color: var(--text);
+}
+
+.star-ask strong {
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .nav-links {
+    gap: 8px;
+  }
+
+  .nav .star-btn .star-count {
+    display: none;
+  }
+
+  .nav .star-btn {
+    padding: 9px 12px;
+  }
+}
