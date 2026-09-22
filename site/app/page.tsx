@@ -5,8 +5,9 @@ import CopyCmd from "@/components/CopyCmd";
 import IndexerStatus from "@/components/IndexerStatus";
 import LatestEvents from "@/components/LatestEvents";
 import { LiveIndexerProvider } from "@/components/LiveIndexer";
+import StarButton, { StarIcon } from "@/components/StarButton";
 
-const REPO = "https://github.com/Goguzgungor/arclight";
+const REPO = "https://github.com/Goguzgungor/arckive";
 
 function SecHead({ n, label }: { n: string; label: string }) {
   return (
@@ -86,6 +87,7 @@ export default function Page() {
               <a className="hide-m" href="#compare">
                 Compare
               </a>
+              <StarButton href={REPO} label="Star" />
               <a className="btn btn-sm" href="#cta">
                 Get started
               </a>
@@ -119,6 +121,11 @@ export default function Page() {
         <header className="hero">
           <div className="wrap hero-grid">
             <div className="hero-copy">
+              <a className="star-pill" href={REPO} target="_blank" rel="noopener noreferrer">
+                <StarIcon size={14} />
+                <span className="hide-m">Open source —</span> Star Arckive on GitHub
+                <span aria-hidden="true">→</span>
+              </a>
               <h1>Your chain events, in your own Postgres.</h1>
               <p className="hero-sub">
                 Give it an ABI, a contract address, and an RPC. Arckive streams
@@ -557,6 +564,14 @@ export default function Page() {
             <h2>One YAML. A running indexer.</h2>
             <p className="cta-sub">Runs in your cluster. Your data never leaves it.</p>
             <CopyCmd cmd="kubectl apply -f https://arckive.org/install.yaml" />
+            <div className="star-ask">
+              <p>
+                <strong>Arckive is open source and built in the open.</strong>{" "}
+                If it saves you a subgraph, a GitHub star is the easiest way to
+                help other Arc builders find it.
+              </p>
+              <StarButton href={REPO} className="btn" />
+            </div>
             <p className="meta-line">
               Runs in your cluster · Apache-2.0 · v1alpha1
             </p>
