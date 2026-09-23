@@ -1484,3 +1484,46 @@ pre {
     padding: 9px 12px;
   }
 }
+
+/* ————— arc radar ————— */
+
+/* A pointer to a separate live page, so it reads as an aside rather than a
+   numbered chapter: a bordered band like the star ask, not a new section head. */
+.radar-section {
+  /* the next section brings its own top padding */
+  padding-bottom: 8px;
+}
+
+.radar-band {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px 32px;
+  padding: 24px 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.radar-copy {
+  flex: 1 1 420px;
+}
+
+.radar-copy h2 {
+  margin-top: 8px;
+}
+
+.radar-copy p {
+  margin-top: 12px;
+  max-width: 66ch;
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .radar-band {
+    padding: 20px;
+  }
+
+  .radar-copy {
+    flex-basis: 100%;
+  }
+}

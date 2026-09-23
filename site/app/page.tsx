@@ -8,6 +8,7 @@ import { LiveIndexerProvider } from "@/components/LiveIndexer";
 import StarButton, { StarIcon } from "@/components/StarButton";
 
 const REPO = "https://github.com/Goguzgungor/arckive";
+const RADAR = "https://radar.arckive.org";
 
 function SecHead({ n, label }: { n: string; label: string }) {
   return (
@@ -86,6 +87,9 @@ export default function Page() {
               </a>
               <a className="hide-m" href="#compare">
                 Compare
+              </a>
+              <a className="hide-m" href={RADAR}>
+                Arc Radar
               </a>
               <StarButton href={REPO} label="Star" />
               <a className="btn btn-sm" href="#cta">
@@ -445,6 +449,27 @@ export default function Page() {
           </div>
         </section>
 
+        {/* ———— arc radar ———— */}
+        <section id="radar" className="section radar-section">
+          <div className="wrap">
+            <div className="radar-band">
+              <div className="radar-copy">
+                <span className="sec-label">Live on Arc</span>
+                <h2>Every USDC transfer on Arc, sorted as it lands.</h2>
+                <p>
+                  Arc Radar files each transfer under swap, bridge, liquidity,
+                  payment and more, judged in real time by a small decision
+                  model running on one Mac. Ask it a yes/no question and the
+                  stream re-sorts while you watch.
+                </p>
+              </div>
+              <a className="btn" href={RADAR}>
+                Open Arc Radar <span aria-hidden="true">→</span>
+              </a>
+            </div>
+          </div>
+        </section>
+
         {/* ———— 03 benchmarks ———— */}
         <section id="benchmarks" className="section">
           <div className="wrap">
@@ -594,6 +619,7 @@ export default function Page() {
               <a href="#reliability">Reliability</a>
               <a href="#benchmarks">Benchmarks</a>
               <a href="#compare">Compare</a>
+              <a href={RADAR}>Arc Radar</a>
             </div>
             <div className="foot-col">
               <h2>Documentation</h2>
