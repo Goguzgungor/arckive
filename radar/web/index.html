@@ -239,8 +239,8 @@
     <div class="gauges">
       <div class="gauge"><b id="g-in">0</b><span>arriving/s</span></div>
       <div class="gauge"><b id="g-out">0</b><span>typed/s</span></div>
-      <div class="gauge"><b id="g-uniq">0</b><span>new/s</span></div>
-      <div class="gauge" id="g-drop-wrap"><b id="g-drop">0</b><span>skipped</span></div>
+      <div class="gauge"><b id="g-uniq">0</b><span>to model/s</span></div>
+      <div class="gauge"><b id="g-ms">–</b><span>ms/batch</span></div>
     </div>
   </div>
   <div class="ask">
@@ -321,6 +321,15 @@ function answerFor(op) {
 const escapeHtml = (s) => s.replace(/[&<>"']/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+// A link is HTML wherever it lands, so a URL is only ever trusted as an href
+// when it is obviously our own explorer -- anything else renders as plain
+// (escaped) text instead of a clickable link.
+const EXPLORER_PREFIX = "https://explorer.arc.io/tx/";
+function explorerAnchor(url, inner, extraAttrs = "") {
+  if (typeof url !== "string" || !url.startsWith(EXPLORER_PREFIX)) return inner;
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"${extraAttrs}>${inner}</a>`;
+}
+
 function row(op, ruleActive) {
   const el = document.createElement("article");
   el.className = "op fresh";
@@ -344,7 +353,7 @@ function row(op, ruleActive) {
   el.innerHTML =
     `<span class="lane">${LABEL[op.lane] || op.lane}</span>` +
     `<span class="asset">${escapeHtml(op.protocol || "")}</span>` +
-    `<span class="text"><a href="${op.url}" target="_blank" rel="noopener">${escapeHtml(op.text)}</a></span>` +
+    `<span class="text">${explorerAnchor(op.url, escapeHtml(op.text))}</span>` +
     `<span class="rep" data-n="${op.count}"${op.count > 1 ? "" : ' hidden'}>${op.count}x</span>` +
     sure +
     (unread
@@ -431,8 +440,8 @@ function gauges(s) {
   document.getElementById("g-in").textContent = s.in_rate;
   document.getElementById("g-out").textContent = s.out_rate;
   document.getElementById("g-uniq").textContent = s.unique_rate;
-  document.getElementById("g-drop").textContent = s.dropped;
-  document.getElementById("g-drop-wrap").classList.toggle("warn", s.dropped > 0);
+  document.getElementById("g-ms").textContent =
+    s.batch_ms == null ? "–" : Math.round(s.batch_ms);
   document.getElementById("f-total").textContent = s.classified.toLocaleString();
   document.getElementById("f-reused").textContent = (s.reused || 0).toLocaleString();
   for (const lane of LANES) {
@@ -574,10 +583,10 @@ function judgeSeparation(ops) {
   const pool = [...judged.values()].sort((a, b) => b.p - a.p);
   // Each one links to the transfer itself: Arc is the thing that settles
   // whether the model read it right.
-  const line = (o) =>
-    `<li><a href="${o.url}"` +
-    ` target="_blank" rel="noopener" title="${escapeHtml(o.text)}">` +
-    `<b>${Math.round(o.p * 100)}%</b>${escapeHtml(o.text)}</a></li>`;
+  const line = (o) => {
+    const inner = `<b>${Math.round(o.p * 100)}%</b>${escapeHtml(o.text)}`;
+    return `<li>${explorerAnchor(o.url, inner, ` title="${escapeHtml(o.text)}"`)}</li>`;
+  };
   document.getElementById("check-yes").innerHTML = pool.slice(0, 5).map(line).join("");
   document.getElementById("check-no").innerHTML = pool.slice(-5).reverse().map(line).join("");
   document.getElementById("check-hi").textContent = `of ${pool.length} distinct transfers`;
