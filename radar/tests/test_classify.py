@@ -44,6 +44,9 @@ def test_classify_sends_shapes_and_caches():
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
     out = asyncio.run(c.classify(["s1", "s1", "s2"]))
     assert [o["lane"] for o in out] == ["swap", "swap", "swap"]
+    # The runner-up lanes travel with the answer, so the server can overrule a
+    # choice the transfer itself rules out without asking the model again.
+    assert out[0]["probabilities"] == {"swap": 0.8, "bridge": 0.2}
     assert seen[0]["states"] == ["s1", "s2"]
     asyncio.run(c.classify(["s1"]))
     assert len(seen) == 1  # answered from cache
