@@ -1,0 +1,14 @@
+services:
+  radar:
+    build: .
+    ports:
+      - "8777:8777"
+    environment:
+      # The model gate on the Mac, reached through the reverse tunnel the
+      # ledger radar already runs. 172.17.0.1 is this host's Docker bridge.
+      LAYA_ENDPOINT: ${LAYA_ENDPOINT:-http://172.17.0.1:8919}
+      RADAR_TOKEN: ${RADAR_TOKEN:?set RADAR_TOKEN}
+      ARC_RPCS: ${ARC_RPCS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.arc-radar.gate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>set -a; . "$HOME/.config/arc-radar/env"; set +a; exec "$HOME/arc-radar/.venv/bin/python" -m radar.modelgate</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/gokbot/arc-radar</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/gokbot/Library/Logs/arc-radar-gate.log</string>
+  <key>StandardErrorPath</key><string>/Users/gokbot/Library/Logs/arc-radar-gate.log</string>
+</dict>
+</plist>

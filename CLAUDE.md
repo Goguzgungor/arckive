@@ -40,6 +40,7 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 | `scripts/` | `build-install.sh` (generates `install.yaml`), `kind-dev.sh` (local kind env). |
 | `docs/benchmarks/` | Benchmark results (`results.json`) + generated HTML report. |
 | `install.yaml` | **Generated** — Namespace + CRD + `helm template` output. Never edit by hand. |
+| `radar/` | **Arc Radar** — standalone Python app (not in the pnpm workspace): live wall of every USDC transfer on Arc mainnet, lanes decided by the local Laya model via layad. Reads RPC directly; does not use the operator or worker. See `radar/README.md`. |
 
 Dependency direction is strictly `operator → core` and `worker → core`. The
 operator and the worker never import each other.
@@ -62,6 +63,7 @@ pnpm arc:preflight                 # probe an Arc RPC endpoint (chainId, finalit
 pnpm bench                         # benchmark suite → docs/benchmarks/<date>/results.json
 pnpm bench:report                  # render report.html from results.json
 scripts/build-install.sh           # regenerate install.yaml from the chart
+cd radar && .venv/bin/pytest -q    # Arc Radar tests (Python)
 ```
 
 **Run `pnpm -r build` before `pnpm -r test`.** Only `packages/worker` aliases
@@ -233,6 +235,10 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   branch (served at `arckive.org`).
 - `.github/workflows/verify-install.yml` (manual): applies the published
   `install.yaml` to a fresh kind cluster.
+- Arc Radar: the `radar` job in `ci.yml` runs `pytest` and `docker build` in
+  `radar/`; `.github/workflows/radar-deploy.yml` (push to `main` touching
+  `radar/**`) triggers the Dokploy deploy through the
+  `DOKPLOY_RADAR_DEPLOY_URL` secret, and no-ops when it is unset.
 
 Keep `README.md` (quickstart, benchmark table, metric list) in sync when
 behavior visible to users changes.
