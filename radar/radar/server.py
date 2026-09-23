@@ -167,6 +167,50 @@ class Radar:
                 with contextlib.suppress(asyncio.QueueFull):
                     self.queue.put_nowait(item)
 
+    def _rows(
+        self, batch: list[dict[str, Any]], summaries: list[Any], answers: list[dict[str, Any]],
+        *, offline: bool,
+    ) -> list[dict[str, Any]]:
+        """Turn one batch of transfers into broadcast rows, tallying as it goes.
+
+        Shared by the healthy path and the model-unreachable path below: a
+        batch the model could not judge still deserves rows on screen -- marked
+        offline rather than dropped -- so an outage looks like an outage, not
+        like nothing happened on Arc for a while. Campaigns repeat one transfer
+        shape thousands of times, so identical shapes (protocol + shape) arrive
+        as a single row carrying how many times the shape occurred.
+        """
+        collapsed: dict[str, dict[str, Any]] = {}
+        for item, summary, answer in zip(batch, summaries, answers):
+            lane = answer["lane"] if answer["lane"] and answer["lane_p"] >= UNCERTAIN_BELOW else "uncertain"
+            self.lane_counts[lane] += 1
+            self.classified += 1
+            self.record_volume(lane, summary["amount"], item["seen_at"])
+            existing = collapsed.get(summary["family"])
+            if existing:
+                existing["count"] += 1
+                continue
+            collapsed[summary["family"]] = {
+                "id": summary["id"],
+                "text": summary["text"],
+                "shape": summary["shape"],
+                "family": summary["family"],
+                "protocol": summary["protocol"],
+                "facts": summary["facts"],
+                "amount": summary["amount"],
+                "frm": summary["frm"],
+                "to": summary["to"],
+                "url": summary["url"],
+                "lane": lane,
+                "lane_p": answer["lane_p"],
+                "stuck": answer.get("stuck", False),
+                "rules": answer["rules"],
+                "at": item["seen_at"],
+                "count": 1,
+                "offline": offline,
+            }
+        return list(collapsed.values())
+
     async def work(self) -> None:
         while True:
             batch = [await self.queue.get()]
@@ -200,7 +244,11 @@ class Radar:
                 LOG.warning("classify failed: %s", exc)
                 self.failures += 1
                 self.last_failure = str(exc)[:200]
-                await self.broadcast({"type": "stats", "stats": self.stats()})
+                # No latency sample and no take_counts(): the model was never
+                # actually asked, so neither number should pretend it was.
+                stand_in = {"lane": "", "lane_p": 0.0, "stuck": False, "rules": {}}
+                rows = self._rows(batch, summaries, [stand_in] * len(batch), offline=True)
+                await self.broadcast({"type": "ops", "ops": rows, "stats": self.stats()})
                 continue
             self.failures = 0
             self.latencies.append((time.monotonic() - started) * 1000)
@@ -209,41 +257,8 @@ class Radar:
             self.asked += asked
             self.reused += reused
 
-            # Campaigns repeat one transfer shape thousands of times.  Sending
-            # each copy to the screen buries everything else, so identical
-            # shapes (protocol + shape) arrive as a single row carrying how
-            # many times the shape occurred.
-            collapsed: dict[str, dict[str, Any]] = {}
-            for item, summary, answer in zip(batch, summaries, answers):
-                lane = answer["lane"] if answer["lane"] and answer["lane_p"] >= UNCERTAIN_BELOW else "uncertain"
-                self.lane_counts[lane] += 1
-                self.classified += 1
-                self.record_volume(lane, summary["amount"], item["seen_at"])
-                existing = collapsed.get(summary["family"])
-                if existing:
-                    existing["count"] += 1
-                    continue
-                collapsed[summary["family"]] = {
-                    "id": summary["id"],
-                    "text": summary["text"],
-                    "shape": summary["shape"],
-                    "family": summary["family"],
-                    "protocol": summary["protocol"],
-                    "facts": summary["facts"],
-                    "amount": summary["amount"],
-                    "frm": summary["frm"],
-                    "to": summary["to"],
-                    "url": summary["url"],
-                    "lane": lane,
-                    "lane_p": answer["lane_p"],
-                    "stuck": answer.get("stuck", False),
-                    "rules": answer["rules"],
-                    "at": item["seen_at"],
-                    "count": 1,
-                }
-            await self.broadcast(
-                {"type": "ops", "ops": list(collapsed.values()), "stats": self.stats()}
-            )
+            rows = self._rows(batch, summaries, answers, offline=False)
+            await self.broadcast({"type": "ops", "ops": rows, "stats": self.stats()})
 
 
 def slot_name(sentence: str) -> str:
