@@ -541,6 +541,23 @@ def test_screen_measures_where_each_question_says_yes(gate, monkeypatch):
         return [0.35] * 6 + [0.02] * 18
     monkeypatch.setattr(server.radar.classifier, "probe", shy)
     verdict, line = asyncio.run(server.screen("was a fee taken?", Pace(clock=clock)))
-    assert verdict == "" and line == 0.095
+    assert verdict == "" and line == 0.0949
     # Remembered with the verdict: the next viewer to ask gets the same line.
-    assert server.radar.verdicts["was a fee taken?"] == ("", 0.095)
+    assert server.radar.verdicts["was a fee taken?"] == ("", 0.0949)
+
+
+def test_the_model_is_not_asked_a_lane_the_transfer_decided():
+    r = Radar()
+    sent = []
+
+    async def classify(shapes, stories, rules):
+        sent.append((list(shapes), list(stories)))
+        return [SWAP] * len(shapes)
+    r.classifier.classify = classify
+    unreadable = make_item(ctx=False)
+    plain = make_item(log_index=7)
+    rows = asyncio.run(r.process([unreadable, plain]))
+    shapes, stories = sent[0]
+    assert shapes[0] is None and shapes[1] is not None
+    assert all(stories)
+    assert [row["lane"] for row in rows] == ["uncertain", "swap"]

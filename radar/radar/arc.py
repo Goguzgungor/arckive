@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from .rpc import RpcPool
-from .signatures import POOL_SWAP_TOPICS
+from .signatures import POOL_TOPICS
 from .types import (
     DECIMALS, ENTRYPOINTS, NATIVE, NATIVE_DECIMALS, TRANSFER_TOPIC, USDC, ZERO, Item, Transfer, TxContext,
 )
@@ -39,6 +39,10 @@ HEAD_TRAIL = 2
 
 # factory() -- the one view every Uniswap-v2 and -v3 style pool has.
 FACTORY_CALL = "0xc45a0155"
+# A pool whose factory() could not be read is asked again only after this
+# long. A contract that logs a pool event but has no factory() fails the same
+# way every time, and each failure is one request per endpoint in the pool.
+FACTORY_RETRY = 600.0
 _SCALE = 10 ** (NATIVE_DECIMALS - DECIMALS)
 
 
@@ -155,13 +159,18 @@ async def stream_transfers(
     *,
     poll: float = 1.0,
     max_gap: int = 600,
-    max_range: int = 1000,
+    # Blocks per eth_getLogs. With native movements read too, a block carries
+    # about four times the logs it did; a catch-up over hundreds of blocks in
+    # one call could pass the result caps providers put on eth_getLogs, and a
+    # refused range is retried whole. Smaller calls catch up over a few ticks.
+    max_range: int = 200,
     trail: int = HEAD_TRAIL,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     now: Callable[[], float] = time.time,
 ) -> AsyncIterator[Item]:
     codes = CodeCache()
     factories = CodeCache()
+    unreadable: dict[str, float] = {}  # pool -> when its factory() may be asked again
     cursor: int | None = None
     while True:
         # Everything a tick reads from the network is untrusted, and the feed
@@ -169,7 +178,7 @@ async def stream_transfers(
         # outage, a null head, an answer of the wrong shape -- costs one tick
         # and is retried from the same cursor, and nothing escapes this loop.
         try:
-            tick = await _tick(pool, codes, factories, cursor, trail=trail, max_gap=max_gap,
+            tick = await _tick(pool, codes, factories, unreadable, cursor, trail=trail, max_gap=max_gap,
                                max_range=max_range, now=now)
         except Exception as exc:  # noqa: BLE001 - the feed outlives any one bad answer
             LOG.warning("feed tick failed (%s): %s", type(exc).__name__, exc)
@@ -184,7 +193,7 @@ async def stream_transfers(
 
 
 async def _tick(
-    pool: RpcPool, codes: CodeCache, factories: CodeCache, cursor: int | None, *,
+    pool: RpcPool, codes: CodeCache, factories: CodeCache, unreadable: dict[str, float], cursor: int | None, *,
     trail: int, max_gap: int, max_range: int, now: Callable[[], float],
 ) -> tuple[int, list[Item]] | None:
     """Read the blocks since `cursor`: (next cursor, items), or None if none are new."""
@@ -210,11 +219,12 @@ async def _tick(
     # the cursor over blocks nobody actually read.
     if not isinstance(logs, list):
         raise ValueError(f"eth_getLogs answered {type(logs).__name__}")
-    return end + 1, (await _items(pool, codes, factories, logs, now) if logs else [])
+    return end + 1, (await _items(pool, codes, factories, unreadable, logs, now) if logs else [])
 
 
 async def _items(
-    pool: RpcPool, codes: CodeCache, factories: CodeCache, logs: list[Any], now: Callable[[], float],
+    pool: RpcPool, codes: CodeCache, factories: CodeCache, unreadable: dict[str, float],
+    logs: list[Any], now: Callable[[], float],
 ) -> list[Item]:
     """Turn one range of USDC logs into feed items, context and all.
 
@@ -236,19 +246,29 @@ async def _items(
     # the event it logs: Uniswap v3's Swap event is emitted, byte for byte, by
     # every fork of it. Measured on mainnet, 29% of the pools logging it were
     # Aerodrome's and others', so the pool is asked who deployed it.
-    pools = list(dict.fromkeys(
-        e for c in ctx.values() if c for e, t in zip(c["emitters"], c["topics"])
-        if t in POOL_SWAP_TOPICS and e and factories.get(e) is None
+    pools_of = {
+        h: list(dict.fromkeys(e for e, t in zip(c["emitters"], c["topics"]) if t in POOL_TOPICS and e))
+        for h, c in ctx.items() if c
+    }
+    clock = now()
+    ask = list(dict.fromkeys(
+        p for ps in pools_of.values() for p in ps
+        if factories.get(p) is None and unreadable.get(p, 0.0) <= clock
     ))
-    if pools:
-        answers = await pool.batch([("eth_call", [{"to": p, "data": FACTORY_CALL}, "latest"]) for p in pools])
-        for p, a in zip(pools, answers):
-            # Only an answer is remembered; a failed lookup is asked again.
+    if ask:
+        answers = await pool.batch([("eth_call", [{"to": p, "data": FACTORY_CALL}, "latest"]) for p in ask])
+        for p, a in zip(ask, answers):
             if isinstance(a, str) and len(a) >= 42:
                 factories.put(p, "0x" + a[-40:].lower())
-    for c in ctx.values():
+                unreadable.pop(p, None)
+            else:
+                unreadable[p] = clock + FACTORY_RETRY
+        if len(unreadable) > 10_000:
+            for p in [p for p, until in unreadable.items() if until <= clock]:
+                del unreadable[p]
+    for h, c in ctx.items():
         if c:
-            c["factories"] = {e: f for e in dict.fromkeys(c["emitters"]) if (f := factories.get(e))}
+            c["factories"] = {p: f for p in pools_of[h] if (f := factories.get(p))}
 
     unknown = list(dict.fromkeys(
         a for t in transfers for a in (t["frm"], t["to"]) if a != ZERO and codes.get(a) is None
@@ -259,7 +279,7 @@ async def _items(
             if isinstance(c, str):
                 codes.put(a, is_contract(c))
 
-    seen = now()
+    seen = clock
     items: list[Item] = []
     for t in transfers:
         c = ctx[t["tx"]]

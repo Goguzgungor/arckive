@@ -6,24 +6,28 @@
 Three measurements, each against a reading of the transfer that does not
 come from the model:
 
-  lanes      The lane the model picks, against the lane the evidence gives.
-             "The evidence" is the fact table read with the tie-break the
-             lane descriptions state (a swap that ends in a bridge is a
-             bridge), and it was itself audited: on ten minutes of mainnet
-             each of its readings was checked against what the transaction
-             actually moved -- who gave what, who got what back -- and read
-             by hand where the two disagreed. Transfers the evidence cannot
-             place (nothing recognisable, or only "a smart account sent it")
-             are not scored. Bar: 95%.
-  questions  Twenty-four questions viewers ask, each with its answer
-             computed from the transfer, asked the way the server asks them
-             and read at the line the gate measures for each. Reported as
-             AUC (does it rank yeses above noes) and balanced accuracy (does
-             the highlighted set match). Bar: 0.75 balanced accuracy.
-  gate       Every question above must clear MIN_SEPARATION: turning away a
-             question the radar can answer is the costlier mistake. How much
-             polished nonsense it still turns away is reported, not required
-             (see gate.MIN_SEPARATION for why it cannot be).
+  lanes      The lane the model picks, against the lane the fact table gives,
+             read with the tie-break the lane descriptions state (a swap
+             that ends in a bridge is a bridge). This measures whether the
+             model reads its own sentence right, not whether the facts are
+             right: the facts were checked separately, on ten minutes of
+             mainnet, against what each transaction actually moved -- who
+             gave what, who got what back -- and read by hand where the two
+             disagreed (see the design record in docs/superpowers/specs).
+             Transfers the facts cannot place (only "a smart account sent
+             it", or only a fee) are counted and shown, not scored. Bar: 95%.
+  questions  Thirty questions viewers ask, each with its answer computed
+             from the transfer, asked the way the server asks them and read
+             at the line the gate measures for each. Reported as AUC (does
+             it rank yeses above noes) and balanced accuracy (does the
+             highlighted set match); averaged only over questions with at
+             least MIN_COUNT yeses and noes in the capture, and the rest
+             listed. Bar: 0.75 balanced accuracy.
+  gate       Every answerable question -- the thirty above and ANSWERABLE --
+             must clear MIN_SEPARATION: turning away a question the radar
+             can answer is the costlier mistake. How much polished nonsense
+             it still turns away is reported, not required (see
+             gate.MIN_SEPARATION for why it cannot be).
 
 layad's GPU is shared with another live radar, so every call here is as small
 as the server's own.
@@ -50,7 +54,8 @@ from radar.types import ZERO  # noqa: E402
 
 LANE_BAR = 0.95
 QUESTION_BAR = 0.75
-CHUNK = 16          # transfers per model call, like a server batch at its busiest
+CHUNK = 16          # transfers per model call: a quarter of a full server batch, so no call holds the shared GPU long
+MIN_COUNT = 10      # yeses and noes a question needs in a capture to count in the means
 RULES_PER_CALL = 8  # MAX_RULES in server.py
 
 # The evidence, read with the lane descriptions' own tie-break.
@@ -104,14 +109,32 @@ QUESTIONS: list[tuple[str, Truth]] = [
     ("Bu bir swap mı?", lambda it, s: bool({"swap", "market"} & set(s["facts"]))),
     ("Bu işlem köprü üzerinden mi geçti?", lambda it, s: "bridge" in s["facts"]),
     ("10.000 USDC'den büyük mü?", lambda it, s: _amount(it) >= 10_000),
+    # Topics each covered by only two probes: the gate's yes line needs both.
+    ("Is this a vault deposit or withdrawal?", lambda it, s: "vault" in s["facts"]),
+    ("Were rewards claimed or paid out?", lambda it, s: "payout" in s["facts"]),
+    ("Was something bought on a marketplace?", lambda it, s: "market" in s["facts"]),
+    ("Is this a KyberSwap trade?", lambda it, s: s["protocol"] == "KyberSwap"),
+    ("Did this go through 1inch?", lambda it, s: s["protocol"] == "1inch"),
+    ("Was this routed through LI.FI?", lambda it, s: s["protocol"] == "LI.FI"),
 ]
+
+# Questions a viewer might ask that have no answer computed here but that the
+# radar can answer; the gate must let them through too.
+ANSWERABLE = [
+    "Is this an arbitrage bot?", "Did someone buy a token with USDC?", "Is money going to an exchange?",
+    "Was this paid with a signature instead of gas?", "Did a smart wallet send this?",
+    "Is this USDC being bridged to Ethereum?", "Is this a tiny test transfer?",
+]
+# Nothing on chain records these; refusing them is right, not required.
+UNANSWERABLE = ["Is this a payroll or salary payment?"]
 
 # Grammatical, pass every wording check, and mean nothing about a transfer.
 NONSENSE = [
     "is the sender a purple elephant?", "does this transfer taste like chocolate?", "is the moon made of cheese?",
     "did a dragon approve this?", "is the recipient happy today?", "does the wallet own a cat?",
     "is this transfer wearing a hat?", "did Shakespeare write this?", "is the ocean blue today?",
-    "does this payment like jazz music?",
+    "does this payment like jazz music?", "does this transaction smell nice?", "is it raining where the sender lives?",
+    "was this sent by a famous singer?", "is the recipient left-handed?",
 ]
 
 
@@ -139,6 +162,9 @@ async def main(path: Path) -> int:
         scores = await c.probe(question)
         lines[question] = threshold(scores)
         real.append((separation(scores), question))
+    for question in ANSWERABLE:
+        real.append((separation(await c.probe(question)), question))
+    unanswerable = [(separation(await c.probe(q)), q) for q in UNANSWERABLE]
     for question in NONSENSE:
         nonsense.append((separation(await c.probe(question)), question))
 
@@ -158,14 +184,18 @@ async def main(path: Path) -> int:
     await c.close()
 
     ruled = Counter(s["ruled"] for s in summaries if s["ruled"])
+    unplaced: Counter[str] = Counter()
     scored = right = uncertain = 0
     wrong: Counter[tuple[str, str]] = Counter()
     confidence = []
     for s, a in zip(summaries, answers):
         want = reading(s)
-        if s["ruled"] or want is None:
+        if s["ruled"]:
             continue
         lane, p = settle_lane(a)
+        if want is None:
+            unplaced[lane] += 1
+            continue
         scored += 1
         confidence.append(a.get("probabilities", {}).get(want, 0.0))
         if lane == want:
@@ -179,12 +209,14 @@ async def main(path: Path) -> int:
     print(f"{len(items)} transfers, {len(set(s['shape'] for s in summaries))} distinct lane sentences, "
           f"{len(set(s['story'] for s in summaries))} distinct stories")
     print(f"decided by the transfer itself: {dict(ruled)}")
-    print(f"lanes: {right}/{scored} = {lane_rate:.1%} agree, {uncertain / max(scored, 1):.1%} below "
+    print(f"lanes: {right}/{scored} = {lane_rate:.1%} agree with the fact table, {uncertain / max(scored, 1):.1%} below "
           f"{UNCERTAIN_BELOW}, right lane at {statistics.mean(confidence):.2f} on average")
+    if unplaced:
+        print(f"  not scored, the facts cannot place them: {sum(unplaced.values())}, shown as {dict(unplaced)}")
     for (want, got), n in wrong.most_common(6):
         print(f"  {n:5d}  expected {want:15s} got {got}")
 
-    aucs, bals = [], []
+    aucs, bals, thin = [], [], []
     print("questions (AUC / balanced accuracy at the gate's line):")
     for k, (question, truth) in enumerate(QUESTIONS):
         pos, neg = [], []
@@ -192,24 +224,28 @@ async def main(path: Path) -> int:
             if a["stuck"] or f"q{k}" not in a["rules"]:
                 continue
             (pos if truth(it, s) else neg).append(a["rules"][f"q{k}"])
-        if not pos or not neg:
-            print(f"  {question[:46]:46s}  no {'yes' if not pos else 'no'} in this sample")
+        if len(pos) < MIN_COUNT or len(neg) < MIN_COUNT:
+            thin.append(f"{question} ({len(pos)} yes, {len(neg)} no)")
             continue
         line = lines[question]
         bal = (sum(p >= line for p in pos) / len(pos) + sum(n < line for n in neg) / len(neg)) / 2
         aucs.append(auc(pos, neg))
         bals.append(bal)
-        print(f"  {question[:46]:46s}  {aucs[-1]:.2f} / {bal:.2f}   (yes from {line:.2f}, {len(pos)} of {len(pos) + len(neg)})")
+        print(f"  {question[:46]:46s}  {aucs[-1]:.2f} / {bal:.2f}   (yes from {line:.3f}, {len(pos)} of {len(pos) + len(neg)})")
     question_rate = statistics.mean(bals)
-    print(f"questions: mean AUC {statistics.mean(aucs):.3f}, mean balanced accuracy {question_rate:.3f}")
+    print(f"questions: mean AUC {statistics.mean(aucs):.3f}, mean balanced accuracy {question_rate:.3f} "
+          f"over {len(bals)} of {len(QUESTIONS)} questions")
+    if thin:
+        print(f"  too few yeses or noes here to count: {'; '.join(thin)}")
 
     weakest_real = min(real)
     refused = [q for v, q in real if v < MIN_SEPARATION]
     stopped = sum(1 for v, _ in nonsense if v < MIN_SEPARATION)
     gate_ok = not refused
-    print(f"gate: weakest real question separates by {weakest_real[0]:.2f} ({weakest_real[1]!r}); "
-          f"{'none' if gate_ok else refused} refused at MIN_SEPARATION {MIN_SEPARATION}; "
-          f"{stopped} of {len(nonsense)} nonsense questions turned away")
+    print(f"gate: of {len(real)} answerable questions the weakest separates by {weakest_real[0]:.2f} "
+          f"({weakest_real[1]!r}); {'none' if gate_ok else refused} refused at MIN_SEPARATION {MIN_SEPARATION}; "
+          f"{stopped} of {len(nonsense)} nonsense questions turned away; "
+          f"unanswerable: {', '.join(f'{q!r} {v:.2f}' for v, q in unanswerable)}")
 
     return 0 if lane_rate >= LANE_BAR and question_rate >= QUESTION_BAR and gate_ok else 1
 

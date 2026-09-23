@@ -41,7 +41,7 @@ class TxContext(TypedDict):
     topics: list[str]  # topic0 of every log in the receipt, lowercase, in log order
     sender: str      # tx.from, lowercase
     emitters: list[str]  # the address that emitted each of `topics`, same order
-    factories: dict[str, str]  # pool address -> the factory that deployed it, for the pools that swapped
+    factories: dict[str, str]  # pool address -> the factory that deployed it, for this transaction's pools
 
 
 class Item(TypedDict):

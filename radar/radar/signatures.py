@@ -194,11 +194,16 @@ BRIDGE_IN = {
     "0xfef24569acf839f2b5cb23fd59d8a9bcc21650ff711ac1961ca3c5d4681ffe12",
 }
 
-# Swap events logged by pools that answer factory(); the feed asks each such
-# pool once who deployed it (see arc.py).
-POOL_SWAP_TOPICS = {
-    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",
-    "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822",
+# Events logged by pools that answer factory() -- Uniswap-v3 style Swap, Mint,
+# Burn and Collect, and the v2 pair's Swap. The feed asks each such pool once
+# who deployed it (see arc.py), so a liquidity move is named as surely as a
+# trade on the same pool.
+POOL_TOPICS = {
+    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",  # Swap — v3 pool
+    "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",  # Mint — v3 pool
+    "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c",  # Burn — v3 pool
+    "0x70935338e69775456a85ddef226c395fb668b63fa0115f5f20610b388e6ca9c0",  # Collect — v3 pool
+    "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822",  # Swap — v2 pair
 }
 
 # Uniswap on Arc, from developers.uniswap.org's v4 deployment list. Arc is on
@@ -268,6 +273,9 @@ def protocol_of(ctx: TxContext | None) -> str:
     venue = venue_of(ctx)
     if venue:
         return venue
-    if ctx["to"] == USDC:
+    # The USDC contract called directly, or USDC sent as plain value -- which
+    # on Arc is the same money moving natively. Neither is "an unknown
+    # contract", which is what the page says when this is empty.
+    if ctx["to"] == USDC or ctx["selector"] == "0x":
         return "USDC"
     return ""
