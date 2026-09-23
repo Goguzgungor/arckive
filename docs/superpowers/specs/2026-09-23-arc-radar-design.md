@@ -69,8 +69,10 @@ returns `null` for fresh transactions). Supports JSON-RPC batch requests,
 
 **`radar/arc.py` — feed.**
 
-- Poll `eth_blockNumber` every second. Arc has instant finality, so read up
-  to head.
+- Poll `eth_blockNumber` every second. Arc has instant finality, so there
+  is no reorg handling; the feed reads up to two blocks behind the head,
+  because the logs can come from a pool endpoint a block or two behind the
+  one that announced it.
 - One `eth_getLogs` for USDC (`0x3600000000000000000000000000000000000000`),
   topic0 `Transfer`, over the new block range.
 - For each distinct transaction: `eth_getTransactionByHash` +
@@ -155,8 +157,8 @@ wording is the first thing to tune against the eval set.
 Based on the Stellar radar's `web/index.html`: same layout, type, colour
 system, viewer question box and "best answers on top" ranking.
 
-- Ten columns (nine lanes + uncertain); on narrow screens they stack as the
-  Stellar page does.
+- Ten lane chips (nine lanes + uncertain) with counts and volume above one
+  stream of rows.
 - Row: exact amount, protocol label, from → to (shortened), explorer link.
 - Header strip: transfers/s, typed/s, sent to model/s, model ms per batch,
   and **USDC volume per lane over the last 10 minutes**.

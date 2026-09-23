@@ -235,6 +235,10 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   branch (served at `arckive.org`).
 - `.github/workflows/verify-install.yml` (manual): applies the published
   `install.yaml` to a fresh kind cluster.
+- Arc Radar: the `radar` job in `ci.yml` runs `pytest` and `docker build` in
+  `radar/`; `.github/workflows/radar-deploy.yml` (push to `main` touching
+  `radar/**`) triggers the Dokploy deploy through the
+  `DOKPLOY_RADAR_DEPLOY_URL` secret, and no-ops when it is unset.
 
 Keep `README.md` (quickstart, benchmark table, metric list) in sync when
 behavior visible to users changes.

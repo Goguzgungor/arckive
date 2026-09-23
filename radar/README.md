@@ -2,10 +2,10 @@
 
 Every USDC transfer on Arc mainnet, sorted by what it means, as it lands.
 
-A Mac reads Arc's live transfer feed and sorts every USDC movement into one of
-nine lanes — swap, bridge, liquidity, vault, lending, signed payment, payment,
-mint-burn, spam — using a 322M-parameter decision model running locally on the
-GPU. No API key, no cloud round trip, no per-transfer cost.
+Arc Radar reads Arc's live transfer feed, and Laya, a 322M-parameter decision
+model, sorts each USDC transfer into one of nine lanes — swap, bridge,
+liquidity, vault, lending, signed payment, payment, mint-burn, spam. No API
+key and no per-transfer cost.
 
 ## What makes it possible
 
@@ -94,6 +94,13 @@ model call rather than sized for this app's own throughput alone: a large
 batch can hold the shared GPU for several seconds and starve the other app's
 work.
 
+The LaunchAgents in `scripts/` (`com.arc-radar.model.plist` for layad on
+8918, `com.arc-radar.gate.plist` for the gate on 8919, and the tunnel) are
+only for a Mac that does not already run them. On a Mac where another radar's
+layad and gate already hold 8918 and 8919, load none of them: point
+`LAYA_ENDPOINT` at the existing gate and reuse its `RADAR_TOKEN`, since a
+second copy would fail to bind those ports or, worse, load the model twice.
+
 ### Environment variables
 
 | Variable | Default | Purpose |
@@ -130,6 +137,10 @@ cd radar && docker build -t arc-radar:dev .
 RADAR_TOKEN=... docker compose up --build
 ```
 
+The container's healthcheck calls `/healthz`, which answers 503 once no
+transfer has arrived for two minutes, so a dead feed marks the container
+unhealthy instead of leaving a frozen wall up.
+
 `docker-compose.yml` reaches the Mac's model gate at `172.17.0.1:8919` by
 default (the container's Docker bridge address) — override `LAYA_ENDPOINT` if
 the model is reached a different way, e.g. through a reverse tunnel to a
@@ -148,9 +159,9 @@ radar/arc.py         live USDC transfer feed over RPC, reconnecting
 radar/rpc.py         RPC pool with priority fallback
 radar/summarize.py   transfer -> shape sentence
 radar/classify.py    batched lane question, cached per shape
-radar/gate.py        authenticating gate in front of the model
-radar/modelgate.py   the gate's HTTP entrypoint
-radar/sanitize.py    neutralise attacker-controlled fields
+radar/gate.py        screens viewer questions before they reach the model
+radar/modelgate.py   authenticating gate in front of the model
+radar/sanitize.py    phrases that mark a question as an injection attempt
 radar/server.py      pipeline, stats, websocket
 web/index.html       the wall
 ```
