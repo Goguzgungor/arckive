@@ -99,7 +99,15 @@ class RpcPool:
         ep.until = 0.0
 
     async def _post(self, ep: _Endpoint, payload: Any) -> Any | None:
-        """POST to one endpoint; None when the endpoint itself failed."""
+        """POST to one endpoint; None when the endpoint itself failed.
+
+        A 200 that is not JSON-RPC -- an object for a batch, a list for a
+        single call, an object with neither `result` nor `error` (a gateway
+        answering a rate limit as `{"code": 429, ...}`) -- is an outage
+        wearing a success code, so it is rested like one. Handing it on would
+        give the feed something it cannot read, and one unreadable answer
+        used to end the feed for good.
+        """
         try:
             response = await self._client.post(ep.url, json=payload)
         except httpx.HTTPError as exc:
@@ -116,6 +124,9 @@ class RpcPool:
         except ValueError:
             self._rest(ep, "non-JSON body")
             return None
+        if not _well_formed(body, batch=isinstance(payload, list)):
+            self._rest(ep, "malformed reply")
+            return None
         self._healthy(ep)
         return body
 
@@ -126,13 +137,15 @@ class RpcPool:
             if body is None:
                 last = f"{ep.url} failed"
                 continue
-            if "error" in body:
+            error = body.get("error")
+            if error is not None:
                 # A JSON-RPC error is an answer, not an outage: the endpoint is
                 # up but will not serve this request (range limits differ per
                 # provider), so try the next one without resting this one.
-                last = f"{ep.url}: {body['error'].get('message', body['error'])}"
+                why = error.get("message", error) if isinstance(error, dict) else error
+                last = f"{ep.url}: {why}"
                 continue
-            return body.get("result")
+            return body["result"]
         raise RpcError(f"{method}: {last}")
 
     async def batch(self, calls: list[tuple[str, list[Any]]], *, retry_null: bool = False) -> list[Any]:
@@ -156,12 +169,24 @@ class RpcPool:
                 continue
             answered = set()
             for item in body:
-                i = ids.get(item.get("id"))
-                if i is None or "error" in item:
+                # One garbled entry costs only its own call: it stays pending
+                # and is asked of the next endpoint with the other misses.
+                if not isinstance(item, dict):
                     continue
-                results[i] = item.get("result")
+                rid = item.get("id")
+                i = ids.get(rid) if isinstance(rid, int) else None
+                if i is None or item.get("error") is not None or "result" not in item:
+                    continue
+                results[i] = item["result"]
                 if results[i] is not None or not retry_null:
                     answered.add(i)
             pending = [i for i in pending if i not in answered]
             if not retry_null and not pending:
                 return
+
+
+def _well_formed(body: Any, *, batch: bool) -> bool:
+    """Whether a reply has the JSON-RPC shape the request asked for."""
+    if batch:
+        return isinstance(body, list)
+    return isinstance(body, dict) and ("result" in body or body.get("error") is not None)

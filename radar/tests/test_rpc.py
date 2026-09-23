@@ -140,3 +140,71 @@ def test_default_urls(monkeypatch):
     assert default_urls()[0] == "https://rpc.mainnet.arc.io"
     monkeypatch.setenv("ARC_RPCS", " https://x , ,https://y")
     assert default_urls() == ["https://x", "https://y"]
+
+
+# 200 replies that are not JSON-RPC. Each one rests the endpoint like an
+# outage and the call moves on, instead of reaching the caller as a value.
+NOT_JSONRPC = {
+    "no-result": lambda body: httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"]}),
+    "list": lambda body: httpx.Response(200, json=[]),
+    "bare-429": lambda body: httpx.Response(200, json={"code": 429, "message": "x"}),
+}
+
+
+@pytest.mark.parametrize("name", list(NOT_JSONRPC))
+def test_call_rests_an_endpoint_that_answers_nonsense(name):
+    clock = Clock()
+    handle, hits = handler_for({A: NOT_JSONRPC[name], B: ok(lambda c: "0x20")})
+    pool = RpcPool([A, B], transport=httpx.MockTransport(handle), clock=clock)
+    assert run(pool.call("eth_blockNumber", [])) == "0x20"
+    assert pool.cooling_until(A) > clock.now
+
+
+@pytest.mark.parametrize("name", list(NOT_JSONRPC))
+def test_call_raises_only_rpc_error_when_nobody_makes_sense(name):
+    handle, _ = handler_for({A: NOT_JSONRPC[name]})
+    pool = RpcPool([A], transport=httpx.MockTransport(handle))
+    with pytest.raises(RpcError):
+        run(pool.call("eth_blockNumber", []))
+
+
+def test_call_passes_a_null_result_through():
+    # Null is a real answer for some methods (an unknown transaction); the
+    # feed decides that it is not one for a head or a log range.
+    handle, _ = handler_for({A: ok(lambda c: None)})
+    pool = RpcPool([A], transport=httpx.MockTransport(handle))
+    assert run(pool.call("eth_blockNumber", [])) is None
+
+
+def test_string_error_moves_on():
+    err = lambda body: httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "error": "limit"})
+    handle, _ = handler_for({A: err, B: ok(lambda c: "0x5")})
+    pool = RpcPool([A, B], transport=httpx.MockTransport(handle))
+    assert run(pool.call("eth_getLogs", [{}])) == "0x5"
+
+
+def test_batch_skips_garbled_items_and_asks_again_elsewhere():
+    def garbled(body):
+        first = {"jsonrpc": "2.0", "id": body[0]["id"], "result": "fromA"}
+        return httpx.Response(200, json=[first, 7, "x", None, {"jsonrpc": "2.0", "id": [1]}])
+
+    handle, hits = handler_for({A: garbled, B: ok(lambda c: "fromB")})
+    pool = RpcPool([A, B], transport=httpx.MockTransport(handle))
+    out = run(pool.batch([("eth_getCode", ["0x1", "latest"]), ("eth_getCode", ["0x2", "latest"])]))
+    assert out == ["fromA", "fromB"]
+    assert [len(h[1]) for h in hits] == [2, 1]  # only the unanswered one is re-asked
+
+
+def test_batch_rests_an_endpoint_that_answers_an_object():
+    clock = Clock()
+    obj = lambda body: httpx.Response(200, json={"jsonrpc": "2.0", "id": None, "result": []})
+    handle, _ = handler_for({A: obj, B: ok(lambda c: "fromB")})
+    pool = RpcPool([A, B], transport=httpx.MockTransport(handle), clock=clock)
+    assert run(pool.batch([("eth_getCode", ["0x1", "latest"])])) == ["fromB"]
+    assert pool.cooling_until(A) > clock.now
+
+
+def test_batch_never_raises_when_nobody_makes_sense():
+    handle, _ = handler_for({A: NOT_JSONRPC["bare-429"], B: lambda body: httpx.Response(200, json=[1, 2])})
+    pool = RpcPool([A, B], transport=httpx.MockTransport(handle))
+    assert run(pool.batch([("eth_getTransactionReceipt", ["0x1"])], retry_null=True)) == [None]

@@ -1,7 +1,11 @@
 import asyncio
+import json
 
-from radar.arc import CodeCache, stream_transfers
-from radar.rpc import RpcError
+import httpx
+import pytest
+
+from radar.arc import HEAD_TRAIL, CodeCache, stream_transfers
+from radar.rpc import RpcError, RpcPool
 from radar.types import TRANSFER_TOPIC, USDC
 
 A1 = "0x" + "11" * 20
@@ -19,23 +23,34 @@ def log(tx, index, frm, to, value, block):
 
 
 class FakePool:
-    def __init__(self, heads, logs_by_range=None, receipts=None, codes=None, fail_logs=0):
+    """`heads` are the blocks the feed should read up to; the pool announces
+    each one HEAD_TRAIL blocks later, the way a real head runs ahead of the
+    feed. A None head is a node answering `result: null`."""
+
+    def __init__(self, heads, logs_by_range=None, receipts=None, codes=None, fail_logs=0,
+                 null_logs=0, trail=HEAD_TRAIL):
         self.heads = list(heads)
         self.logs_by_range = logs_by_range or {}
         self.receipts = receipts or {}
         self.codes = codes or {}
         self.fail_logs = fail_logs
+        self.null_logs = null_logs
+        self.trail = trail
         self.calls = []
         self.batches = []
 
     async def call(self, method, params):
         self.calls.append((method, params))
         if method == "eth_blockNumber":
-            return hex(self.heads.pop(0) if len(self.heads) > 1 else self.heads[0])
+            head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
+            return None if head is None else hex(head + self.trail)
         if method == "eth_getLogs":
             if self.fail_logs:
                 self.fail_logs -= 1
                 raise RpcError("boom")
+            if self.null_logs:
+                self.null_logs -= 1
+                return None
             f, t = int(params[0]["fromBlock"], 16), int(params[0]["toBlock"], 16)
             return self.logs_by_range.get((f, t), [])
         raise AssertionError(method)
@@ -141,3 +156,101 @@ def test_code_cache_is_lru():
     cache.put("c", True)              # evicts b
     assert cache.get("b") is None
     assert cache.get("a") is True and cache.get("c") is True
+
+
+def ranges(pool):
+    return [(int(p[0]["fromBlock"], 16), int(p[0]["toBlock"], 16)) for m, p in pool.calls if m == "eth_getLogs"]
+
+
+def test_reads_two_blocks_behind_the_announced_head():
+    # The head can come from one endpoint and the logs from a slower one; a
+    # read right up to the head would skip what the slower one has not seen.
+    pool = FakePool(heads=[102], trail=0, logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]},
+                    receipts={"0xt": {"to": USDC, "input": "0x", "topics": []}})
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 1))
+    assert item["transfer"]["block"] == 100
+    assert ranges(pool) == [(100, 100)]
+
+
+def test_null_head_is_a_failed_tick():
+    slept = []
+
+    async def sleep(s):
+        slept.append(s)
+
+    pool = FakePool(heads=[None, 100], logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]},
+                    receipts={"0xt": {"to": USDC, "input": "0x", "topics": []}})
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=sleep), 1))
+    assert item["transfer"]["tx"] == "0xt"
+    assert slept == [1.0]
+
+
+def test_null_logs_retry_the_same_range():
+    # `null` is not an empty range: the cursor must not move past blocks that
+    # were never actually read.
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]},
+                    receipts={"0xt": {"to": USDC, "input": "0x", "topics": []}}, null_logs=1)
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 1))
+    assert item["transfer"]["tx"] == "0xt"
+    assert ranges(pool) == [(100, 100), (100, 100)]
+
+
+def test_two_transfers_in_one_tx_share_one_context_fetch():
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [
+                        log("0xswap", 0, A1, C1, 5_000_000, 100), log("0xswap", 3, C1, A2, 4_900_000, 100)]},
+                    receipts={"0xswap": {"to": C1, "input": "0x0c307f76", "topics": [TRANSFER_TOPIC]}},
+                    codes={C1: True})
+    first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    context_calls = [m for m, _ in pool.batches[0]]
+    assert context_calls == ["eth_getTransactionByHash", "eth_getTransactionReceipt"]
+    assert first["ctx"] == second["ctx"] == {"to": C1, "selector": "0x0c307f76", "topics": [TRANSFER_TOPIC]}
+
+
+def test_garbled_receipt_costs_only_its_context():
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]})
+
+    async def garbled(calls, *, retry_null=False):
+        pool.batches.append(calls)
+        return ["not a transaction" if m != "eth_getCode" else "0x" for m, _ in calls]
+    pool.batch = garbled
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 1))
+    assert item["ctx"] is None
+
+
+# What real endpoints have been seen to answer with status 200 instead of a
+# JSON-RPC reply. Each one used to raise out of the generator and end the
+# feed for good; now each costs one tick.
+MALFORMED = [
+    {"jsonrpc": "2.0", "id": 1},
+    [],
+    {"code": 429, "message": "rate limited"},
+    {"jsonrpc": "2.0", "id": 1, "result": None},
+    {"jsonrpc": "2.0", "id": 1, "result": 12},
+]
+
+
+@pytest.mark.parametrize("bad", MALFORMED, ids=["no-result", "list", "bare-429", "null", "not-hex"])
+def test_malformed_head_answer_never_ends_the_feed(bad):
+    state = {"bad": 2}
+
+    def handle(request):
+        body = json.loads(request.content)
+        if isinstance(body, list):  # tx, receipt and code lookups
+            return httpx.Response(200, json=[{"jsonrpc": "2.0", "id": c["id"], "result": None} for c in body])
+        if body["method"] == "eth_blockNumber":
+            if state["bad"]:
+                state["bad"] -= 1
+                return httpx.Response(200, json=bad)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": hex(100 + HEAD_TRAIL)})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"],
+                                         "result": [log("0xt", 0, A1, A2, 1, 100)]})
+
+    slept = []
+
+    async def sleep(s):
+        slept.append(s)
+
+    pool = RpcPool(["https://a"], transport=httpx.MockTransport(handle))
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=sleep), 1))
+    assert item["transfer"]["tx"] == "0xt"
+    assert len(slept) == 2  # one failed tick per bad answer, then the feed carried on
