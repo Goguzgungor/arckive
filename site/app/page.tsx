@@ -458,9 +458,8 @@ export default function Page() {
                 <h2>Every USDC transfer on Arc, sorted as it lands.</h2>
                 <p>
                   Arc Radar files each transfer under swap, bridge, liquidity,
-                  payment and more, judged in real time by a small decision
-                  model running on one Mac. Ask it a yes/no question and the
-                  stream re-sorts while you watch.
+                  payment and more, judged in real time by Laya. Ask it a
+                  yes/no question and the stream re-sorts while you watch.
                 </p>
               </div>
               <a className="btn" href={RADAR}>
