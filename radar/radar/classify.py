@@ -21,6 +21,19 @@ from .gate import PROBES
 # labels 4-50% of the time; these nine, reusing the summary's own phrases,
 # agreed 89%.  Laya also clamps its temperature for 11 or more options, which
 # leaves the choice uncalibrated, so the set stays at ten or fewer.
+#
+# `issuance` originally read "USDC was minted or burned", which pulled in
+# ordinary swap legs and wallet-to-wallet transfers on the live wall.
+# scripts/eval.py on 400 live transfers (see live_sample.json) reproduced the
+# problem for a burn/mint framing but not for the current wording, which
+# spells out the shape ("came from nobody" / "sent to nobody and destroyed")
+# instead of the loaded words "minted"/"burned", and rules out anything with
+# other facts attached: agreement 91% (358/392), mean confidence 0.60. The
+# one pattern it still loses to `issuance` is a single repeating campaign --
+# a bridge deposit routed through a smart account with a swap leg -- where
+# the model itself answers at 0.21-0.28 confidence, below UNCERTAIN_BELOW in
+# server.py, so it shows as "uncertain" on the wall rather than as a wrong
+# but confident "issuance".
 LANES = {
     "swap": "tokens were swapped on an exchange",
     "bridge": "funds were sent across chains through a bridge",
@@ -29,7 +42,8 @@ LANES = {
     "lending": "a loan was opened, repaid or liquidated",
     "signed_payment": "the payer signed an authorization and someone else submitted it",
     "payment": "a plain direct transfer from one wallet to another",
-    "issuance": "USDC was minted or burned",
+    "issuance": "new USDC came from nobody, or USDC was sent to nobody and destroyed, "
+                "with nothing else happening in the transaction",
     "spam": "a transfer of less than one cent with nothing else happening",
 }
 

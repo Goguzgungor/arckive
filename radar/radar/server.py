@@ -23,11 +23,12 @@ from .summarize import summarize
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 LOG = logging.getLogger("radar")
 
-# Throughput rises with batch size: 200 transfers per call measured 42/s at the
-# daemon's default internal batch of 16, and 84/s at 256.  Gathering for a beat
-# costs latency the eye cannot see: Arc closes a block every half second, but
-# nobody can read rows faster than a batch lands.
-BATCH_MAX = 400         # transfers per model call
+# The model is shared with another live radar on the same GPU: a cold-cache
+# batch of 400 long Arc sentences held it for ~13s and made that radar drop
+# work. Arc's steady state is ~10-15 transfers per BATCH_WAIT window, so 64
+# only splits the rare startup burst -- it costs nothing in the steady state
+# and stops one radar from starving the other.
+BATCH_MAX = 64          # transfers per model call
 BATCH_WAIT = 1.5        # seconds to gather a batch before sending it
 QUEUE_MAX = 2000        # bounded so a slow model cannot grow memory without bound
 UNCERTAIN_BELOW = 0.35  # below this the lane is shown as uncertain, not guessed
