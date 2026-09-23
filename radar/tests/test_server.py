@@ -73,7 +73,7 @@ def test_work_keeps_rows_flowing_when_model_offline(monkeypatch):
     the batch is shown with a stand-in answer, so the viewer sees the model is
     down without losing the feed.
     """
-    async def failing_classify(texts, rules):
+    async def failing_classify(shapes, stories, rules):
         raise RuntimeError("model unreachable")
     monkeypatch.setattr(server.radar.classifier, "classify", failing_classify)
 
@@ -239,8 +239,8 @@ def test_breaker_rests_the_model_after_two_failures():
     r = Radar(clock=clock)
     calls = []
 
-    async def dead(texts, rules):
-        calls.append(texts)
+    async def dead(shapes, stories, rules):
+        calls.append(shapes)
         raise httpx.ConnectError("All connection attempts failed: http://10.9.8.7:8919")
     r.classifier.classify = dead
 
@@ -264,7 +264,7 @@ def test_breaker_rests_the_model_after_two_failures():
 def test_the_wall_gets_a_generic_failure_never_the_endpoint(exc, shown):
     r = Radar()
 
-    async def dead(texts, rules):
+    async def dead(shapes, stories, rules):
         raise exc
     r.classifier.classify = dead
 
@@ -282,8 +282,8 @@ def test_model_name_is_learned_after_a_success_when_startup_missed_it():
     r = Radar()
     assert r.model == {}
 
-    async def classify(texts, rules):
-        return [SWAP] * len(texts)
+    async def classify(shapes, stories, rules):
+        return [SWAP] * len(shapes)
 
     async def health():
         return {"model": "laya", "backend": "mlx"}
@@ -318,35 +318,46 @@ def test_a_lane_outside_the_choice_set_is_uncertain():
     assert set(r.volume(now=item["seen_at"])) == {"uncertain"}
 
 
-WALLET_A = "0x" + "11" * 20
-WALLET_B = "0x" + "22" * 20
-LEANING_MINT = {"lane": "issuance", "lane_p": 0.45,
-                "probabilities": {"issuance": 0.45, "swap": 0.40, "bridge": 0.15}}
+LEANING_SPAM = {"lane": "spam", "lane_p": 0.45,
+                "probabilities": {"spam": 0.45, "payment": 0.40, "swap": 0.15}}
 
 
-def test_mint_lane_needs_the_zero_address():
-    # Nothing was minted or burned unless one side is the zero address; the
-    # model's runner-up takes the row instead.
-    assert settle_lane(LEANING_MINT, WALLET_A, WALLET_B) == ("swap", 0.40)
-    assert settle_lane(LEANING_MINT, ZERO, WALLET_B) == ("issuance", 0.45)
-    assert settle_lane(LEANING_MINT, WALLET_A, ZERO) == ("issuance", 0.45)
+def test_a_lane_the_transfer_decides_is_shown_as_certain():
+    assert settle_lane(SWAP, "issuance") == ("issuance", 1.0)
+    assert settle_lane(SWAP, "spam") == ("spam", 1.0)
+    # Nothing recognisable: no lane, and no confidence to claim.
+    assert settle_lane(SWAP, "uncertain") == ("uncertain", 0.0)
+    assert settle_lane(SWAP) == ("swap", 0.9)
 
 
-def test_a_weak_runner_up_leaves_a_non_mint_uncertain():
-    weak = {"lane": "issuance", "lane_p": 0.7,
-            "probabilities": {"issuance": 0.7, "swap": 0.2, "bridge": 0.1}}
-    assert settle_lane(weak, WALLET_A, WALLET_B) == ("uncertain", 0.2)
+def test_the_model_cannot_call_real_money_spam():
+    # Spam is a zero transfer with nothing else happening, which the transfer
+    # itself decides; the model's runner-up takes the row instead.
+    assert settle_lane(LEANING_SPAM) == ("payment", 0.40)
+    weak = {"lane": "spam", "lane_p": 0.7, "probabilities": {"spam": 0.7, "payment": 0.2, "swap": 0.1}}
+    assert settle_lane(weak) == ("uncertain", 0.2)
     # An answer with nothing to fall back on cannot be overruled into a lane.
-    assert settle_lane({"lane": "issuance", "lane_p": 0.9}, WALLET_A, WALLET_B)[0] == "uncertain"
+    assert settle_lane({"lane": "spam", "lane_p": 0.9})[0] == "uncertain"
 
 
-def test_rows_keep_non_mints_out_of_the_mint_lane():
+def test_rows_carry_the_lane_the_transfer_decides():
     r = Radar()
-    item = make_item(frm=WALLET_A, to=WALLET_B)
-    rows = r._rows([item], [summarize(item)], [{**SWAP, **LEANING_MINT}], offline=False)
-    assert rows[0]["lane"] == "swap"
-    assert rows[0]["lane_p"] == 0.40
-    assert r.lane_counts == {"swap": 1}
+    minted = make_item(frm=ZERO, selector="0x", tx_to=None)
+    zero = make_item(value=0, selector="0xa9059cbb", log_index=4)
+    unknown = make_item(selector="0xdeadbeef", tx_to="0x" + "cc" * 20, log_index=5)
+    items = [minted, zero, unknown]
+    rows = r._rows(items, [summarize(i) for i in items], [SWAP] * 3, offline=False)
+    assert [(row["lane"], row["ruled"]) for row in rows] == [("issuance", True), ("spam", True), ("uncertain", True)]
+    assert [row["lane_p"] for row in rows] == [1.0, 1.0, 0.0]
+    assert r.lane_counts == {"issuance": 1, "spam": 1, "uncertain": 1}
+
+
+def test_rows_carry_both_sentences():
+    r = Radar()
+    item = make_item()
+    [row] = r._rows([item], [summarize(item)], [SWAP], offline=False)
+    assert row["lane"] == "swap" and row["ruled"] is False
+    assert row["shape"] != row["story"] and row["family"] == row["story"]
 
 
 def test_heartbeat_speaks_only_into_silence():
@@ -467,7 +478,7 @@ def test_screen_paces_new_questions_per_viewer(gate):
         third = await server.screen("is this a bridge deposit?", pace)
         return first, second, known, worded, third
 
-    assert asyncio.run(go()) == ("", "slow", "", "short", "")
+    assert [v for v, _ in asyncio.run(go())] == ["", "slow", "", "short", ""]
     assert probed == ["is this a large swap?", "is this a bridge deposit?"]
 
 
@@ -479,7 +490,7 @@ def test_screen_turns_questions_away_once_the_budget_is_spent(gate, monkeypatch)
         return (await server.screen("is this a large swap?", Pace(clock=clock)),
                 await server.screen("is this a bridge deposit?", Pace(clock=clock)))
 
-    assert asyncio.run(go()) == ("", "busy")
+    assert [v for v, _ in asyncio.run(go())] == ["", "busy"]
     assert "is this a bridge deposit?" not in server.radar.verdicts  # busy is not a verdict
 
 
@@ -489,14 +500,14 @@ def test_screen_refuses_a_question_it_could_not_check(gate, monkeypatch):
     async def broken(question):
         raise httpx.ReadTimeout("model hung")
     monkeypatch.setattr(server.radar.classifier, "probe", broken)
-    assert asyncio.run(server.screen("is this a large swap?", Pace(clock=clock))) == "busy"
+    assert asyncio.run(server.screen("is this a large swap?", Pace(clock=clock)))[0] == "busy"
     assert server.radar.verdicts == {}
 
 
 def test_screen_does_not_probe_a_resting_model(gate, monkeypatch):
     clock, probed = gate
     monkeypatch.setattr(server.radar, "_model_rests_until", server.radar.clock() + 100)
-    assert asyncio.run(server.screen("is this a large swap?", Pace(clock=clock))) == "busy"
+    assert asyncio.run(server.screen("is this a large swap?", Pace(clock=clock)))[0] == "busy"
     assert probed == []
 
 
@@ -511,6 +522,8 @@ def test_websocket_paces_questions_and_keeps_them_private(gate, monkeypatch):
         refused = ws.receive_json()
 
     assert accepted["rule"] == "is this a large swap?" and accepted["answered"] is True
+    # Where a yes starts for this question, measured on the probes.
+    assert accepted["threshold"] == 0.5
     # Telling the viewer it will be answered did not use up its turn.
     assert served == {}
     # Everyone sees how many questions are being asked, nobody sees which.
@@ -518,3 +531,16 @@ def test_websocket_paces_questions_and_keeps_them_private(gate, monkeypatch):
     assert "is this a large swap?" not in json.dumps(stats)
     assert refused["rejected"] == "slow" and refused["because"] == REASONS["slow"]
     assert 0 < refused["retry_in"] <= QUESTION_EVERY
+
+
+def test_screen_measures_where_each_question_says_yes(gate, monkeypatch):
+    clock, _ = gate
+
+    async def shy(question):
+        # Separates the probes, but its yeses sit near 0.35, never above 0.5.
+        return [0.35] * 6 + [0.02] * 18
+    monkeypatch.setattr(server.radar.classifier, "probe", shy)
+    verdict, line = asyncio.run(server.screen("was a fee taken?", Pace(clock=clock)))
+    assert verdict == "" and line == 0.095
+    # Remembered with the verdict: the next viewer to ask gets the same line.
+    assert server.radar.verdicts["was a fee taken?"] == ("", 0.095)

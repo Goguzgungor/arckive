@@ -313,6 +313,10 @@ tallyEl.innerHTML = LANES.map(l =>
 // The stream carries an answer for every question being asked right now, by
 // whoever is watching. This picks out the one this browser asked for.
 let mySlot = null;
+// Where a yes starts for this question. Each question is centred somewhere of
+// its own -- one question's yeses sit near 0.3, another's near 0.9 -- so the
+// server measures the line on its probe transfers when it accepts it.
+let myThreshold = 0.5;
 function answerFor(op) {
   if (!mySlot || !op.rules) return null;
   const p = op.rules[mySlot];
@@ -344,14 +348,21 @@ function row(op, ruleActive) {
   el.style.setProperty("--c", `var(--${op.lane})`);
   if (op.lane_p < 0.35) el.classList.add("low");
   const mine = answerFor(op);
-  if (mine !== null) el.classList.add(mine >= 0.5 ? "hit" : "miss");
+  if (mine !== null) el.classList.add(mine >= myThreshold ? "hit" : "miss");
   const unread = ruleActive && op.stuck;
   if (unread) el.classList.add("unread");
 
   // A dead model still gets a row -- the confidence bar is replaced with a
   // note instead of a fabricated score, reusing the same muted styling a
   // low-confidence reading already gets rather than inventing a new one.
-  const sure = op.offline
+  // Some lanes are read off the transfer itself rather than judged, and a row
+  // the radar recognised nothing in gets no lane at all; neither has a
+  // confidence to print, so each says what it is instead.
+  const sure = op.ruled
+    ? (op.lane === "uncertain"
+      ? `<span class="sure" title="Nothing in this transaction is recognised, so no lane is claimed."><b>unread</b></span>`
+      : `<span class="sure" title="Read off the transfer itself: a mint or burn has the zero address on one side; spam moved zero USDC with nothing else happening."><b>rule</b></span>`)
+    : op.offline
     ? `<span class="sure" title="The decision model was unreachable, so this transfer was not judged."><b>model offline</b></span>`
     : `<span class="sure"><b>${Math.round(op.lane_p * 100)}%</b>` +
       `<i style="--w:${Math.round(op.lane_p * 100)}%"></i></span>`;
@@ -500,13 +511,16 @@ function openDetail(el) {
   if (!held) { setHeld(true); resumeOnClose = true; }
 
   document.getElementById("card").style.setProperty("--c", `var(--${op.lane})`);
-  document.getElementById("sheet-lane").textContent = op.offline
+  document.getElementById("sheet-lane").textContent = op.ruled
+    ? `${LABEL[op.lane] || op.lane} · read off the transfer`
+    : op.offline
     ? `${LABEL[op.lane] || op.lane} · model offline`
     : `${LABEL[op.lane] || op.lane} · confidence ${op.lane_p.toFixed(2)}`;
   document.getElementById("sheet-text").textContent = op.text;
 
   const count = Number(el.querySelector(".rep").dataset.n) || op.count;
-  let rows = field("What the model read", op.shape);
+  let rows = field("What the lane was read from", op.shape);
+  if (op.story && op.story !== op.shape) rows += field("What questions read", op.story);
   rows += field("Facts", op.facts.join(", ") || "—");
   rows += field("Protocol", protocolOf(op));
   rows += field("Amount", `${op.amount.toLocaleString(undefined, {maximumFractionDigits: 6})} USDC`);
@@ -525,7 +539,10 @@ function openDetail(el) {
   if (isExplorer(op.url)) { link.href = op.url; link.hidden = false; }
   else { link.removeAttribute("href"); link.hidden = true; }
   document.getElementById("sheet-note").textContent =
-    op.offline ? "The decision model was unreachable, so this transfer was not judged."
+    op.ruled && op.lane === "uncertain"
+      ? "Nothing in this transaction is recognised, so no lane is claimed: any lane would be a guess."
+    : op.ruled ? "This lane is read off the transfer itself, not judged by the model."
+    : op.offline ? "The decision model was unreachable, so this transfer was not judged."
     : op.lane_p < 0.35 ? "Below the confidence threshold, so it was not assigned a lane."
     : "The label is the model's judgement, not a fact.";
 
@@ -681,7 +698,7 @@ function connect() {
     }
     else if (msg.type === "rule") {
       if (msg.rejected) {
-        mySlot = null; applyRule(null); refuse(msg);
+        mySlot = null; myThreshold = 0.5; applyRule(null); refuse(msg);
         // Checking a new question costs the shared model a forward pass, so
         // the server checks one per viewer every few seconds. Typing in bursts
         // sends one per pause; ask again, with whatever is in the box by
@@ -695,6 +712,7 @@ function connect() {
         return;
       }
       mySlot = msg.slot;
+      myThreshold = typeof msg.threshold === "number" ? msg.threshold : 0.5;
       applyRule(msg.rule);
     }
   };

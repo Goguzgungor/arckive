@@ -12,11 +12,13 @@ So the words are checked here, in plain code, and the meaning is checked by
 running the question and watching what it does.  Gibberish -- "asdfgh",
 "aaaaaaaa", "12345" -- reads as a confident question to the model and is
 trivial to catch with a regular expression.  Polished nonsense -- "is the
-sender a purple elephant?" -- sails through the text checks and collapses the
-moment it is asked of real transfers, because it separates nothing.
+sender a purple elephant?" -- sails through the text checks, and much of it
+answers every transfer alike when it is asked of real ones.  Not all of it:
+see MIN_SEPARATION.
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 
@@ -25,44 +27,64 @@ from .sanitize import _INJECTION
 MIN_CHARS = 6
 MAX_CHARS = 160
 
-# Twenty-four transfer shapes covering what Arc actually carries: swap legs
-# through routers and pools, bridge deposits and CCTP burns, liquidity moves,
-# wrapping, lending, signed payments, smart-account sends, mints, burns, dust
-# and plain transfers.  A probe set sampled from the live stream would be
+# Thirty-five transfers covering what Arc actually carries: swap legs
+# through routers and pools, bridge deposits and fills in both directions,
+# liquidity moves, vaults and wrapping, lending, signed payments, smart-account
+# sends, batch payouts, claims, marketplace sales, mints, burns, dust, zero
+# transfers and plain ones.  A probe set sampled from the live stream would be
 # mostly swap legs, and a fair question about anything else would look flat
-# for want of an example to match.
+# for want of an example to match -- so every fact appears in several probes:
+# with a fee in one probe of 24, "was a fee taken?" separated them by 0.08;
+# with it in four of 35, by 0.16.  Written the way viewers' questions see a
+# transfer -- summarize.py's `story` -- because that is what they are asked of.
 PROBES = [
-    "USDC moved from a wallet to a contract, amount 1 to 100 USDC. In the same transaction: tokens were swapped on an exchange; a fee was taken.",
-    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC. In the same transaction: tokens were swapped on an exchange.",
-    "USDC moved from a contract to a contract, amount under 1 USDC. In the same transaction: tokens were swapped on an exchange.",
-    "USDC moved from a wallet to a contract, amount over 10,000 USDC. In the same transaction: tokens were swapped on an exchange.",
-    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC. In the same transaction: funds were sent across chains through a bridge.",
-    "USDC was burned from a wallet, amount 100 to 10,000 USDC. In the same transaction: funds were sent across chains through a bridge.",
-    "USDC was minted to a wallet, amount 1 to 100 USDC. In the same transaction: funds were sent across chains through a bridge.",
-    "USDC moved from a contract to a contract, amount 1 to 100 USDC. In the same transaction: tokens were swapped on an exchange; funds were sent across chains through a bridge; it was sent by a smart account.",
-    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC. In the same transaction: pool liquidity changed.",
-    "USDC moved from a contract to a wallet, amount 1 to 100 USDC. In the same transaction: pool liquidity changed.",
-    "USDC moved from a wallet to a contract, amount 1 to 100 USDC. In the same transaction: tokens were deposited into or withdrawn from a contract.",
-    "USDC moved from a wallet to a contract, amount over 10,000 USDC. In the same transaction: a loan was opened, repaid or liquidated.",
-    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC. In the same transaction: a loan was opened, repaid or liquidated.",
-    "USDC moved from a wallet to a wallet, amount less than one cent of USDC. In the same transaction: the payer signed an authorization and someone else submitted it.",
-    "USDC moved from a wallet to a wallet, amount 1 to 100 USDC. In the same transaction: the payer signed an authorization and someone else submitted it.",
-    "USDC moved from a contract to a wallet, amount 1 to 100 USDC. In the same transaction: it was sent by a smart account.",
-    "USDC moved from a wallet to a wallet, amount 1 to 100 USDC. In the same transaction: it was a plain direct transfer.",
-    "USDC moved from a wallet to a wallet, amount over 10,000 USDC. In the same transaction: it was a plain direct transfer.",
-    "USDC moved from a wallet to a wallet, amount 0 USDC. In the same transaction: it was a plain direct transfer.",
-    "USDC moved from a wallet to a wallet, amount less than one cent of USDC. In the same transaction: nothing else recognisable happened.",
-    "USDC was minted to a wallet, amount over 10,000 USDC. In the same transaction: nothing else recognisable happened.",
-    "USDC was burned from a contract, amount 100 to 10,000 USDC. In the same transaction: nothing else recognisable happened.",
-    "USDC moved from a contract to a wallet, amount under 1 USDC. In the same transaction: a fee was taken.",
-    "USDC moved from an account to an account, amount 1 to 100 USDC. The rest of the transaction could not be read.",
+    "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange; a fee was taken. Protocol: Uniswap.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange. Protocol: Uniswap.",
+    "USDC moved from a contract to a contract, amount under 1 USDC (less than a dollar). In the same transaction: tokens were swapped on an exchange. Protocol: Aerodrome.",
+    "USDC moved from a wallet to a contract, amount over 10,000 USDC (a large amount). In the same transaction: tokens were swapped on an exchange.",
+    "USDC moved from a contract to a wallet, amount less than one cent of USDC (dust). In the same transaction: tokens were swapped on an exchange; a fee was taken. Protocol: OKX DEX.",
+    "USDC moved from a contract to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange; USDC was wrapped or unwrapped; a fee was taken. Protocol: Uniswap.",
+    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: funds were sent across chains through a bridge (out of Arc). Protocol: Relay.",
+    "USDC was burned from a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: funds were sent across chains through a bridge (out of Arc). Protocol: CCTP.",
+    "USDC was minted to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: funds were sent across chains through a bridge (into Arc). Protocol: CCTP.",
+    "USDC moved from a contract to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: funds were sent across chains through a bridge (out of Arc); tokens were swapped on an exchange; it was sent by a smart account. Protocol: Relay.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: funds were sent across chains through a bridge (into Arc).",
+    "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: funds were sent across chains through a bridge (out of Arc); tokens were swapped on an exchange; a fee was taken. Protocol: LI.FI.",
+    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: liquidity was added to or removed from a pool. Protocol: Uniswap.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: liquidity was added to or removed from a pool.",
+    "USDC moved from a contract to a contract, amount under 1 USDC (less than a dollar). In the same transaction: liquidity was added to or removed from a pool; tokens were swapped on an exchange. Protocol: Aerodrome.",
+    "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: funds were deposited into or withdrawn from a vault.",
+    "USDC moved from a wallet to a contract, amount under 1 USDC (less than a dollar). In the same transaction: USDC was wrapped or unwrapped.",
+    "USDC moved from a wallet to a contract, amount over 10,000 USDC (a large amount). In the same transaction: a loan was opened, repaid or liquidated.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: a loan was opened, repaid or liquidated.",
+    "USDC moved from a wallet to a wallet, amount less than one cent of USDC (dust). In the same transaction: a gasless signed payment: the payer signed an authorization and someone else submitted it.",
+    "USDC moved from a wallet to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: a gasless signed payment: the payer signed an authorization and someone else submitted it.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: it was sent by a smart account.",
+    "USDC moved from a contract to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange; it was sent by a smart account. Protocol: Uniswap.",
+    "USDC moved from a wallet to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: it was a plain direct transfer.",
+    "USDC moved from a wallet to a wallet, amount over 10,000 USDC (a large amount). In the same transaction: it was a plain direct transfer.",
+    "USDC moved from a wallet to a wallet, amount less than one cent of USDC (dust). In the same transaction: it was a plain direct transfer.",
+    "USDC moved from a wallet to a wallet, amount zero USDC. In the same transaction: nothing else recognisable happened.",
+    "USDC moved from a contract to a wallet, amount zero USDC. In the same transaction: nothing else recognisable happened.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: a batch of payments was sent to many recipients.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: a batch of payments was sent to many recipients.",
+    "USDC moved from a contract to a wallet, amount under 1 USDC (less than a dollar). In the same transaction: rewards or payouts were claimed or distributed.",
+    "USDC moved from a wallet to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were bought or sold on a marketplace.",
+    "USDC moved from an account to an account, amount 1 to 100 USDC (a small amount). The rest of the transaction could not be read.",
+    "USDC was minted to a wallet, amount over 10,000 USDC (a large amount). In the same transaction: nothing else recognisable happened.",
+    "USDC was burned from a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: nothing else recognisable happened.",
 ]
 
 # Below this the question put every probe in the same place, so it would put
-# every operation in the same place too.  Set from measurement: the weakest
-# real question in the test set separates by 0.23, the strongest nonsense that
-# survives the text checks by 0.16.
-MIN_SEPARATION = 0.20
+# every transfer in the same place too.  Set so that no question the radar can
+# answer is turned away: on 32 real questions the weakest answerable one,
+# "was a fee taken?", separates the probes by 0.16 (the 0.20 this replaced
+# refused it). Half of 14 polished-nonsense questions fall below it; the other
+# half separate the probes as well as a weak real question does -- the model
+# answers "does this payment like jazz music?" differently for payments than
+# for swaps -- and cannot be told apart this way. The page shows those how
+# weakly they sort.
+MIN_SEPARATION = 0.12
 
 _WORD = re.compile(r"[a-z]{2,}")
 _VOWEL = re.compile(r"[aeiouy]")
@@ -131,6 +153,32 @@ def inspect(text: str) -> str:
     if len(set(words)) == 1:
         return "gibberish"
     return ""
+
+
+def threshold(scores: list[float]) -> float:
+    """Where a yes starts, for one question, from its answers over the probes.
+
+    A question's answers are not centred on 0.5. "Was a fee taken?" put every
+    transfer that paid one near 0.1 and every other near 0.01, and "is this
+    spam or dust?" put its yeses near 0.05 -- ranked almost perfectly, read as
+    "no" at 0.5. The line is halfway between the probes' low and high answers
+    in log-odds, where the model decides, rather than in probability, where
+    such answers crowd against zero; the most extreme probe on each side is
+    left out, so one odd probe cannot drag it.
+
+    Measured on 4,000 live transfers and 24 questions: balanced accuracy 0.773
+    at a flat 0.5, 0.783 at the probability midpoint, 0.823 at this one.
+    """
+    if len(scores) < 4:
+        return 0.5
+    ranked = sorted(scores)
+    low, high = _logit(ranked[1]), _logit(ranked[-2])
+    return round(1 / (1 + math.exp(-(low + high) / 2)), 3)
+
+
+def _logit(p: float) -> float:
+    p = min(max(p, 1e-4), 1 - 1e-4)
+    return math.log(p / (1 - p))
 
 
 def separation(scores: list[float]) -> float:
