@@ -15,8 +15,10 @@ RUN useradd --system --no-create-home --uid 10001 radar
 USER radar
 
 # The model is not in this image. It stays on the machine with the GPU and is
-# reached over LAYA_ENDPOINT, so this container is small and stateless.
-ENV LAYA_ENDPOINT=http://172.17.0.1:8919
+# reached over LAYA_ENDPOINT, so this container is small and stateless. The
+# default is the model gate's public hostname, which a Cloudflare Tunnel on the
+# Mac serves; every call still needs RADAR_TOKEN.
+ENV LAYA_ENDPOINT=https://laya-gate.brages.uk
 EXPOSE 8777
 
 # /healthz turns 503 once no transfer has arrived for two minutes; /api/stats

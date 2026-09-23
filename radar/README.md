@@ -141,16 +141,25 @@ The container's healthcheck calls `/healthz`, which answers 503 once no
 transfer has arrived for two minutes, so a dead feed marks the container
 unhealthy instead of leaving a frozen wall up.
 
-`docker-compose.yml` reaches the Mac's model gate at `172.17.0.1:8919` by
-default (the container's Docker bridge address) — override `LAYA_ENDPOINT` if
-the model is reached a different way, e.g. through a reverse tunnel to a
-remote host's Docker bridge.
+The model gate on the Mac is published by a Cloudflare Tunnel (`cloudflared
+tunnel run laya-gate`) at `https://laya-gate.brages.uk`, which is the default
+`LAYA_ENDPOINT` in both the Dockerfile and `docker-compose.yml`. The gate
+answers 401 without the bearer `RADAR_TOKEN`. Override `LAYA_ENDPOINT` if the
+model is reached another way — `scripts/tunnel.sh` sets up the SSH
+reverse-tunnel alternative, which lands the gate on the server's Docker bridge
+at `http://172.17.0.1:8919`.
 
-Pushing to `main` with changes under `radar/**` triggers a deploy via
-`.github/workflows/radar-deploy.yml`, which POSTs to a Dokploy deploy webhook
-shaped like a GitHub push event (Dokploy's webhook checks the branch, and a
-bare POST is answered "Branch Not Match"). It no-ops if the
-`DOKPLOY_RADAR_DEPLOY_URL` repository secret isn't set.
+Production runs on Dokploy (project Arckive, service `radar`): repo
+`arckive`, branch `main`, build path `/radar`, Dockerfile build, watch path
+`radar/**` with autodeploy on, domain `radar.arckive.org` on port 8777 with a
+Let's Encrypt certificate. A push to `main` that touches `radar/**` redeploys
+it.
+
+`.github/workflows/radar-deploy.yml` is a fallback for when Dokploy's push
+webhook is not delivering: it POSTs to the app's deploy webhook, shaped like a
+GitHub push event (Dokploy checks the branch, and a bare POST is answered
+"Branch Not Match"). It no-ops unless the `DOKPLOY_RADAR_DEPLOY_URL`
+repository secret is set.
 
 ## Layout
 
