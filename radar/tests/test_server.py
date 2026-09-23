@@ -81,3 +81,13 @@ def test_work_keeps_rows_flowing_when_model_offline(monkeypatch):
     assert all(row["lane"] == "uncertain" for row in rows)
     assert all(row["offline"] is True for row in rows)
     assert server.radar.failures == before_failures + 1
+
+
+def test_index_is_arc(monkeypatch):
+    with idle_app(monkeypatch) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "<title>Arc Radar</title>" in page.text
+        for word in ("Stellar", "XLM", "Horizon", "sorolog"):
+            assert word not in page.text
+        assert client.get("/favicon.svg").status_code == 200
