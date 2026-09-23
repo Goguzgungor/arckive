@@ -67,7 +67,7 @@ def _party(address: str, contracts: dict[str, bool]) -> str:
 
 
 def _short(address: str) -> str:
-    return f"{address[:6]}…{address[-5:-1]}"
+    return f"{address[:6]}…{address[-4:]}"
 
 
 def summarize(item: Item) -> Summary:

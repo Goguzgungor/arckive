@@ -41,7 +41,7 @@ def test_okx_swap_leg():
     assert s["id"] == f"{TX}:3"
     assert s["url"] == f"https://explorer.arc.io/tx/{TX}"
     assert s["family"] == "OKX DEX|" + s["shape"]
-    assert s["text"] == "49.88 USDC · 0x1111…1111 → 0x4e3b…7bbe"
+    assert s["text"] == "49.88 USDC · 0x1111…1111 → 0x4e3b…bbe0"
 
 
 def test_uniswap_universal_router():
