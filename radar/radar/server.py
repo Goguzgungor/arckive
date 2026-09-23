@@ -20,19 +20,19 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from .arc import stream_transfers
 from .classify import LANES, Classifier
-from .gate import MIN_SEPARATION, REASONS, inspect, separation
+from .gate import MIN_SEPARATION, REASONS, inspect, separation, threshold
 from .rpc import RpcPool, default_urls
 from .summarize import summarize
-from .types import ZERO
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 LOG = logging.getLogger("radar")
 
 # The model is shared with another live radar on the same GPU: a cold-cache
 # batch of 400 long Arc sentences held it for ~13s and made that radar drop
-# work. Arc's steady state is ~10-15 transfers per BATCH_WAIT window, so 64
-# only splits the rare startup burst -- it costs nothing in the steady state
-# and stops one radar from starving the other.
+# work. Arc's steady state, native transfers included, is ~20-40 transfers per
+# BATCH_WAIT window, almost all of them sentences already judged, so 64 only
+# splits bursts -- it costs nothing in the steady state and stops one radar
+# from starving the other.
 BATCH_MAX = 64          # transfers per model call
 BATCH_WAIT = 1.5        # seconds to gather a batch before sending it
 QUEUE_MAX = 2000        # bounded so a slow model cannot grow memory without bound
@@ -172,21 +172,24 @@ class ProbeBudget:
         return True
 
 
-def settle_lane(answer: dict[str, Any], frm: str, to: str) -> tuple[str, float]:
+def settle_lane(answer: dict[str, Any], ruled: str = "") -> tuple[str, float]:
     """The lane a row is shown in, and the confidence shown beside it.
 
-    The model reads the shape, not the addresses, and on live traffic it filed
-    ordinary swap legs and wallet payments under mint / burn at ~40%. Whether
-    anything was minted or burned is not a judgement, though: one side is the
-    zero address or it is not. So a mint the transfer rules out goes to the
-    model's runner-up instead, and like any answer is shown as uncertain when
-    that is too weak to stand on.
+    A lane the transfer itself decides (see summarize.ruled_lane) is shown as
+    it is, certain -- or, when nothing in the transaction was recognisable,
+    as uncertain, with no confidence to show. Otherwise the model's choice
+    stands, with one exception: spam is also the transfer's call, not the
+    model's. A model that files a transfer of real money as spam is overruled
+    in favour of its runner-up, and like any answer that is shown as
+    uncertain when it is too weak to stand on.
     """
+    if ruled:
+        return ruled, 0.0 if ruled == "uncertain" else 1.0
     lane, confidence = answer.get("lane", ""), answer.get("lane_p", 0.0)
-    if lane == "issuance" and ZERO not in (frm, to):
+    if lane == "spam":
         rest = {
             other: p for other, p in (answer.get("probabilities") or {}).items()
-            if other in LANES and other != "issuance"
+            if other in LANES and other != "spam"
         }
         if not rest:
             return "uncertain", 0.0
@@ -226,7 +229,7 @@ class Radar:
         # a property of the sentence, not of who typed it, so the second
         # person to ask something is answered from here instead of spending a
         # forward pass on it.
-        self.verdicts: dict[str, str] = {}
+        self.verdicts: dict[str, tuple[str, float]] = {}
         self.budget = ProbeBudget(clock=clock)
         self.probing = asyncio.Semaphore(1)
         self.failures = 0
@@ -430,7 +433,7 @@ class Radar:
         # transaction counts once per lane, at its largest leg.
         largest: dict[tuple[str, str], tuple[float, float]] = {}
         for item, summary, answer in zip(batch, summaries, answers):
-            lane, confidence = settle_lane(answer, summary["frm"], summary["to"])
+            lane, confidence = settle_lane(answer, summary["ruled"])
             self.lane_counts[lane] += 1
             self.classified += 1
             leg = (summary["tx"], lane)
@@ -444,7 +447,11 @@ class Radar:
                 "id": summary["id"],
                 "text": summary["text"],
                 "shape": summary["shape"],
+                "story": summary["story"],
                 "family": summary["family"],
+                # Decided by the transfer itself, not by the model: the page
+                # says so instead of printing a confidence.
+                "ruled": bool(summary["ruled"]),
                 "protocol": summary["protocol"],
                 "facts": summary["facts"],
                 "amount": summary["amount"],
@@ -517,7 +524,9 @@ class Radar:
         asked = self.rules_by_slot()
         started = time.monotonic()
         try:
-            answers = await self.classifier.classify([s["shape"] for s in summaries], asked)
+            answers = await self.classifier.classify(
+                [s["shape"] for s in summaries], [s["story"] for s in summaries], asked,
+            )
         except Exception as exc:  # noqa: BLE001 - keep the radar alive
             self._model_failed(exc)
             return self._offline(batch, summaries)
@@ -567,8 +576,11 @@ def slot_name(sentence: str) -> str:
     return "r" + hashlib.sha1(sentence.encode()).hexdigest()[:10]
 
 
-async def screen(question: str, pace: Pace) -> str:
+async def screen(question: str, pace: Pace) -> tuple[str, float]:
     """Decide whether a question is worth putting to the network.
+
+    Returns the refusal reason ('' to accept) and, for an accepted question,
+    where its yes starts (see gate.threshold).
 
     Cheap check first: most of what gets rejected is rejected on its wording
     and never reaches the model. What survives is run against the probe set,
@@ -583,31 +595,32 @@ async def screen(question: str, pace: Pace) -> str:
     """
     if question in radar.verdicts:
         return radar.verdicts[question]
-    verdict = inspect(question)
+    verdict, line = inspect(question), 0.5
     if not verdict:
         if radar.model_resting():
             # The model just failed twice in a row; a check now would wait
             # out the timeout, holding the probe lock, only to fail.
-            return "busy"
+            return "busy", line
         if pace.wait() > 0:
-            return "slow"
+            return "slow", line
         if not radar.budget.take():
-            return "busy"
+            return "busy", line
         pace.spend()
         try:
             async with radar.probing:
                 scores = await radar.classifier.probe(question)
             verdict = "" if separation(scores) >= MIN_SEPARATION else "flat"
+            line = threshold(scores)
         except Exception as exc:  # noqa: BLE001 - a failed check is not a pass
             # Letting the question through unchecked would put an unscreened
             # sentence to the model on every batch; asking again later costs
             # the viewer one retry.
             LOG.warning("probe failed for %r: %s: %s", question[:60], type(exc).__name__, exc)
-            return "busy"
-    radar.verdicts[question] = verdict
+            return "busy", line
+    radar.verdicts[question] = (verdict, line)
     if len(radar.verdicts) > 4000:
         radar.verdicts.pop(next(iter(radar.verdicts)))
-    return verdict
+    return verdict, line
 
 
 radar = Radar()
@@ -712,7 +725,7 @@ async def websocket(ws: WebSocket) -> None:
             # than taking a slot from someone whose question works, and the
             # viewer is told which rule it hit instead of watching a column
             # of numbers that all say the same thing.
-            verdict = await screen(rule, pace)
+            verdict, line = await screen(rule, pace)
             if verdict:
                 reply = {"type": "rule", "rule": None, "slot": None, "answered": True,
                          "rejected": verdict, "because": REASONS[verdict], "asked": rule}
@@ -735,7 +748,7 @@ async def websocket(ws: WebSocket) -> None:
             # question to the back before any batch had answered it.
             answered = slot in radar.next_slots()
             await ws.send_json(
-                {"type": "rule", "rule": rule, "slot": slot, "answered": answered}
+                {"type": "rule", "rule": rule, "slot": slot, "answered": answered, "threshold": line}
             )
     except WebSocketDisconnect:
         pass

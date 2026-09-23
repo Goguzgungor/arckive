@@ -1,8 +1,9 @@
 """Client for the local decision model behind layad.
 
-One batch call answers every question for every transfer in a single forward
-pass, which is the property the radar is built on.  A hosted model would bill
-per transfer and could not run on every keystroke.
+A batch call answers every question for every transfer in a few milliseconds
+each, on a GPU the radar does not pay per call for, which is the property the
+radar is built on.  A hosted model would bill per transfer and could not run
+on every keystroke.
 """
 from __future__ import annotations
 
@@ -15,54 +16,65 @@ import httpx
 
 from .gate import PROBES
 
-# Nine lanes, each described in the exact words summarize.py uses for the fact
-# that defines it.  Measured on 384 live Arc transfers: eleven lanes described
-# abstractly ("USDC traded for another token on a DEX") agreed with the rule
-# labels 4-50% of the time; these nine, reusing the summary's own phrases,
-# agreed 89%.  Laya also clamps its temperature for 11 or more options, which
-# leaves the choice uncalibrated, so the set stays at ten or fewer.
+# The lanes the model chooses between, each described in the words the lane
+# sentence uses for the fact that defines it, with the tie-break for mixed
+# transactions spelled out ("even if tokens were also swapped"): a swap that
+# ends in a bridge deposit is a bridge transfer. Measured on 16,172 USDC
+# movements from ten minutes of mainnet, against lanes read off what each
+# transaction actually did: 99.9% agreement, 0.1% below UNCERTAIN_BELOW, the
+# right lane at 0.83 on average. The set this replaced scored 78.9%, with
+# 15.8% of rows uncertain.
 #
-# `issuance` originally read "USDC was minted or burned", which pulled in
-# ordinary swap legs and wallet-to-wallet transfers on the live wall.
-# scripts/eval.py on 400 live transfers (see live_sample.json) reproduced the
-# problem for a burn/mint framing but not for the current wording, which
-# spells out the shape ("came from nobody" / "sent to nobody and destroyed")
-# instead of the loaded words "minted"/"burned", and rules out anything with
-# other facts attached: agreement 91% (358/392), mean confidence 0.60. The
-# one pattern it still loses to `issuance` is a single repeating campaign --
-# a bridge deposit routed through a smart account with a swap leg -- where
-# the model itself answers at 0.21-0.28 confidence, below UNCERTAIN_BELOW in
-# server.py, so it shows as "uncertain" on the wall rather than as a wrong
-# but confident "issuance".
+# What moved it, each measured on its own:
+#   * "What kind of Arc transaction is this?" over "What happened in this Arc
+#     transaction?" -- the same answers, held with more confidence.
+#   * Mint and burn are not offered. The option, however worded, took
+#     probability from every lane (93.5% with it); the transfer itself
+#     decides it (see summarize.ruled_lane).
+#   * Spam is offered but never decided by the model: it picked it at 0.02
+#     for exact matches, yet removing the option cost 1.3 points of agreement
+#     and 0.12 of confidence elsewhere. It stays last, as a sink.
+#   * The order is part of the question: moving spam first cost 14 points.
+#
+# Laya also clamps its temperature for 11 or more options, which leaves the
+# choice uncalibrated, so the set stays at ten or fewer.
 LANES = {
-    "swap": "tokens were swapped on an exchange",
-    "bridge": "funds were sent across chains through a bridge",
-    "liquidity": "pool liquidity changed",
-    "vault": "tokens were deposited into or withdrawn from a contract",
+    "swap": "tokens were swapped on an exchange or traded on a marketplace",
+    "bridge": "funds were sent to or arrived from another chain through a bridge, even if tokens were also swapped",
+    "liquidity": "pool liquidity changed, even if tokens were also swapped",
+    "vault": "funds were deposited into or withdrawn from a vault, or USDC was wrapped or unwrapped",
     "lending": "a loan was opened, repaid or liquidated",
     "signed_payment": "the payer signed an authorization and someone else submitted it",
-    "payment": "a plain direct transfer from one wallet to another",
-    "issuance": "new USDC came from nobody, or USDC was sent to nobody and destroyed, "
-                "with nothing else happening in the transaction",
-    "spam": "a transfer of less than one cent with nothing else happening",
+    "payment": "a plain direct transfer, with nothing else happening",
+    "spam": "zero or less than one cent of USDC moved and nothing else recognisable happened",
 }
 
 LANE_QUESTION = {
     "type": "choice",
-    "instructions": "What happened in this Arc transaction?",
+    "instructions": "What kind of Arc transaction is this?",
     "criteria": LANES,
 }
 
-# A question nothing can honestly answer yes to, asked of every operation on
-# every batch.  Some states saturate: measured over 400 live operations, ten
-# of them answered 1.00 to seven mutually exclusive questions at once -- the
-# same dust payment was a trade, a contract call, a new account and a
-# trustline, all certainly.  Those ten sat at the top of every viewer's
-# results and were the loudest thing wrong with the answers.
-#
-# They cannot be spotted from one answer, only from answering something absurd
-# the same way.  Of six candidates this one was the cleanest: it caught 7 of
-# the 10 saturated states and fired on none of the other 390.
+# Put in front of every viewer question. The model reads a question about
+# "this" against a sentence that never says what it is; told, it separated
+# transfers better: over 24 test questions on the same story sentences, the
+# average AUC went from 0.879 to 0.915.
+RULE_PREFIX = "About this Arc USDC transfer: "
+
+
+def rule_question(text: str) -> dict[str, Any]:
+    return {"type": "noul", "instructions": RULE_PREFIX + text}
+
+
+# A question nothing can honestly answer yes to, asked alongside viewers'
+# questions.  Some states saturate: on the ledger radar this model also
+# serves, ten of 400 live operations answered 1.00 to seven mutually exclusive
+# questions at once, and sat at the top of every viewer's results.  They cannot
+# be spotted from one answer, only from answering something absurd the same
+# way; of six candidates this one was the cleanest (7 of the 10 caught, none of
+# the other 390).  On Arc's sentences it has not fired yet -- 0 of ~16,000 --
+# but viewers' questions are free text, and it only costs anything while one
+# is being asked.
 CONTROL_QUESTION = {"type": "noul", "instructions": "does this operation sing?"}
 CONTROL_FIRES = 0.5
 
@@ -113,49 +125,49 @@ class Classifier:
         return response.json()
 
     async def classify(
-        self, texts: list[str], rules: dict[str, str] | None = None
+        self, shapes: list[str], stories: list[str] | None = None, rules: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Classify a batch, plus one yes/no question per active viewer question.
+        """The lane of every transfer, and one answer per viewer question.
 
-        The model answers every question in one forward pass, so a second
-        viewer asking something costs one more question on the same call, not
-        a second call.
+        Two sentences, two calls. The lane is asked of `shapes`, the questions
+        of `stories` (see summarize.py); the second call is made only while
+        somebody is asking something. Laya reads every question of a state as
+        its own sequence anyway, so splitting them costs a round trip, not
+        forward passes.
 
-        Answers are cached per question rather than per batch, so someone
-        typing a new question misses only on their own. The lane the stream is
-        sorted by stays answered, and the machine does not re-read the whole
-        network because one person got curious.
+        Answers are cached per sentence and question, so someone typing a new
+        question misses only on their own. The lane the stream is sorted by
+        stays answered, and the machine does not re-read the whole network
+        because one person got curious.
         """
         rules = rules or {}
-        questions: dict[str, Any] = {"lane": LANE_QUESTION, "control": CONTROL_QUESTION}
-        for name, rule in rules.items():
-            questions[name] = {"type": "noul", "instructions": rule}
+        stories = stories if stories is not None else shapes
+        lane_key = _key(LANE_QUESTION)
+        asked: dict[str, Any] = {}
+        if rules:
+            asked["control"] = CONTROL_QUESTION
+            for name, rule in rules.items():
+                asked[name] = rule_question(rule)
+        keys = {name: _key(spec) for name, spec in asked.items()}
 
-        keys = {name: _key(spec) for name, spec in questions.items()}
-        unseen: list[str] = []
-        hits = 0
-        for text in texts:
-            if all((text, keys[name]) in self._cache for name in questions):
-                hits += 1
-            elif text not in unseen:
-                unseen.append(text)
+        unseen_shapes = [s for s in dict.fromkeys(shapes) if (s, lane_key) not in self._cache]
+        unseen_stories = [s for s in dict.fromkeys(stories)
+                          if any((s, keys[name]) not in self._cache for name in asked)]
+        hits = sum(
+            1 for shape, story in zip(shapes, stories)
+            if shape not in unseen_shapes and story not in unseen_stories
+        )
 
-        if unseen:
-            response = await self._client.post(
-                f"{self._endpoint}/ai/run/batch",
-                json={"states": unseen, "questions": questions},
-            )
-            response.raise_for_status()
-            for text, item in zip(unseen, response.json()["results"]):
-                for name, answer in item["answers"].items():
-                    self._cache[(text, keys[name])] = answer
+        if unseen_shapes:
+            await self._ask(unseen_shapes, {"lane": LANE_QUESTION}, {"lane": lane_key})
+        if unseen_stories:
+            await self._ask(unseen_stories, asked, keys)
 
         out = []
-        for text in texts:
-            lane = self._cache[(text, keys["lane"])]
+        for shape, story in zip(shapes, stories):
+            lane = self._cache[(shape, lane_key)]
             probabilities = lane.get("probabilities", {})
-            control = self._cache[(text, keys["control"])]["noul"]
-            stuck = control >= CONTROL_FIRES
+            stuck = bool(asked) and self._cache[(story, keys["control"])]["noul"] >= CONTROL_FIRES
             out.append({
                 "lane": lane.get("choice", ""),
                 "lane_p": round(max(probabilities.values()) if probabilities else 0.0, 3),
@@ -167,11 +179,12 @@ class Classifier:
                 # because a confident wrong answer costs more than a gap.
                 "stuck": stuck,
                 "rules": {} if stuck else {
-                    name: round(self._cache[(text, keys[name])]["noul"], 3) for name in rules
+                    name: round(self._cache[(story, keys[name])]["noul"], 3) for name in rules
                 },
             })
-            for name in questions:
-                self._cache.move_to_end((text, keys[name]))
+            self._cache.move_to_end((shape, lane_key))
+            for name in asked:
+                self._cache.move_to_end((story, keys[name]))
 
         # Trimmed only now, after this batch has been read and its entries
         # marked recent: trimming right after the insert could evict an entry
@@ -181,8 +194,17 @@ class Classifier:
         # Counted only for a call that returned answers. A failed call asked
         # the model nothing, and the next take_counts() must not say it did.
         self.hits += hits
-        self.misses += len(unseen)
+        self.misses += len(unseen_shapes) + len(unseen_stories)
         return out
+
+    async def _ask(self, states: list[str], questions: dict[str, Any], keys: dict[str, str]) -> None:
+        response = await self._client.post(
+            f"{self._endpoint}/ai/run/batch", json={"states": states, "questions": questions},
+        )
+        response.raise_for_status()
+        for text, item in zip(states, response.json()["results"]):
+            for name, key in keys.items():
+                self._cache[(text, key)] = item["answers"][name]
 
     async def probe(self, question: str) -> list[float]:
         """Ask one candidate question of the fixed probe set.
@@ -193,7 +215,7 @@ class Classifier:
         """
         response = await self._client.post(
             f"{self._endpoint}/ai/run/batch",
-            json={"states": PROBES, "questions": {"probe": {"type": "noul", "instructions": question}}},
+            json={"states": PROBES, "questions": {"probe": rule_question(question)}},
         )
         response.raise_for_status()
         return [item["answers"]["probe"]["noul"] for item in response.json()["results"]]

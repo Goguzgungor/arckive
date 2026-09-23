@@ -4,22 +4,35 @@ import json
 import httpx
 import pytest
 
-from radar.arc import HEAD_TRAIL, CodeCache, stream_transfers
+from radar.arc import HEAD_TRAIL, CodeCache, is_contract, stream_transfers
 from radar.rpc import RpcError, RpcPool
-from radar.types import TRANSFER_TOPIC, USDC
+from radar.types import ENTRYPOINTS, NATIVE, TRANSFER_TOPIC, USDC
 
 A1 = "0x" + "11" * 20
 A2 = "0x" + "22" * 20
 C1 = "0x" + "cc" * 20
+SENDER = "0x" + "5e" * 20
+V3_SWAP = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
+UNI_V3 = "0xf0db7b58379503491d857db50ac9ece64c653918"
 
 
 def topic(addr):
     return "0x" + "0" * 24 + addr[2:]
 
 
-def log(tx, index, frm, to, value, block):
+def log(tx, index, frm, to, value, block, address=USDC):
     return {"transactionHash": tx, "logIndex": hex(index), "blockNumber": hex(block),
-            "address": USDC, "topics": [TRANSFER_TOPIC, topic(frm), topic(to)], "data": hex(value)}
+            "address": address, "topics": [TRANSFER_TOPIC, topic(frm), topic(to)], "data": hex(value)}
+
+
+def native(tx, index, frm, to, wei, block):
+    return log(tx, index, frm, to, wei, block, address=NATIVE)
+
+
+def ctx(to, selector, topics, emitters=None, factories=None, sender=SENDER):
+    return {"to": to, "selector": selector, "topics": topics, "sender": sender,
+            "emitters": emitters if emitters is not None else [USDC] * len(topics),
+            "factories": factories or {}}
 
 
 class FakePool:
@@ -28,11 +41,12 @@ class FakePool:
     feed. A None head is a node answering `result: null`."""
 
     def __init__(self, heads, logs_by_range=None, receipts=None, codes=None, fail_logs=0,
-                 null_logs=0, trail=HEAD_TRAIL):
+                 null_logs=0, trail=HEAD_TRAIL, factories=None):
         self.heads = list(heads)
         self.logs_by_range = logs_by_range or {}
         self.receipts = receipts or {}
         self.codes = codes or {}
+        self.factories = factories or {}
         self.fail_logs = fail_logs
         self.null_logs = null_logs
         self.trail = trail
@@ -61,12 +75,18 @@ class FakePool:
         for method, params in calls:
             if method == "eth_getTransactionByHash":
                 r = self.receipts.get(params[0])
-                out.append(None if r is None else {"to": r["to"], "input": r["input"]})
+                out.append(None if r is None else {"to": r["to"], "input": r["input"], "from": r.get("from", SENDER)})
             elif method == "eth_getTransactionReceipt":
                 r = self.receipts.get(params[0])
-                out.append(None if r is None else {"logs": [{"topics": [t]} for t in r["topics"]]})
+                emitters = r.get("emitters", [USDC] * len(r["topics"])) if r else []
+                out.append(None if r is None else
+                           {"logs": [{"address": a, "topics": [t]} for a, t in zip(emitters, r["topics"])]})
             elif method == "eth_getCode":
-                out.append("0x6080" if self.codes.get(params[0]) else "0x")
+                code = self.codes.get(params[0])
+                out.append(code if isinstance(code, str) else "0x6080" if code else "0x")
+            elif method == "eth_call":
+                factory = self.factories.get(params[0]["to"])
+                out.append(None if factory is None else "0x" + "0" * 24 + factory[2:])
             else:
                 raise AssertionError(method)
         return out
@@ -91,7 +111,7 @@ def test_first_tick_reads_head_block_only():
                     codes={C1: True})
     [item] = asyncio.run(take(stream_transfers(pool, sleep=no_sleep, now=lambda: 5.0), 1))
     assert item["transfer"] == {"tx": "0xt1", "log_index": 0, "block": 100, "frm": A1, "to": C1, "value": 5_000_000}
-    assert item["ctx"] == {"to": C1, "selector": "0x0c307f76", "topics": [TRANSFER_TOPIC]}
+    assert item["ctx"] == ctx(C1, "0x0c307f76", [TRANSFER_TOPIC])
     assert item["contracts"] == {A1: False, C1: True}
     assert item["seen_at"] == 5.0
 
@@ -203,7 +223,7 @@ def test_two_transfers_in_one_tx_share_one_context_fetch():
     first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
     context_calls = [m for m, _ in pool.batches[0]]
     assert context_calls == ["eth_getTransactionByHash", "eth_getTransactionReceipt"]
-    assert first["ctx"] == second["ctx"] == {"to": C1, "selector": "0x0c307f76", "topics": [TRANSFER_TOPIC]}
+    assert first["ctx"] == second["ctx"] == ctx(C1, "0x0c307f76", [TRANSFER_TOPIC])
 
 
 def test_garbled_receipt_costs_only_its_context():
@@ -254,3 +274,85 @@ def test_malformed_head_answer_never_ends_the_feed(bad):
     [item] = asyncio.run(take(stream_transfers(pool, sleep=sleep), 1))
     assert item["transfer"]["tx"] == "0xt"
     assert len(slept) == 2  # one failed tick per bad answer, then the feed carried on
+
+
+# ---- native USDC, gas refunds, wallets and pools -----------------------------
+
+def test_logs_are_read_from_both_ways_usdc_moves():
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]},
+                    receipts={"0xt": {"to": USDC, "input": "0x", "topics": []}})
+    asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 1))
+    [params] = [p for m, p in pool.calls if m == "eth_getLogs"]
+    assert params[0]["address"] == [USDC, NATIVE]
+
+
+def test_an_erc20_transfer_is_one_item_not_two():
+    # Through the ERC-20 interface one movement is logged twice: natively in
+    # 18 decimals, then by USDC in 6. Counting both doubled every swap leg.
+    pool = FakePool(heads=[100, 101], logs_by_range={
+                        (100, 100): [native("0xt", 0, A1, C1, 5_000_000 * 10**12, 100),
+                                     log("0xt", 1, A1, C1, 5_000_000, 100)],
+                        (101, 101): [log("0xnext", 0, A1, A2, 1, 101)]},
+                    receipts={"0xt": {"to": C1, "input": "0x0c307f76", "topics": [TRANSFER_TOPIC, TRANSFER_TOPIC]},
+                              "0xnext": {"to": USDC, "input": "0x", "topics": [TRANSFER_TOPIC]}},
+                    codes={C1: True})
+    first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert (first["transfer"]["tx"], first["transfer"]["log_index"], first["transfer"]["value"]) == ("0xt", 1, 5_000_000)
+    assert second["transfer"]["tx"] == "0xnext"
+
+
+def test_a_native_only_movement_is_kept_and_never_reads_as_zero():
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [
+                        native("0xv", 0, A1, A2, 2_500_000_000_000, 100),   # 2.5 micro-USDC
+                        native("0xw", 0, A1, A2, 7, 100)]},                  # 7 wei
+                    receipts={"0xv": {"to": A2, "input": "0x", "topics": [TRANSFER_TOPIC]},
+                              "0xw": {"to": A2, "input": "0x", "topics": [TRANSFER_TOPIC]}})
+    first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert first["transfer"]["value"] == 3
+    assert second["transfer"]["value"] == 1
+
+
+def test_the_bundler_taking_its_gas_back_is_not_shown():
+    entrypoint = sorted(ENTRYPOINTS)[0]
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [
+                        log("0xop", 0, A1, C1, 9_000_000, 100),
+                        native("0xop", 4, entrypoint, SENDER, 9_322 * 10**12, 100),
+                        native("0xop", 5, entrypoint, A2, 1_000 * 10**12, 100)]},   # not the bundler
+                    receipts={"0xop": {"to": entrypoint, "input": "0x765e827f", "topics": [TRANSFER_TOPIC]}},
+                    codes={C1: True})
+    items = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert [(i["transfer"]["frm"], i["transfer"]["to"]) for i in items] == [(A1, C1), (entrypoint, A2)]
+
+
+def test_a_7702_delegated_account_is_a_wallet():
+    assert is_contract("0x6080604052") is True
+    assert is_contract("0x") is False
+    assert is_contract("0xef0100" + "63c0c19a282a1b52b07dd5a65b58948a07dae32b") is False
+    assert is_contract("0xef0100" + "63c0c19a282a1b52b07dd5a65b58948a07dae32b" + "00") is True
+    delegated = "0xef0100" + "63c0c19a282a1b52b07dd5a65b58948a07dae32b"
+    pool = FakePool(heads=[100], logs_by_range={(100, 100): [log("0xt", 0, A1, A2, 1, 100)]},
+                    receipts={"0xt": {"to": USDC, "input": "0xa9059cbb", "topics": [TRANSFER_TOPIC]}},
+                    codes={A1: delegated, A2: "0x6080"})
+    [item] = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 1))
+    assert item["contracts"] == {A1: False, A2: True}
+
+
+def test_swapping_pools_are_asked_their_factory_once():
+    receipt = {"to": C1, "input": "0x", "topics": [V3_SWAP, TRANSFER_TOPIC], "emitters": [C1, USDC]}
+    pool = FakePool(heads=[100, 101],
+                    logs_by_range={(100, 100): [log("0xa", 1, C1, A1, 1, 100)], (101, 101): [log("0xb", 1, C1, A1, 1, 101)]},
+                    receipts={"0xa": receipt, "0xb": receipt}, codes={C1: True}, factories={C1: UNI_V3})
+    first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert first["ctx"]["factories"] == second["ctx"]["factories"] == {C1: UNI_V3}
+    assert first["ctx"]["emitters"] == [C1, USDC]
+    assert len([c for b in pool.batches for c in b if c[0] == "eth_call"]) == 1
+
+
+def test_a_failed_factory_lookup_is_asked_again():
+    receipt = {"to": C1, "input": "0x", "topics": [V3_SWAP], "emitters": [C1]}
+    pool = FakePool(heads=[100, 101],
+                    logs_by_range={(100, 100): [log("0xa", 1, C1, A1, 1, 100)], (101, 101): [log("0xb", 1, C1, A1, 1, 101)]},
+                    receipts={"0xa": receipt, "0xb": receipt}, codes={C1: True})
+    first, _ = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert first["ctx"]["factories"] == {}
+    assert len([c for b in pool.batches for c in b if c[0] == "eth_call"]) == 2
