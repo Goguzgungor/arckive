@@ -348,11 +348,36 @@ def test_swapping_pools_are_asked_their_factory_once():
     assert len([c for b in pool.batches for c in b if c[0] == "eth_call"]) == 1
 
 
-def test_a_failed_factory_lookup_is_asked_again():
-    receipt = {"to": C1, "input": "0x", "topics": [V3_SWAP], "emitters": [C1]}
-    pool = FakePool(heads=[100, 101],
-                    logs_by_range={(100, 100): [log("0xa", 1, C1, A1, 1, 100)], (101, 101): [log("0xb", 1, C1, A1, 1, 101)]},
-                    receipts={"0xa": receipt, "0xb": receipt}, codes={C1: True})
-    first, _ = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+def test_a_failed_factory_lookup_waits_before_it_is_asked_again():
+    # A pool event from a contract with no factory() fails the same way every
+    # time; asking on every tick would cost a request per endpoint per tick.
+    receipt = {"to": C1, "input": "0x12345678", "topics": [V3_SWAP], "emitters": [C1]}
+    clock = {"t": 600.0}
+
+    def now():
+        clock["t"] += 400   # each tick, a little under FACTORY_RETRY after the last
+        return clock["t"]
+
+    pool = FakePool(heads=[100, 101, 102],
+                    logs_by_range={(100, 100): [log("0xa", 1, C1, A1, 1, 100)], (101, 101): [log("0xb", 1, C1, A1, 1, 101)],
+                                   (102, 102): [log("0xc", 1, C1, A1, 1, 102)]},
+                    receipts={"0xa": receipt, "0xb": receipt, "0xc": receipt}, codes={C1: True})
+
+    first, _, _ = asyncio.run(take(stream_transfers(pool, sleep=no_sleep, now=now), 3))
     assert first["ctx"]["factories"] == {}
+    # asked at the first tick, not at the second (400 s later), again at the third (800 s)
     assert len([c for b in pool.batches for c in b if c[0] == "eth_call"]) == 2
+
+
+def test_only_this_transactions_pools_are_named():
+    # A pool known from an earlier swap that merely logs a Transfer here is not
+    # "this transaction's pool"; a v3 Collect is, and gets looked up too.
+    collect = "0x70935338e69775456a85ddef226c395fb668b63fa0115f5f20610b388e6ca9c0"
+    pool = FakePool(heads=[100, 101],
+                    logs_by_range={(100, 100): [log("0xa", 1, C1, A1, 1, 100)], (101, 101): [log("0xb", 1, A2, A1, 1, 101)]},
+                    receipts={"0xa": {"to": C1, "input": "0x12345678", "topics": [collect], "emitters": [C1]},
+                              "0xb": {"to": A2, "input": "0x12345678", "topics": [TRANSFER_TOPIC], "emitters": [C1]}},
+                    codes={C1: True}, factories={C1: UNI_V3})
+    first, second = asyncio.run(take(stream_transfers(pool, sleep=no_sleep), 2))
+    assert first["ctx"]["factories"] == {C1: UNI_V3}
+    assert second["ctx"]["factories"] == {}

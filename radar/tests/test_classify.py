@@ -129,3 +129,39 @@ def test_cache_trim_never_evicts_what_the_batch_still_reads(monkeypatch):
     assert [o["lane"] for o in out] == ["swap", "swap"]
     assert c.take_counts() == (2, 1)
     assert len(c._cache) == 1
+
+
+def test_a_lane_the_transfer_decided_is_not_asked_but_its_story_is():
+    seen = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        seen.append(body)
+        return answering(request)
+
+    c = Classifier("http://laya")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    out = asyncio.run(c.classify([None, "shape"], ["story-ruled", "story"], {"r1": "is this spam?"}))
+    lane_calls = [b for b in seen if "lane" in b["questions"]]
+    rule_calls = [b for b in seen if "r1" in b["questions"]]
+    assert [b["states"] for b in lane_calls] == [["shape"]]
+    assert rule_calls[0]["states"] == ["story-ruled", "story"]
+    assert out[0]["lane"] == "" and out[0]["rules"] == {"r1": 0.1}
+    assert out[1]["lane"] == "swap"
+    assert c.take_counts() == (1, 0)   # one lane sentence judged
+
+
+def test_questions_failing_do_not_take_the_lanes_down():
+    # The gate is shared and refuses bursts: a refused question call must not
+    # turn a batch whose lanes were answered into "model offline".
+    def handle(request):
+        body = json.loads(request.content)
+        if "lane" in body["questions"]:
+            return answering(request)
+        return httpx.Response(429, json={"detail": "too many requests"})
+
+    c = Classifier("http://laya")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    out = asyncio.run(c.classify(["shape"], ["story"], {"r1": "is this a swap?"}))
+    assert out[0]["lane"] == "swap" and out[0]["rules"] == {} and out[0]["stuck"] is False
+    assert c.take_counts() == (1, 0)

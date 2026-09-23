@@ -7,8 +7,10 @@ on every keystroke.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 from collections import OrderedDict
 from typing import Any
 
@@ -16,14 +18,16 @@ import httpx
 
 from .gate import PROBES
 
+LOG = logging.getLogger("radar.classify")
+
 # The lanes the model chooses between, each described in the words the lane
 # sentence uses for the fact that defines it, with the tie-break for mixed
 # transactions spelled out ("even if tokens were also swapped"): a swap that
-# ends in a bridge deposit is a bridge transfer. Measured on 16,172 USDC
-# movements from ten minutes of mainnet, against lanes read off what each
-# transaction actually did: 99.9% agreement, 0.1% below UNCERTAIN_BELOW, the
-# right lane at 0.83 on average. The set this replaced scored 78.9%, with
-# 15.8% of rows uncertain.
+# ends in a bridge deposit is a bridge transfer. Measured on ten minutes of
+# mainnet (16,632 transfers; 16,172 of them with facts that place a lane),
+# against the audited fact table: 99.9% agreement, 0.1% below
+# UNCERTAIN_BELOW, the right lane at 0.83 on average. The set this replaced
+# scored 78.9%, with 15.8% of rows uncertain.
 #
 # What moved it, each measured on its own:
 #   * "What kind of Arc transaction is this?" over "What happened in this Arc
@@ -125,7 +129,7 @@ class Classifier:
         return response.json()
 
     async def classify(
-        self, shapes: list[str], stories: list[str] | None = None, rules: dict[str, str] | None = None,
+        self, shapes: list[str | None], stories: list[str] | None = None, rules: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """The lane of every transfer, and one answer per viewer question.
 
@@ -133,7 +137,16 @@ class Classifier:
         of `stories` (see summarize.py); the second call is made only while
         somebody is asking something. Laya reads every question of a state as
         its own sequence anyway, so splitting them costs a round trip, not
-        forward passes.
+        forward passes -- and the two go out together, so a hung model holds
+        a batch for one timeout, not two.
+
+        A shape of None is a transfer whose lane the transfer itself decided
+        (see summarize.ruled_lane): it is not put to the model, and comes back
+        with no lane. Its story is still asked viewers' questions.
+
+        If the lane call fails, this raises, and the batch is shown offline.
+        If only the questions fail -- the gate is shared, and refuses bursts --
+        the lanes are still returned, with no answers, and nothing is raised.
 
         Answers are cached per sentence and question, so someone typing a new
         question misses only on their own. The lane the stream is sorted by
@@ -141,7 +154,7 @@ class Classifier:
         because one person got curious.
         """
         rules = rules or {}
-        stories = stories if stories is not None else shapes
+        stories = stories if stories is not None else [s or "" for s in shapes]
         lane_key = _key(LANE_QUESTION)
         asked: dict[str, Any] = {}
         if rules:
@@ -150,24 +163,33 @@ class Classifier:
                 asked[name] = rule_question(rule)
         keys = {name: _key(spec) for name, spec in asked.items()}
 
-        unseen_shapes = [s for s in dict.fromkeys(shapes) if (s, lane_key) not in self._cache]
+        unseen_shapes = [s for s in dict.fromkeys(shapes) if s is not None and (s, lane_key) not in self._cache]
         unseen_stories = [s for s in dict.fromkeys(stories)
                           if any((s, keys[name]) not in self._cache for name in asked)]
-        hits = sum(
-            1 for shape, story in zip(shapes, stories)
-            if shape not in unseen_shapes and story not in unseen_stories
-        )
+        # Counted in lane judgments, the unit the "to model/s" gauge and the
+        # footer speak in: a transfer whose lane sentence was already judged
+        # is reused, whatever else is being asked of it.
+        hits = sum(1 for shape in shapes if shape is not None and shape not in unseen_shapes)
 
+        calls = []
         if unseen_shapes:
-            await self._ask(unseen_shapes, {"lane": LANE_QUESTION}, {"lane": lane_key})
+            calls.append(self._ask(unseen_shapes, {"lane": LANE_QUESTION}, {"lane": lane_key}))
         if unseen_stories:
-            await self._ask(unseen_stories, asked, keys)
+            calls.append(self._ask(unseen_stories, asked, keys))
+        outcomes = await asyncio.gather(*calls, return_exceptions=True)
+        if unseen_shapes and isinstance(outcomes[0], BaseException):
+            raise outcomes[0]
+        answered = bool(asked)
+        if unseen_stories and isinstance(outcomes[-1], BaseException):
+            LOG.warning("viewer questions not answered this batch: %s: %s",
+                        type(outcomes[-1]).__name__, outcomes[-1])
+            answered = False
 
         out = []
         for shape, story in zip(shapes, stories):
-            lane = self._cache[(shape, lane_key)]
+            lane = self._cache[(shape, lane_key)] if shape is not None else {}
             probabilities = lane.get("probabilities", {})
-            stuck = bool(asked) and self._cache[(story, keys["control"])]["noul"] >= CONTROL_FIRES
+            stuck = answered and self._cache[(story, keys["control"])]["noul"] >= CONTROL_FIRES
             out.append({
                 "lane": lane.get("choice", ""),
                 "lane_p": round(max(probabilities.values()) if probabilities else 0.0, 3),
@@ -178,23 +200,26 @@ class Classifier:
                 # everything yes. Its readings are dropped rather than shown,
                 # because a confident wrong answer costs more than a gap.
                 "stuck": stuck,
-                "rules": {} if stuck else {
+                "rules": {} if stuck or not answered else {
                     name: round(self._cache[(story, keys[name])]["noul"], 3) for name in rules
                 },
             })
-            self._cache.move_to_end((shape, lane_key))
-            for name in asked:
-                self._cache.move_to_end((story, keys[name]))
+            if shape is not None:
+                self._cache.move_to_end((shape, lane_key))
+            if answered:
+                for name in asked:
+                    self._cache.move_to_end((story, keys[name]))
 
         # Trimmed only now, after this batch has been read and its entries
         # marked recent: trimming right after the insert could evict an entry
         # this very batch still had to read.
         while len(self._cache) > CACHE_MAX:
             self._cache.popitem(last=False)
-        # Counted only for a call that returned answers. A failed call asked
-        # the model nothing, and the next take_counts() must not say it did.
+        # Counted only once the lanes are in. A batch whose lane call failed
+        # raised above and counts nothing, so the next take_counts() does not
+        # report judgments the wall never showed.
         self.hits += hits
-        self.misses += len(unseen_shapes) + len(unseen_stories)
+        self.misses += len(unseen_shapes)
         return out
 
     async def _ask(self, states: list[str], questions: dict[str, Any], keys: dict[str, str]) -> None:

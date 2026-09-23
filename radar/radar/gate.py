@@ -27,16 +27,18 @@ from .sanitize import _INJECTION
 MIN_CHARS = 6
 MAX_CHARS = 160
 
-# Thirty-five transfers covering what Arc actually carries: swap legs
+# Forty-eight transfers covering what Arc actually carries: swap legs
 # through routers and pools, bridge deposits and fills in both directions,
 # liquidity moves, vaults and wrapping, lending, signed payments, smart-account
 # sends, batch payouts, claims, marketplace sales, mints, burns, dust, zero
 # transfers and plain ones.  A probe set sampled from the live stream would be
 # mostly swap legs, and a fair question about anything else would look flat
-# for want of an example to match -- so every fact appears in several probes:
-# with a fee in one probe of 24, "was a fee taken?" separated them by 0.08;
-# with it in four of 35, by 0.16.  Written the way viewers' questions see a
-# transfer -- summarize.py's `story` -- because that is what they are asked of.
+# for want of an example to match -- so every fact and every protocol the
+# radar names appears in at least two probes. With a fee in one probe of 24,
+# "was a fee taken?" separated them by 0.08; and a topic in only one probe
+# gets no yes line at all, because threshold() sets its most extreme probe
+# aside. Written the way viewers' questions see a transfer -- summarize.py's
+# `story` -- because that is what they are asked of.
 PROBES = [
     "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange; a fee was taken. Protocol: Uniswap.",
     "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange. Protocol: Uniswap.",
@@ -73,17 +75,31 @@ PROBES = [
     "USDC moved from an account to an account, amount 1 to 100 USDC (a small amount). The rest of the transaction could not be read.",
     "USDC was minted to a wallet, amount over 10,000 USDC (a large amount). In the same transaction: nothing else recognisable happened.",
     "USDC was burned from a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: nothing else recognisable happened.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: funds were deposited into or withdrawn from a vault.",
+    "USDC moved from a wallet to a contract, amount over 10,000 USDC (a large amount). In the same transaction: funds were deposited into or withdrawn from a vault.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: rewards or payouts were claimed or distributed.",
+    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were bought or sold on a marketplace.",
+    "USDC moved from an account to an account, amount 100 to 10,000 USDC (a medium amount). The rest of the transaction could not be read.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange; a fee was taken. Protocol: LI.FI.",
+    "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange; a fee was taken. Protocol: OKX DEX.",
+    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange. Protocol: KyberSwap.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange. Protocol: KyberSwap.",
+    "USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange. Protocol: 1inch.",
+    "USDC moved from a contract to a wallet, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange. Protocol: 1inch.",
+    "USDC moved from a contract to a wallet, amount 1 to 100 USDC (a small amount). In the same transaction: tokens were swapped on an exchange. Protocol: 0x.",
+    "USDC moved from a wallet to a contract, amount 100 to 10,000 USDC (a medium amount). In the same transaction: tokens were swapped on an exchange. Protocol: 0x.",
 ]
 
 # Below this the question put every probe in the same place, so it would put
 # every transfer in the same place too.  Set so that no question the radar can
-# answer is turned away: on 32 real questions the weakest answerable one,
-# "was a fee taken?", separates the probes by 0.16 (the 0.20 this replaced
-# refused it). Half of 14 polished-nonsense questions fall below it; the other
-# half separate the probes as well as a weak real question does -- the model
-# answers "does this payment like jazz music?" differently for payments than
-# for swaps -- and cannot be told apart this way. The page shows those how
-# weakly they sort.
+# answer is turned away: of 37 answerable questions in scripts/eval.py the
+# weakest, "was a fee taken?", separates the probes by 0.17 (the 0.20 this
+# replaced refused it), while "is this a payroll or salary payment?", which
+# nothing on chain records, falls below. So do 8 of 14 polished-nonsense
+# questions; the rest separate the probes as well as a weak real question does
+# -- the model answers "does this payment like jazz music?" differently for
+# payments than for swaps -- and cannot be told apart this way. The page shows
+# those how weakly they sort.
 MIN_SEPARATION = 0.12
 
 _WORD = re.compile(r"[a-z]{2,}")
@@ -164,16 +180,20 @@ def threshold(scores: list[float]) -> float:
     "no" at 0.5. The line is halfway between the probes' low and high answers
     in log-odds, where the model decides, rather than in probability, where
     such answers crowd against zero; the most extreme probe on each side is
-    left out, so one odd probe cannot drag it.
+    set aside, so one odd probe cannot drag it -- which is why every topic has
+    two probes. It never reaches 0 or 1, where every row, or none, would be a
+    yes.
 
-    Measured on 4,000 live transfers and 24 questions: balanced accuracy 0.773
-    at a flat 0.5, 0.783 at the probability midpoint, 0.823 at this one.
+    Measured on 4,000 live transfers, over the 20 questions with ten or more
+    yeses and noes: balanced accuracy 0.762 at a flat 0.5, 0.767 at the
+    probability midpoint, 0.820 at this one.
     """
     if len(scores) < 4:
         return 0.5
     ranked = sorted(scores)
     low, high = _logit(ranked[1]), _logit(ranked[-2])
-    return round(1 / (1 + math.exp(-(low + high) / 2)), 3)
+    line = 1 / (1 + math.exp(-(low + high) / 2))
+    return round(min(0.99, max(0.01, line)), 4)
 
 
 def _logit(p: float) -> float:

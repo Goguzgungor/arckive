@@ -109,43 +109,76 @@ What held up:
 10. **Each question gets its own yes line.** It is the log-odds midpoint of the question's
     second-lowest and second-highest scores over the probe set, measured when the gate
     accepts it. The page highlights at that line instead of 0.5. On 4,000 live transfers,
-    balanced accuracy was 0.773 at a flat 0.5, 0.783 at the probability midpoint and 0.823
-    at this line. It fixes the questions whose answers crowd near zero ("was a fee taken?":
-    0.60 → 0.99), and costs a little on a few whose answers spread wide.
-11. **The gate's probe set is rewritten** in the story format as 35 transfers, with every
-    fact in several of them. With a fee in one probe of 24, "was a fee taken?" separated
-    them by 0.08 and was refused as flat.
+    over the 20 questions with ten or more yeses and noes, balanced accuracy was 0.762 at a
+    flat 0.5, 0.767 at the probability midpoint and 0.820 at this line. It fixes the questions
+    whose answers crowd near zero ("was a fee taken?": 0.60 → 0.99), and costs something on a
+    few whose answers spread wide ("is this a bridge transfer?": 0.81 → 0.66).
+11. **The gate's probe set is rewritten** in the story format as 48 transfers, with every
+    fact and every named protocol in at least two of them. With a fee in one probe of 24,
+    "was a fee taken?" separated them by 0.08 and was refused as flat.
 12. **The gate lets through everything it cannot prove flat.** Its founding claim, that
     polished nonsense "collapses" on real transfers, did not hold on Arc: the model answers
     "does this payment like jazz music?" differently for payments and swaps. No separation
     statistic tried (raw, residual against a nonsense profile, top-3 against bottom-3) kept
-    all real questions above all nonsense. So MIN_SEPARATION is 0.12. That refuses no real
-    question (the weakest, the fee question, separates by 0.16) and half of 14 nonsense
-    ones. The old 0.20 refused the fee question and let "is the ocean blue today?" through.
+    all real questions above all nonsense. So MIN_SEPARATION is 0.12. That refuses none of 37
+    answerable questions (the weakest, the fee question, separates by 0.17), refuses 8 of 14
+    nonsense ones and "is this a payroll or salary payment?", which nothing on chain records.
+    The old 0.20 refused the fee question and let "is the ocean blue today?" through.
 13. **The control question is asked only alongside viewer questions.** It had fired on 0 of
     ~16k Arc sentences.
 
 ## Measured
 
-All numbers are against the audited truth. The first version is PR #18 as it ran live. The
-new column is `scripts/eval.py` on the implementation.
+All figures are against the audited truth. The first version is PR #18 as it ran live, on the
+transfers it could see. Every other column is `scripts/eval.py` on the implementation after the
+review follow-ups. Question figures average the questions with at least ten yeses and ten noes
+in each sample.
 
-| | Live (PR #18), window 2 | New, window 2 | New, capture of 1,200 | New, capture of 4,000 |
+| | Live (PR #18), window 2 | New, window 2 | New, 1,200 capture | New, 4,000 capture |
 |---|---|---|---|---|
 | USDC movements on the wall | 24% | 100% (gas refunds excepted) | 100% | 100% |
-| Lanes agree with the evidence | 78.9%, 15.8% uncertain | 99.9%, 0.1% uncertain | 99.8% | 99.9% |
+| Lanes agree with the audited fact table | 78.9%, 15.8% uncertain | 99.9%, 0.1% uncertain | 99.8% | 99.9% |
 | Right-lane confidence (mean) | — | 0.83 | 0.83 | 0.83 |
-| 24 viewer questions, mean AUC | 0.759 | 0.931 | 0.926 | 0.918 |
-| 24 viewer questions, balanced accuracy | 0.641 (at 0.5) | 0.834 | 0.832 | 0.823 |
-| Real questions the gate refuses | — | 0 | 0 | 0 |
+| 30 viewer questions, mean AUC | 0.657 (26 counted) | 0.944 (29) | 0.925 (19) | 0.927 (24) |
+| 30 viewer questions, balanced accuracy | 0.598 (at 0.5) | 0.863 | 0.824 | 0.845 |
+| Answerable questions the gate refuses (of 37) | — | 0 | 0 | 0 |
+
+The lane figure measures whether the model reads its own sentence right. The facts in that
+sentence were checked by the audit itself.
+
+## Review follow-ups
+
+An independent review of the merged branch found 0 critical, 2 important and 10 minor issues.
+The follow-up PR fixes them:
+
+- **Yes line and probe coverage.** A topic with a single probe got its yes line from the noes,
+  as low as 0.0, which highlighted every row. Now every fact and every named protocol has at
+  least two of the 48 probes, and the line is clamped to [0.01, 0.99].
+- **The page's verdict.** It called working low-probability questions "sorted nothing". The
+  split is now judged in log-odds, and the page says where yes starts ("yes from 3%").
+- **Plain native sends.** They read "unknown contract"; they are now "USDC".
+- **A failed question call.** It took the whole batch offline and never counted its lanes. Now
+  it drops only that batch's answers. The two calls run together, so a hung model costs one
+  timeout, not two.
+- **Rule-decided rows.** They were still sent to the model; they are not now.
+- **Pools.** Named only if they had swapped before in the process; now v3 liquidity events are
+  looked up too, and only a transaction's own pools are named. A pool whose `factory()` fails
+  is asked again only after 10 minutes.
+- **Catch-up reads.** Now 200 blocks per `eth_getLogs`, since a block carries about four times
+  the logs it did.
+- **The eval.** It averaged questions with a single positive; it now counts only those with ten
+  or more of each, says which were left out, reports rows the facts cannot place, and
+  reproduces the gate's justification with 37 answerable and 14 nonsense questions.
+- **Unreadable transactions.** They are told apart from unrecognised ones on the page.
 
 ## What is still weak
 
 - Numbers the model must compare, like "is this less than one dollar?". Words help: that
   question's AUC went from 0.35 to about 0.7, but that is still weak.
 - The gate cannot tell half of polished nonsense from a real question (decision 12).
-- A few questions lose a little to the log-odds line: bridge 0.81 → 0.75, smart account
-  0.94 → 0.84.
+- A few questions lose to the log-odds line: bridge 0.81 → 0.66, smart account 0.94 → 0.84.
+- Some questions have too few examples in ten minutes of Arc to measure (arrivals from
+  another chain, mints, 1inch, large swaps).
 - A transaction with one protocol named hides a second one. A Relay deposit that swapped on
   Uniswap reads "Protocol: Relay".
 - NFT mints through smart accounts read as payments. No lane fits them, and an "NFT minted"

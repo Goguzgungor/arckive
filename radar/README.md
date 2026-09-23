@@ -83,13 +83,16 @@ first version against this one:
 | | first version | now |
 |---|---|---|
 | USDC movements on the wall | 24% | all (gas refunds excepted) |
-| Lanes agreeing with the evidence | 78.9%, 15.8% uncertain | 99.9%, 0.1% uncertain |
-| 24 viewer questions, mean AUC | 0.759 | 0.931 |
-| 24 viewer questions, balanced accuracy | 0.641 | 0.834 |
+| Lanes agreeing with the audited fact table | 78.9%, 15.8% uncertain | 99.9%, 0.1% uncertain |
+| 30 viewer questions, mean AUC | 0.657 | 0.944 |
+| 30 viewer questions, balanced accuracy | 0.598 | 0.863 |
 
-The right lane now carries 0.83 confidence on average. Two later captures
+The lane figure says the model reads its own sentence right — the table's
+facts were checked separately, by the audit. The right lane carries 0.83
+confidence on average. Question figures average the questions with at least
+ten yeses and ten noes in the sample (26 and 29 of 30). Two later captures
 through the real feed, of 1,200 and 4,000 transfers, give 99.8% and 99.9%
-lane agreement and 0.832 and 0.823 balanced accuracy (`scripts/eval.py`).
+lane agreement and 0.824 and 0.845 balanced accuracy (`scripts/eval.py`).
 
 What moved the questions: the story sentence; prefixing every question with
 "About this Arc USDC transfer:"; and reading each question at its own yes
@@ -100,8 +103,10 @@ low and high answers over the gate's probe transfers.
 The gate that screens new questions was measured too, and the claim it was
 built on did not hold on Arc: polished nonsense does not always answer every
 transfer alike. It now turns away only questions that are flat across the
-probes — none of the 24 real ones, half of the nonsense — and the page shows
-the rest how weakly they sort.
+probes — none of 37 answerable ones, 8 of 14 nonsense ones, and "is this a
+payroll payment?", which nothing on chain records — and the page shows the
+rest how weakly they sort, judged in log-odds so that a question whose yeses
+all sit near 5% is not called flat.
 
 Still weak: questions that make the model compare numbers ("is this less than
 one dollar?"), a second protocol in one transaction (a Relay deposit that

@@ -323,6 +323,9 @@ function answerFor(op) {
   return p === undefined ? null : p;
 }
 
+const logit = (p) => { const q = Math.min(Math.max(p, 1e-4), 1 - 1e-4); return Math.log(q / (1 - q)); };
+// Answers near zero are where many questions say yes; "0%" would hide them.
+const pct = (p) => p < 0.1 ? `${(p * 100).toFixed(1)}%` : `${Math.round(p * 100)}%`;
 const escapeHtml = (s) => s.replace(/[&<>"']/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -358,9 +361,10 @@ function row(op, ruleActive) {
   // Some lanes are read off the transfer itself rather than judged, and a row
   // the radar recognised nothing in gets no lane at all; neither has a
   // confidence to print, so each says what it is instead.
+  const unreadable = (op.shape || "").endsWith("could not be read.");
   const sure = op.ruled
     ? (op.lane === "uncertain"
-      ? `<span class="sure" title="Nothing in this transaction is recognised, so no lane is claimed."><b>unread</b></span>`
+      ? `<span class="sure" title="${unreadable ? "The transaction could not be read" : "Nothing in this transaction is recognised"}, so no lane is claimed."><b>unread</b></span>`
       : `<span class="sure" title="Read off the transfer itself: a mint or burn has the zero address on one side; spam moved zero USDC with nothing else happening."><b>rule</b></span>`)
     : op.offline
     ? `<span class="sure" title="The decision model was unreachable, so this transfer was not judged."><b>model offline</b></span>`
@@ -377,7 +381,7 @@ function row(op, ruleActive) {
       ? `<span class="answer" title="This transfer answers yes to a question` +
         ` written to have no yes, so its readings are not trustworthy.">no reading</span>`
       : mine === null ? "<span></span>" :
-        `<span class="answer"><b>${Math.round(mine * 100)}%</b>` +
+        `<span class="answer"><b>${pct(mine)}</b>` +
         `<i style="--w:${Math.round(mine * 100)}%"></i></span>`);
   return el;
 }
@@ -529,7 +533,8 @@ function openDetail(el) {
   rows += field("Seen", count === 1 ? "once" : `${count.toLocaleString()} times`);
   const mine = answerFor(op);
   if (mine !== null) {
-    rows += field(currentRule || "Answer to your question", `${Math.round(mine * 100)}% yes`);
+    rows += field(currentRule || "Answer to your question",
+                  `${pct(mine)} (${mine >= myThreshold ? "yes" : "no"}; yes from ${pct(myThreshold)})`);
   }
   document.getElementById("sheet-rows").innerHTML = rows;
 
@@ -540,7 +545,9 @@ function openDetail(el) {
   else { link.removeAttribute("href"); link.hidden = true; }
   document.getElementById("sheet-note").textContent =
     op.ruled && op.lane === "uncertain"
-      ? "Nothing in this transaction is recognised, so no lane is claimed: any lane would be a guess."
+      ? ((op.shape || "").endsWith("could not be read.")
+        ? "The transaction could not be read, so no lane is claimed."
+        : "Nothing in this transaction is recognised, so no lane is claimed: any lane would be a guess.")
     : op.ruled ? "This lane is read off the transfer itself, not judged by the model."
     : op.offline ? "The decision model was unreachable, so this transfer was not judged."
     : op.lane_p < 0.35 ? "Below the confidence threshold, so it was not assigned a lane."
@@ -612,7 +619,7 @@ function judgeSeparation(ops) {
   // Each one links to the transfer itself: Arc is the thing that settles
   // whether the model read it right.
   const line = (o) => {
-    const inner = `<b>${Math.round(o.p * 100)}%</b>${escapeHtml(o.text)}`;
+    const inner = `<b>${pct(o.p)}</b>${escapeHtml(o.text)}`;
     return `<li>${explorerAnchor(o.url, inner, ` title="${escapeHtml(o.text)}"`)}</li>`;
   };
   document.getElementById("check-yes").innerHTML = pool.slice(0, 5).map(line).join("");
@@ -621,14 +628,20 @@ function judgeSeparation(ops) {
   document.getElementById("check-lo").textContent = "same question, other end";
   document.getElementById("check").hidden = false;
 
+  // The two ends are compared in log-odds, where the model decides, not in
+  // percentage points: "was a fee taken?" says 10% to every fee and 1% to
+  // everything else, a clean split that measured 9 points and was called
+  // "sorted nothing". The bars, 1.0 and 2.4, are the old 25 and 55 points
+  // measured about the middle, so a question answering near 50% is judged
+  // as before.
   const edge = Math.max(3, Math.round(pool.length / 10));
-  const gap = mean(pool.slice(0, edge).map(o => o.p)) - mean(pool.slice(-edge).map(o => o.p));
+  const gap = mean(pool.slice(0, edge).map(o => logit(o.p))) - mean(pool.slice(-edge).map(o => logit(o.p)));
   const el = document.getElementById("t-verdict");
-  el.classList.toggle("flat", gap < 0.25);
-  el.textContent = gap >= 0.55
-    ? `— it sorted them, ${Math.round(gap * 100)} points between the two ends`
-    : gap >= 0.25
-      ? `— a weak split, ${Math.round(gap * 100)} points between the ends; read both columns first`
+  el.classList.toggle("flat", gap < 1.0);
+  el.textContent = gap >= 2.4
+    ? `— it sorted them; yes from ${pct(myThreshold)}`
+    : gap >= 1.0
+      ? `— a weak split; yes from ${pct(myThreshold)}, read both columns first`
       : `— both ends read the same, so this question sorted nothing; try rephrasing`;
 }
 
@@ -652,7 +665,8 @@ function applyRule(rule) {
   document.body.classList.toggle("asking", ruleActive);
   document.getElementById("head-ans").textContent = currentRule;
   document.getElementById("head-ans").title = currentRule;
-  document.getElementById("t-rule").textContent = ruleActive ? `asking: ${currentRule}` : "";
+  document.getElementById("t-rule").textContent =
+    ruleActive ? `asking: ${currentRule} · yes from ${pct(myThreshold)}` : "";
   document.getElementById("t-verdict").textContent = "";
   judged.clear();
   document.getElementById("check").hidden = true;

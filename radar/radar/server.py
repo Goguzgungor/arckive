@@ -25,6 +25,10 @@ from .rpc import RpcPool, default_urls
 from .summarize import summarize
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+# httpx logs every request at INFO. With native transfers read, that is ten
+# lines a second of RPC and model calls that went fine; failures are logged
+# by the pool and the batch loop, with what they mean.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 LOG = logging.getLogger("radar")
 
 # The model is shared with another live radar on the same GPU: a cold-cache
@@ -245,8 +249,8 @@ class Radar:
         self.rate_asked = Rate()
         self.lane_counts: Counter[str] = Counter()
         self.latencies: deque[float] = deque(maxlen=50)
-        self.asked = 0      # transfers the model actually judged
-        self.reused = 0     # transfers answered from an earlier identical text
+        self.asked = 0      # lane sentences the model actually judged
+        self.reused = 0     # transfers whose lane sentence was judged before
         self.model: dict[str, Any] = {}
         self._identity: asyncio.Task[None] | None = None
         self._identity_at = -math.inf
@@ -424,8 +428,9 @@ class Radar:
         batch the model could not judge still deserves rows on screen -- marked
         offline rather than dropped -- so an outage looks like an outage, not
         like nothing happened on Arc for a while. Campaigns repeat one transfer
-        shape thousands of times, so identical shapes (protocol + shape) arrive
-        as a single row carrying how many times the shape occurred.
+        shape thousands of times, so transfers with the same family (the story
+        sentence, which names the protocol) arrive as a single row carrying how
+        many times it occurred.
         """
         collapsed: dict[str, dict[str, Any]] = {}
         # A swap moves USDC into and out of the same transaction, so adding up
@@ -524,8 +529,10 @@ class Radar:
         asked = self.rules_by_slot()
         started = time.monotonic()
         try:
+            # A lane the transfer itself decides is not put to the model; its
+            # story still is, for anyone asking a question.
             answers = await self.classifier.classify(
-                [s["shape"] for s in summaries], [s["story"] for s in summaries], asked,
+                [None if s["ruled"] else s["shape"] for s in summaries], [s["story"] for s in summaries], asked,
             )
         except Exception as exc:  # noqa: BLE001 - keep the radar alive
             self._model_failed(exc)

@@ -105,7 +105,11 @@ def test_plain_transfer():
 def test_native_value_send_is_plain():
     s = summarize(make_item(selector="0x", tx_to=WALLET2, topics=[TRANSFER]))
     assert "it was a plain direct transfer" in s["shape"]
-    assert s["protocol"] == ""
+    # USDC sent as plain value is USDC moving natively, not "an unknown contract".
+    assert s["protocol"] == "USDC"
+    # And it collapses with an ERC-20 transfer of the same shape under one name.
+    erc20 = summarize(make_item(selector="0xa9059cbb", tx_to=USDC, topics=[TRANSFER]))
+    assert (erc20["family"], erc20["protocol"]) == (s["family"], s["protocol"])
 
 
 def test_liquidity_lending_vault_wrap():
@@ -197,11 +201,11 @@ def test_signed_payment_story_names_it_gasless_and_leaves_out_the_usdc_protocol(
 
 def test_the_exchange_is_named_by_the_pool_not_by_the_event():
     # Uniswap v3's Swap event is logged by every fork of it.
-    unknown = {"to": ROUTER, "selector": "0x", "topics": [V3_SWAP], "emitters": [SOME_POOL], "factories": {}}
+    unknown = {"to": ROUTER, "selector": "0x12345678", "topics": [V3_SWAP], "emitters": [SOME_POOL], "factories": {}}
     assert protocol_of(unknown) == ""
     aerodrome = dict(unknown, factories={SOME_POOL: AERO_FACTORY})
     assert protocol_of(aerodrome) == "Aerodrome"
-    v4 = {"to": ROUTER, "selector": "0x", "topics": [V4_SWAP], "emitters": [POOL_MANAGER], "factories": {}}
+    v4 = {"to": ROUTER, "selector": "0x12345678", "topics": [V4_SWAP], "emitters": [POOL_MANAGER], "factories": {}}
     assert protocol_of(v4) == "Uniswap"
 
 
