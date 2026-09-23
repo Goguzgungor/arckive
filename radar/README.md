@@ -3,65 +3,110 @@
 Every USDC transfer on Arc mainnet, sorted by what it means, as it lands.
 
 Arc Radar reads Arc's live transfer feed, and Laya, a 322M-parameter decision
-model, sorts each USDC transfer into one of nine lanes — swap, bridge,
-liquidity, vault, lending, signed payment, payment, mint-burn, spam. No API
-key and no per-transfer cost.
+model, sorts each USDC transfer into a lane — swap, bridge, liquidity, vault,
+lending, signed payment, payment — and answers yes/no questions viewers ask
+of the stream. Mint-burn, spam and transfers the radar cannot read are
+decided by the transfer itself, not the model (see below). No API key and no
+per-transfer cost.
 
-## What makes it possible
+## What it reads
 
-The model does not read a transfer directly. It reads one short sentence
-describing its **shape**: what kind of party sent to what kind of party, a
-bucketed amount, and plain facts about the rest of the transaction (a swap
-leg, a bridge hop, a smart-account sender, and so on).
+USDC is Arc's native currency, so it moves two ways: through the ERC-20
+interface at `0x3600…0000`, and natively — a value send, or value passed into
+a contract call, which the chain logs as a `Transfer` from the system address
+`0xffff…fffe`. The feed reads both. A call through the ERC-20 interface is
+logged both ways at once, so each ERC-20 log cancels its native twin. Reading
+the ERC-20 interface alone, as the first version did, showed 24% of the USDC
+that moved in a measured ten minutes; most of the rest was swaps paid in
+native USDC and plain wallet-to-wallet sends.
 
-Addresses never appear in that sentence. Which wallet sent a swap says nothing
-about it being a swap, and naming it would split one campaign — the same
-contract calling the same function thousands of times — into thousands of
-distinct questions instead of one. Amounts are bucketed rather than dropped
-entirely, because a near-zero transfer is the signature of dust spam and that
-signal is worth keeping.
+One kind of transfer is left out on purpose: after every ERC-4337 bundle the
+EntryPoint pays the bundler back for gas. That is gas, which a plain
+transaction pays with no log at all, and shown it was a sub-cent row on every
+smart-account transaction.
 
-Because the shape strips out what doesn't matter, most of a live batch is text
-the model has already judged: campaigns repeat one shape over and over, so
-answers are cached per exact sentence and reused instead of re-asked.
+## What the model reads
+
+The model does not read a transfer directly. It reads short sentences
+describing its **shape**: what kind of party sent to what kind of party
+(a wallet — including an EIP-7702 account — or a contract), a bucketed
+amount, and plain facts about the rest of the transaction (a swap, a bridge
+hop, a batch payout, a smart-account sender, and so on), taken from the
+function called and the events logged (`radar/signatures.py`).
+
+There are two sentences, because two different questions are asked. The lane
+is read from `shape`. Viewers' questions are read from `story`, which adds
+what those questions are about — the size in words ("a medium amount"),
+which way a bridge went ("out of Arc"), the protocol — and which, put in the
+lane sentence, cost the lanes accuracy.
+
+Addresses never appear in either. Which wallet sent a swap says nothing about
+it being a swap, and naming it would split one campaign — the same contract
+calling the same function thousands of times — into thousands of distinct
+questions instead of one. Because the sentences strip out what doesn't
+matter, most of a live batch is text the model has already judged, and
+answers are cached per exact sentence.
+
+## What the transfer decides
+
+Three lanes are not a judgement, and the model is not asked:
+
+- **Mint / burn** — one side is the zero address and nothing in the
+  transaction says bridge. Offered to the model, this option drew probability
+  from every other lane.
+- **Spam** — exactly zero USDC moved and nothing else happened. A sub-cent
+  transfer is *not* spam on Arc: USDC is gas here, and a sub-cent native send
+  is how a new wallet gets some (all 40 recipients of the busiest such sender
+  spent it on exactly one transaction).
+- **Uncertain** — nothing in the transaction is recognisable, or it could not
+  be read. Asked anyway, the model named a lane confidently and arbitrarily
+  ("vault" at 0.82, "lending" at 0.64, depending only on wording).
+
+The page marks these rows "rule" or "unread" instead of printing a confidence.
 
 ## Measured
 
-Against live Arc mainnet traffic, full pipeline (feed → shape → model → wall),
-28 seconds:
+The labels the lanes were first measured against came from the same fact
+table the model reads, so they were audited before anything else: on ten
+minutes of mainnet every reading was checked against what the transaction
+actually moved — who gave what, who got what back — and read by hand where
+the two disagreed; contract identities were checked against Uniswap's and
+Circle's deployments and on chain. That audit, not the model, found most of
+what was wrong: the missing native transfers, Relay's same-chain swaps read
+as bridges, wrapped USDC read as vaults, EIP-7702 wallets called contracts,
+gas refunds filed as spam, and Aerodrome's pools named Uniswap. The full
+record is in `docs/superpowers/specs/2026-09-23-arc-radar-accuracy-design.md`.
 
-| | |
-|---|---|
-| Transfers received | 338 (~12/s) |
-| Classified | 318 |
-| Dropped | 0 |
-| Dominant lane | swap, 261/318 |
+Against the audited reading, on the same ten minutes (16,632 transfers),
+first version against this one:
 
-The raw feed alone (no model in the path) has been seen at 390 transfers in
-20 seconds — the model, not the feed, is the pipeline's limit.
+| | first version | now |
+|---|---|---|
+| USDC movements on the wall | 24% | all (gas refunds excepted) |
+| Lanes agreeing with the evidence | 78.9%, 15.8% uncertain | 99.9%, 0.1% uncertain |
+| 24 viewer questions, mean AUC | 0.759 | 0.931 |
+| 24 viewer questions, balanced accuracy | 0.641 | 0.834 |
 
-Lane agreement, measured against rule-derived labels on 400 captured live
-transfers (`scripts/capture.py` + `scripts/eval.py`):
+The right lane now carries 0.83 confidence on average. Two later captures
+through the real feed, of 1,200 and 4,000 transfers, give 99.8% and 99.9%
+lane agreement and 0.832 and 0.823 balanced accuracy (`scripts/eval.py`).
 
-| | |
-|---|---|
-| Distinct shapes among the 400 | 52 |
-| Agreement with rule labels | 358/392 = 91% (bar: 85%) |
-| Mean confidence | 0.60 |
+What moved the questions: the story sentence; prefixing every question with
+"About this Arc USDC transfer:"; and reading each question at its own yes
+line instead of at 0.5, because one question's yeses sit near 0.05 and
+another's near 0.9. The line is halfway, in log-odds, between the question's
+low and high answers over the gate's probe transfers.
 
-The lane wording itself was settled by measurement, not by guessing a
-taxonomy: at design time, 384 live transfers collapsed to 74 distinct shapes,
-and nine lanes worded in the summary sentence's own phrases ("tokens were
-swapped on an exchange", not "a DEX trade occurred") scored 89% against eleven
-more abstractly-worded lanes, which scored 4–50%. The model matches vocabulary
-more than it reasons about finance, so the lane descriptions were rewritten to
-meet it rather than the other way around.
+The gate that screens new questions was measured too, and the claim it was
+built on did not hold on Arc: polished nonsense does not always answer every
+transfer alike. It now turns away only questions that are flat across the
+probes — none of the 24 real ones, half of the nonsense — and the page shows
+the rest how weakly they sort.
 
-The one residual confusion in the 400-transfer eval is a single repeating
-campaign — a bridge deposit routed through a smart account with a swap leg —
-which the model answers mint-burn for at only 0.21–0.28 confidence. That is
-below the uncertainty floor, so on the live wall it renders as **uncertain**
-rather than as a wrong but confident label.
+Still weak: questions that make the model compare numbers ("is this less than
+one dollar?"), a second protocol in one transaction (a Relay deposit that
+swapped on Uniswap reads "Protocol: Relay"), and NFT mints through smart
+accounts, which no lane fits.
 
 ## Running it
 
@@ -120,10 +165,12 @@ Default RPC pool, in priority order: `https://rpc.mainnet.arc.io`,
 .venv/bin/pytest -q
 ```
 
-`scripts/capture.py` captures a fresh sample of live Arc transfers to a fixture
-file; `scripts/eval.py` runs the classifier over that fixture and reports lane
-agreement against rule-derived labels, the same measurement behind the table
-above.
+`scripts/capture.py` captures live Arc transfers through the real feed into
+the fixture (or `--out` elsewhere); `scripts/eval.py` runs the model over a
+capture and reports lane agreement against the evidence, the 24 questions'
+AUC and balanced accuracy at the gate's lines, and whether the gate still
+tells real questions from nonsense. It keeps every call as small as the
+server's own, because the GPU is shared.
 
 ## Deploying
 
@@ -164,10 +211,11 @@ repository secret is set.
 ## Layout
 
 ```
-radar/arc.py         live USDC transfer feed over RPC, reconnecting
+radar/arc.py         live USDC transfer feed over RPC, ERC-20 and native
 radar/rpc.py         RPC pool with priority fallback
-radar/summarize.py   transfer -> shape sentence
-radar/classify.py    batched lane question, cached per shape
+radar/signatures.py  selectors and events -> facts; which protocol handled it
+radar/summarize.py   transfer -> shape and story sentences; lanes the transfer decides
+radar/classify.py    lane question on shapes, viewer questions on stories, cached
 radar/gate.py        screens viewer questions before they reach the model
 radar/modelgate.py   authenticating gate in front of the model
 radar/sanitize.py    phrases that mark a question as an injection attempt

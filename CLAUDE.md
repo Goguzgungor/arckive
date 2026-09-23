@@ -40,7 +40,7 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 | `scripts/` | `build-install.sh` (generates `install.yaml`), `kind-dev.sh` (local kind env). |
 | `docs/benchmarks/` | Benchmark results (`results.json`) + generated HTML report. |
 | `install.yaml` | **Generated** — Namespace + CRD + `helm template` output. Never edit by hand. |
-| `radar/` | **Arc Radar** — standalone Python app (not in the pnpm workspace): live wall of every USDC transfer on Arc mainnet, lanes decided by the local Laya model via layad. Reads RPC directly; does not use the operator or worker. See `radar/README.md`. |
+| `radar/` | **Arc Radar** — standalone Python app (not in the pnpm workspace): live wall of every USDC transfer on Arc mainnet (ERC-20 and native), lanes decided by the local Laya model via layad — except mint/burn, zero-value spam and unreadable transfers, which the transfer itself decides. Reads RPC directly; does not use the operator or worker. See `radar/README.md`. |
 
 Dependency direction is strictly `operator → core` and `worker → core`. The
 operator and the worker never import each other.
@@ -64,6 +64,7 @@ pnpm bench                         # benchmark suite → docs/benchmarks/<date>/
 pnpm bench:report                  # render report.html from results.json
 scripts/build-install.sh           # regenerate install.yaml from the chart
 cd radar && .venv/bin/pytest -q    # Arc Radar tests (Python)
+cd radar && .venv/bin/python scripts/eval.py   # Arc Radar accuracy on captured mainnet (needs layad)
 ```
 
 **Run `pnpm -r build` before `pnpm -r test`.** Only `packages/worker` aliases
