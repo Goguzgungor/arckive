@@ -133,14 +133,14 @@ class Classifier:
 
         keys = {name: _key(spec) for name, spec in questions.items()}
         unseen: list[str] = []
+        hits = 0
         for text in texts:
             if all((text, keys[name]) in self._cache for name in questions):
-                self.hits += 1
+                hits += 1
             elif text not in unseen:
                 unseen.append(text)
 
         if unseen:
-            self.misses += len(unseen)
             response = await self._client.post(
                 f"{self._endpoint}/ai/run/batch",
                 json={"states": unseen, "questions": questions},
@@ -149,9 +149,6 @@ class Classifier:
             for text, item in zip(unseen, response.json()["results"]):
                 for name, answer in item["answers"].items():
                     self._cache[(text, keys[name])] = answer
-
-        while len(self._cache) > CACHE_MAX:
-            self._cache.popitem(last=False)
 
         out = []
         for text in texts:
@@ -172,6 +169,16 @@ class Classifier:
             })
             for name in questions:
                 self._cache.move_to_end((text, keys[name]))
+
+        # Trimmed only now, after this batch has been read and its entries
+        # marked recent: trimming right after the insert could evict an entry
+        # this very batch still had to read.
+        while len(self._cache) > CACHE_MAX:
+            self._cache.popitem(last=False)
+        # Counted only for a call that returned answers. A failed call asked
+        # the model nothing, and the next take_counts() must not say it did.
+        self.hits += hits
+        self.misses += len(unseen)
         return out
 
     async def probe(self, question: str) -> list[float]:

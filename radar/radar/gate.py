@@ -91,6 +91,10 @@ REASONS = {
     "flat": "Asked of every kind of transfer, this question answered the same "
             "every time, so it would sort nothing. Try something a transfer records: "
             "an amount, who it moves between, what else happened in the transaction.",
+    # Not about the question at all: checking one costs the shared model a
+    # forward pass, so new ones are paced per viewer and budgeted overall.
+    "slow": "One question every few seconds.",
+    "busy": "Many people are asking right now. Try again in a minute.",
 }
 
 
