@@ -11,9 +11,10 @@ from conftest import make_item
 from radar import server
 from radar.gate import REASONS
 from radar.server import (
-    BREAKER_OPEN, FEED_STALE, MODEL_TIMEOUT, QUESTION_EVERY, VOLUME_WINDOW,
-    Pace, ProbeBudget, Radar, Rate, viewer,
+    BREAKER_OPEN, FEED_STALE, HEARTBEAT, MODEL_TIMEOUT, QUESTION_EVERY, VOLUME_WINDOW,
+    Pace, ProbeBudget, Radar, Rate, settle_lane, viewer,
 )
+from radar.types import ZERO
 from radar.summarize import summarize
 
 
@@ -121,6 +122,11 @@ def test_index_is_arc(monkeypatch):
         assert "judged by Laya" in page.text
         assert "Mac" not in page.text
         assert client.get("/favicon.svg").status_code == 200
+        # A page the server dropped as too slow is never told; it has to
+        # notice the silence itself and reconnect.
+        assert "SILENCE_MS = 20000" in page.text
+        # The socket refuses frames over 4 KiB, so the box stops well short.
+        assert 'maxlength="200"' in page.text
 
 
 
@@ -310,6 +316,74 @@ def test_a_lane_outside_the_choice_set_is_uncertain():
     assert rows[0]["lane"] == "uncertain"
     assert r.lane_counts == {"uncertain": 1}
     assert set(r.volume(now=item["seen_at"])) == {"uncertain"}
+
+
+WALLET_A = "0x" + "11" * 20
+WALLET_B = "0x" + "22" * 20
+LEANING_MINT = {"lane": "issuance", "lane_p": 0.45,
+                "probabilities": {"issuance": 0.45, "swap": 0.40, "bridge": 0.15}}
+
+
+def test_mint_lane_needs_the_zero_address():
+    # Nothing was minted or burned unless one side is the zero address; the
+    # model's runner-up takes the row instead.
+    assert settle_lane(LEANING_MINT, WALLET_A, WALLET_B) == ("swap", 0.40)
+    assert settle_lane(LEANING_MINT, ZERO, WALLET_B) == ("issuance", 0.45)
+    assert settle_lane(LEANING_MINT, WALLET_A, ZERO) == ("issuance", 0.45)
+
+
+def test_a_weak_runner_up_leaves_a_non_mint_uncertain():
+    weak = {"lane": "issuance", "lane_p": 0.7,
+            "probabilities": {"issuance": 0.7, "swap": 0.2, "bridge": 0.1}}
+    assert settle_lane(weak, WALLET_A, WALLET_B) == ("uncertain", 0.2)
+    # An answer with nothing to fall back on cannot be overruled into a lane.
+    assert settle_lane({"lane": "issuance", "lane_p": 0.9}, WALLET_A, WALLET_B)[0] == "uncertain"
+
+
+def test_rows_keep_non_mints_out_of_the_mint_lane():
+    r = Radar()
+    item = make_item(frm=WALLET_A, to=WALLET_B)
+    rows = r._rows([item], [summarize(item)], [{**SWAP, **LEANING_MINT}], offline=False)
+    assert rows[0]["lane"] == "swap"
+    assert rows[0]["lane_p"] == 0.40
+    assert r.lane_counts == {"swap": 1}
+
+
+def test_heartbeat_speaks_only_into_silence():
+    # With no transfers arriving the wall would say nothing, and a page that
+    # hears nothing cannot tell a quiet chain from a dead socket.
+    clock = Clock()
+    r = Radar(clock=clock)
+    sent = []
+
+    async def capture(message):
+        sent.append(message["type"])
+        r.last_sent = clock()
+
+    r.broadcast = capture
+    r.last_sent = clock()
+    clock.now += HEARTBEAT - 0.1
+    asyncio.run(r.beat())
+    assert sent == []
+    clock.now += 0.2
+    asyncio.run(r.beat())
+    assert sent == ["stats"]
+    asyncio.run(r.beat())
+    assert sent == ["stats"]
+
+
+def test_broadcast_marks_when_the_wall_last_spoke():
+    clock = Clock()
+    r = Radar(clock=clock)
+    r.clients[object()] = None
+
+    async def ok(client, text):
+        return True
+
+    r._send = ok
+    clock.now += 42
+    asyncio.run(r.broadcast({"type": "stats"}))
+    assert r.last_sent == clock.now
 
 
 def test_rate_is_a_sliding_window():

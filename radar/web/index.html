@@ -245,7 +245,7 @@
     </div>
   </div>
   <div class="ask">
-    <input id="rule" type="text" autocomplete="off" spellcheck="false"
+    <input id="rule" type="text" autocomplete="off" spellcheck="false" maxlength="200"
            placeholder="Ask the stream a yes/no question — e.g. is this a large swap?">
     <button id="hold" type="button" aria-pressed="false">Pause<span class="n" id="hold-n"></span></button>
     <button id="clear" type="button">Clear</button>
@@ -644,6 +644,11 @@ function applyRule(rule) {
 }
 
 let socket, retry;
+// The server drops a viewer that cannot keep up and does not tell it, and it
+// says something at least every few seconds even when Arc is quiet. So this
+// long without a word means the socket is dead to the server: start a new one.
+const SILENCE_MS = 20000;
+let lastHeard = Date.now();
 function ask(text) {
   clearTimeout(retry);
   if (socket.readyState !== 1) return;
@@ -661,10 +666,12 @@ function ask(text) {
 function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${scheme}://${location.host}/ws`);
+  lastHeard = Date.now();
   // To the server a new socket is a new viewer with no question, so a
   // question asked before a reconnect would silently stop being answered.
-  socket.onopen = () => { if (currentRule) ask(currentRule); };
+  socket.onopen = () => { lastHeard = Date.now(); if (currentRule) ask(currentRule); };
   socket.onmessage = (event) => {
+    lastHeard = Date.now();
     const msg = JSON.parse(event.data);
     if (msg.type === "ops") { enqueue(msg.ops); gauges(msg.stats); judgeSeparation(msg.ops); }
     else if (msg.type === "stats") gauges(msg.stats);
@@ -694,6 +701,16 @@ function connect() {
   socket.onclose = () => setTimeout(connect, 1500);
 }
 connect();
+
+setInterval(() => {
+  if (socket.readyState !== WebSocket.OPEN || Date.now() - lastHeard < SILENCE_MS) return;
+  // Detached before closing: on a stalled link the close can take as long as
+  // TCP does, and its onclose would start a second reconnect on top of this one.
+  const stale = socket;
+  stale.onclose = stale.onmessage = null;
+  try { stale.close(); } catch (_) { /* already gone */ }
+  connect();
+}, 5000);
 
 const input = document.getElementById("rule");
 let debounce;

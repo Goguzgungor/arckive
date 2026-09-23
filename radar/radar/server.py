@@ -23,6 +23,7 @@ from .classify import LANES, Classifier
 from .gate import MIN_SEPARATION, REASONS, inspect, separation
 from .rpc import RpcPool, default_urls
 from .summarize import summarize
+from .types import ZERO
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 LOG = logging.getLogger("radar")
@@ -46,8 +47,14 @@ RATE_WINDOW = 60.0
 # A viewer whose socket stops draining -- a backgrounded tab on a bad link, or
 # someone doing it on purpose -- must not hold the wall up for everyone else.
 # Sends go out concurrently and a viewer that cannot take one within this long
-# is dropped; a page that was only slow reconnects by itself.
+# is dropped. It is not told (a close is one more frame into the same full
+# buffer); the page notices the silence and reconnects by itself.
 SEND_TIMEOUT = 2.0
+# The wall only speaks when transfers arrive, and a page cannot tell a quiet
+# chain from a socket the server has already given up on. When nothing has gone
+# out for this long a stats message goes out anyway, so silence on the page
+# means the socket is dead; the page reconnects after several missed beats.
+HEARTBEAT = 5.0
 
 # The model sits behind a tunnel on another machine. When it hangs rather than
 # refuses, the client's default two minutes froze the wall for two minutes;
@@ -165,6 +172,33 @@ class ProbeBudget:
         return True
 
 
+def settle_lane(answer: dict[str, Any], frm: str, to: str) -> tuple[str, float]:
+    """The lane a row is shown in, and the confidence shown beside it.
+
+    The model reads the shape, not the addresses, and on live traffic it filed
+    ordinary swap legs and wallet payments under mint / burn at ~40%. Whether
+    anything was minted or burned is not a judgement, though: one side is the
+    zero address or it is not. So a mint the transfer rules out goes to the
+    model's runner-up instead, and like any answer is shown as uncertain when
+    that is too weak to stand on.
+    """
+    lane, confidence = answer.get("lane", ""), answer.get("lane_p", 0.0)
+    if lane == "issuance" and ZERO not in (frm, to):
+        rest = {
+            other: p for other, p in (answer.get("probabilities") or {}).items()
+            if other in LANES and other != "issuance"
+        }
+        if not rest:
+            return "uncertain", 0.0
+        lane = max(rest, key=rest.__getitem__)
+        confidence = round(rest[lane], 3)
+    # A lane outside the choice set has no chip on the page and no place in
+    # the tallies; it is as good as no answer.
+    if lane not in LANES or confidence < UNCERTAIN_BELOW:
+        return "uncertain", confidence
+    return lane, confidence
+
+
 def viewer(ws: Any) -> str:
     """The key a viewer's question is filed under."""
     return str(id(ws))
@@ -173,6 +207,7 @@ def viewer(ws: Any) -> str:
 class Radar:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
+        self.last_sent = clock()  # when the wall last said anything; see beat()
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=QUEUE_MAX)
         self.pool = RpcPool(default_urls())
         self.clients: dict[WebSocket, str | None] = {}
@@ -249,6 +284,7 @@ class Radar:
         stayed full. A viewer that times out or errors is dropped, and not
         closed here: a close is one more frame into the same full buffer.
         """
+        self.last_sent = self.clock()
         if not self.clients:
             return
         text = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
@@ -265,6 +301,16 @@ class Radar:
         except Exception:  # noqa: BLE001 - a dropped viewer must not stop the radar
             return False
         return True
+
+    async def beat(self) -> None:
+        """Say something if the wall has been silent for HEARTBEAT."""
+        if self.clock() - self.last_sent >= HEARTBEAT:
+            await self.broadcast({"type": "stats", "stats": self.stats()})
+
+    async def heartbeat(self) -> None:
+        while True:
+            await asyncio.sleep(HEARTBEAT / 2)
+            await self.beat()
 
     def drop(self, client: WebSocket) -> None:
         """Forget a viewer, and the question it was holding a slot with."""
@@ -384,11 +430,7 @@ class Radar:
         # transaction counts once per lane, at its largest leg.
         largest: dict[tuple[str, str], tuple[float, float]] = {}
         for item, summary, answer in zip(batch, summaries, answers):
-            lane = answer["lane"]
-            # A lane outside the choice set has no chip on the page and no
-            # place in the tallies; it is as good as no answer.
-            if lane not in LANES or answer["lane_p"] < UNCERTAIN_BELOW:
-                lane = "uncertain"
+            lane, confidence = settle_lane(answer, summary["frm"], summary["to"])
             self.lane_counts[lane] += 1
             self.classified += 1
             leg = (summary["tx"], lane)
@@ -410,7 +452,7 @@ class Radar:
                 "to": summary["to"],
                 "url": summary["url"],
                 "lane": lane,
-                "lane_p": answer["lane_p"],
+                "lane_p": confidence,
                 "stuck": answer.get("stuck", False),
                 "rules": answer["rules"],
                 "at": item["seen_at"],
@@ -581,7 +623,8 @@ async def _lifespan(app: FastAPI):  # noqa: ANN202 - FastAPI lifespan signature
             "or point LAYA_ENDPOINT at the machine that runs it.",
             os.environ.get("LAYA_ENDPOINT", "http://127.0.0.1:8918"), exc,
         )
-    tasks = [asyncio.create_task(radar.ingest()), asyncio.create_task(radar.work())]
+    tasks = [asyncio.create_task(radar.ingest()), asyncio.create_task(radar.work()),
+             asyncio.create_task(radar.heartbeat())]
     yield
     for task in tasks:
         task.cancel()

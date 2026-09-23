@@ -159,6 +159,9 @@ class Classifier:
             out.append({
                 "lane": lane.get("choice", ""),
                 "lane_p": round(max(probabilities.values()) if probabilities else 0.0, 3),
+                # Kept whole so the server can fall back to the runner-up when
+                # the transfer itself rules the choice out (see settle_lane).
+                "probabilities": dict(probabilities),
                 # A state that answers the control question yes answers
                 # everything yes. Its readings are dropped rather than shown,
                 # because a confident wrong answer costs more than a gap.

@@ -4,9 +4,9 @@ services:
     ports:
       - "8777:8777"
     environment:
-      # The model gate on the Mac, reached through the reverse tunnel the
-      # ledger radar already runs. 172.17.0.1 is this host's Docker bridge.
-      LAYA_ENDPOINT: ${LAYA_ENDPOINT:-http://172.17.0.1:8919}
+      # The model gate on the Mac, published by the Cloudflare Tunnel the
+      # ledger radar already runs. Bearer RADAR_TOKEN is required.
+      LAYA_ENDPOINT: ${LAYA_ENDPOINT:-https://laya-gate.brages.uk}
       RADAR_TOKEN: ${RADAR_TOKEN:?set RADAR_TOKEN}
       ARC_RPCS: ${ARC_RPCS:-}
     extra_hosts:

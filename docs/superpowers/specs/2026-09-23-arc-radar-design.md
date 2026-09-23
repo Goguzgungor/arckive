@@ -169,8 +169,11 @@ system, viewer question box and "best answers on top" ranking.
 - Dokploy on the same server as the Stellar radar (92.4.216.135), app built
   from the arclight repo, branch `main`, build path `radar/`, Dockerfile
   build.
-- Env: `LAYA_ENDPOINT=http://172.17.0.1:8919`, `RADAR_TOKEN` (same as the
-  Stellar radar), optional `ARC_RPCS`, `RADAR_CANONICAL_HOST`.
+- Env: `LAYA_ENDPOINT=https://laya-gate.brages.uk` (the model gate, published
+  from the Mac by the Stellar radar's Cloudflare Tunnel — found at deploy time;
+  the `http://172.17.0.1:8919` first written here assumed an SSH reverse
+  tunnel that is not the one in use), `RADAR_TOKEN` (same as the Stellar
+  radar), optional `ARC_RPCS`, `RADAR_CANONICAL_HOST`.
 - Domain: **radar.arckive.org** (one DNS record; arckive.org is already on
   this Dokploy).
 - The Dokploy push webhook is unreliable for this repo, so a GitHub Actions
