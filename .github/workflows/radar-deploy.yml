@@ -1,0 +1,20 @@
+name: radar-deploy
+on:
+  push:
+    branches: [main]
+    paths: ["radar/**"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Dokploy
+        env:
+          URL: ${{ secrets.DOKPLOY_RADAR_DEPLOY_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "DOKPLOY_RADAR_DEPLOY_URL not set; skipping"; exit 0; fi
+          # Dokploy's deploy webhook checks the pushed branch; a bare POST is
+          # answered "Branch Not Match", so send the shape of a GitHub push.
+          curl -fsS -X POST "$URL" \
+            -H 'Content-Type: application/json' -H 'X-GitHub-Event: push' \
+            -d '{"ref":"refs/heads/main","repository":{"full_name":"${{ github.repository }}"},"head_commit":{"id":"${{ github.sha }}"}}'

@@ -4,7 +4,16 @@
 <dict>
   <key>Label</key><string>com.arc-radar.model</string>
   <key>ProgramArguments</key>
-  <array><string>/Users/gokbot/.local/bin/layad</string><string>serve</string></array>
+  <array>
+    <string>/Users/gokbot/.local/share/uv/tools/layad/bin/python</string>
+    <string>-c</string>
+    <string>import mlx.core as mx, sys; mx.set_cache_limit(2*1024**3); sys.argv=['layad','serve']; from layad.cli import main; sys.exit(main())</string>
+  </array>
+  <!-- layad has no cache cap of its own; without this, MLX's GPU buffer cache
+       grew unbounded and the daemon's resident footprint reached 17 GB on
+       this 24 GB Mac. Capped here rather than in layad's own code because the
+       model is shared with another app on this machine and both need the GPU
+       to stay bounded. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>LAYAD_MODEL</key><string>aac6fef/laya-multilingual-mlx</string>
