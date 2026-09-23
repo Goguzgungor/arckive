@@ -5,18 +5,25 @@ and has instant finality, so a one-second `eth_blockNumber` poll followed by
 one `eth_getLogs` over the new blocks sees everything with no reorg handling,
 and works against every endpoint in the pool (not all of them offer
 WebSockets).
+
+"Every" means both ways USDC moves on Arc: through the ERC-20 interface at
+USDC, and natively -- USDC is the chain's own currency, and a value send
+never touches the ERC-20 contract. See NATIVE in types.py.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from .rpc import RpcPool
-from .types import TRANSFER_TOPIC, USDC, ZERO, Item, Transfer, TxContext
+from .signatures import POOL_SWAP_TOPICS
+from .types import (
+    DECIMALS, ENTRYPOINTS, NATIVE, NATIVE_DECIMALS, TRANSFER_TOPIC, USDC, ZERO, Item, Transfer, TxContext,
+)
 
 LOG = logging.getLogger("radar.arc")
 
@@ -30,41 +37,97 @@ LOG = logging.getLogger("radar.arc")
 HEAD_TRAIL = 2
 
 
+# factory() -- the one view every Uniswap-v2 and -v3 style pool has.
+FACTORY_CALL = "0xc45a0155"
+_SCALE = 10 ** (NATIVE_DECIMALS - DECIMALS)
+
+
 class CodeCache:
-    """Whether an address has code. Contract-ness does not change in practice,
-    and the same routers and pools appear in most transactions, so this cuts
-    `eth_getCode` traffic to the handful of new wallets each block brings."""
+    """What is known about an address that does not change: whether it is a
+    contract, or which factory deployed a pool. The same routers and pools
+    appear in most transactions, so this cuts lookups to the handful of new
+    addresses each block brings."""
 
     def __init__(self, size: int = 50_000) -> None:
         self._size = size
-        self._data: OrderedDict[str, bool] = OrderedDict()
+        self._data: OrderedDict[str, Any] = OrderedDict()
 
-    def get(self, address: str) -> bool | None:
+    def get(self, address: str) -> Any:
         if address not in self._data:
             return None
         self._data.move_to_end(address)
         return self._data[address]
 
-    def put(self, address: str, has_code: bool) -> None:
-        self._data[address] = has_code
+    def put(self, address: str, value: Any) -> None:
+        self._data[address] = value
         self._data.move_to_end(address)
         while len(self._data) > self._size:
             self._data.popitem(last=False)
+
+
+def is_contract(code: str) -> bool:
+    """Whether `eth_getCode` describes a contract rather than a wallet.
+
+    An EIP-7702 account carries code too -- 0xef0100 and the address it
+    delegates to, 23 bytes -- but it is still somebody's wallet with a key.
+    On mainnet 268 of 663 addresses with code were these, most of them
+    MetaMask accounts, and calling them contracts told the model that a
+    payment between two people went from one contract to another.
+    """
+    if code in ("0x", "0x0", ""):
+        return False
+    return not (code.startswith("0xef0100") and len(code) == 2 + 2 * 23)
 
 
 def _address(topic: str) -> str:
     return "0x" + topic[-40:].lower()
 
 
+def _raw(log: dict[str, Any]) -> int:
+    return int(log["data"], 16) if log["data"] not in ("0x", "") else 0
+
+
+def _native(log: dict[str, Any]) -> bool:
+    return log.get("address", "").lower() == NATIVE
+
+
 def _transfer(log: dict[str, Any]) -> Transfer:
+    raw = _raw(log)
     return {
         "tx": log["transactionHash"].lower(),
         "log_index": int(log["logIndex"], 16),
         "block": int(log["blockNumber"], 16),
         "frm": _address(log["topics"][1]),
         "to": _address(log["topics"][2]),
-        "value": int(log["data"], 16) if log["data"] not in ("0x", "") else 0,
+        # Rounded up, so a native movement of a few wei is "less than one
+        # cent" rather than a zero -- a zero transfer is the one thing the
+        # spam lane is decided on.
+        "value": -(-raw // _SCALE) if _native(log) else raw,
     }
+
+
+def _without_mirrors(logs: list[Any]) -> list[Any]:
+    """Drop the native twin of every ERC-20 USDC log.
+
+    A transfer through the ERC-20 interface is logged by USDC and again by
+    NATIVE, with the same parties and the value in 18 decimals. Each ERC-20
+    log takes away one native log that matches it exactly; whatever native
+    logs remain moved USDC without the ERC-20 interface and are kept.
+    """
+    twins: Counter[tuple[str, str, str, int]] = Counter()
+    for lg in logs:
+        if not _native(lg):
+            t = _transfer(lg)
+            twins[(t["tx"], t["frm"], t["to"], t["value"] * _SCALE)] += 1
+    kept = []
+    for lg in logs:
+        if _native(lg):
+            key = (lg["transactionHash"].lower(), _address(lg["topics"][1]), _address(lg["topics"][2]), _raw(lg))
+            if twins[key]:
+                twins[key] -= 1
+                continue
+        kept.append(lg)
+    return kept
 
 
 def _context(tx: Any, receipt: Any) -> TxContext | None:
@@ -72,10 +135,14 @@ def _context(tx: Any, receipt: Any) -> TxContext | None:
         return None
     try:
         data = tx.get("input") or "0x"
+        logs = [lg for lg in receipt.get("logs", []) if lg.get("topics")]
         return {
             "to": tx["to"].lower() if tx.get("to") else None,
             "selector": data[:10].lower() if len(data) >= 10 else "0x",
-            "topics": [lg["topics"][0].lower() for lg in receipt.get("logs", []) if lg.get("topics")],
+            "topics": [lg["topics"][0].lower() for lg in logs],
+            "sender": (tx.get("from") or "").lower(),
+            "emitters": [(lg.get("address") or "").lower() for lg in logs],
+            "factories": {},
         }
     except (AttributeError, IndexError, KeyError, TypeError):
         # A garbled transaction or receipt costs this transfer its context --
@@ -94,6 +161,7 @@ async def stream_transfers(
     now: Callable[[], float] = time.time,
 ) -> AsyncIterator[Item]:
     codes = CodeCache()
+    factories = CodeCache()
     cursor: int | None = None
     while True:
         # Everything a tick reads from the network is untrusted, and the feed
@@ -101,7 +169,7 @@ async def stream_transfers(
         # outage, a null head, an answer of the wrong shape -- costs one tick
         # and is retried from the same cursor, and nothing escapes this loop.
         try:
-            tick = await _tick(pool, codes, cursor, trail=trail, max_gap=max_gap,
+            tick = await _tick(pool, codes, factories, cursor, trail=trail, max_gap=max_gap,
                                max_range=max_range, now=now)
         except Exception as exc:  # noqa: BLE001 - the feed outlives any one bad answer
             LOG.warning("feed tick failed (%s): %s", type(exc).__name__, exc)
@@ -116,7 +184,7 @@ async def stream_transfers(
 
 
 async def _tick(
-    pool: RpcPool, codes: CodeCache, cursor: int | None, *,
+    pool: RpcPool, codes: CodeCache, factories: CodeCache, cursor: int | None, *,
     trail: int, max_gap: int, max_range: int, now: Callable[[], float],
 ) -> tuple[int, list[Item]] | None:
     """Read the blocks since `cursor`: (next cursor, items), or None if none are new."""
@@ -136,24 +204,24 @@ async def _tick(
     end = min(head, cursor + max_range - 1)
     logs = await pool.call("eth_getLogs", [{
         "fromBlock": hex(cursor), "toBlock": hex(end),
-        "address": USDC, "topics": [TRANSFER_TOPIC],
+        "address": [USDC, NATIVE], "topics": [TRANSFER_TOPIC],
     }])
     # `null` is not "no transfers": reading it as an empty range would move
     # the cursor over blocks nobody actually read.
     if not isinstance(logs, list):
         raise ValueError(f"eth_getLogs answered {type(logs).__name__}")
-    return end + 1, (await _items(pool, codes, logs, now) if logs else [])
+    return end + 1, (await _items(pool, codes, factories, logs, now) if logs else [])
 
 
 async def _items(
-    pool: RpcPool, codes: CodeCache, logs: list[Any], now: Callable[[], float],
+    pool: RpcPool, codes: CodeCache, factories: CodeCache, logs: list[Any], now: Callable[[], float],
 ) -> list[Item]:
     """Turn one range of USDC logs into feed items, context and all.
 
     Built whole before anything is yielded, so a tick that fails part-way
     emits nothing and is retried cleanly instead of repeating half a range.
     """
-    transfers = [_transfer(lg) for lg in logs]
+    transfers = [_transfer(lg) for lg in _without_mirrors(logs)]
     # One context fetch per transaction, not per transfer: a swap moves USDC
     # two or three times in one transaction and they all share its receipt.
     hashes = list(dict.fromkeys(t["tx"] for t in transfers))
@@ -164,6 +232,24 @@ async def _items(
     got = await pool.batch(calls, retry_null=True)
     ctx = {h: _context(got[i], got[i + len(hashes)]) for i, h in enumerate(hashes)}
 
+    # Which exchange a swap happened on is a fact about the pool, not about
+    # the event it logs: Uniswap v3's Swap event is emitted, byte for byte, by
+    # every fork of it. Measured on mainnet, 29% of the pools logging it were
+    # Aerodrome's and others', so the pool is asked who deployed it.
+    pools = list(dict.fromkeys(
+        e for c in ctx.values() if c for e, t in zip(c["emitters"], c["topics"])
+        if t in POOL_SWAP_TOPICS and e and factories.get(e) is None
+    ))
+    if pools:
+        answers = await pool.batch([("eth_call", [{"to": p, "data": FACTORY_CALL}, "latest"]) for p in pools])
+        for p, a in zip(pools, answers):
+            # Only an answer is remembered; a failed lookup is asked again.
+            if isinstance(a, str) and len(a) >= 42:
+                factories.put(p, "0x" + a[-40:].lower())
+    for c in ctx.values():
+        if c:
+            c["factories"] = {e: f for e in dict.fromkeys(c["emitters"]) if (f := factories.get(e))}
+
     unknown = list(dict.fromkeys(
         a for t in transfers for a in (t["frm"], t["to"]) if a != ZERO and codes.get(a) is None
     ))
@@ -171,15 +257,20 @@ async def _items(
         code = await pool.batch([("eth_getCode", [a, "latest"]) for a in unknown])
         for a, c in zip(unknown, code):
             if isinstance(c, str):
-                codes.put(a, c not in ("0x", "0x0", ""))
+                codes.put(a, is_contract(c))
 
     seen = now()
     items: list[Item] = []
     for t in transfers:
+        c = ctx[t["tx"]]
+        if c and t["frm"] in ENTRYPOINTS and t["to"] == c["sender"]:
+            # The bundler taking its gas back (see ENTRYPOINTS). Shown, it was
+            # a sub-cent row on every smart-account transaction, filed as spam.
+            continue
         parties = {a: codes.get(a) for a in (t["frm"], t["to"]) if a != ZERO}
         items.append({
             "transfer": t,
-            "ctx": ctx[t["tx"]],
+            "ctx": c,
             "contracts": {a: v for a, v in parties.items() if v is not None},
             "seen_at": seen,
         })
