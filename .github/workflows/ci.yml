@@ -41,3 +41,6 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -e '.[dev]'
       - run: pytest -q
+      # Deploys build this Dockerfile on the server; build it here first so a
+      # broken image fails CI instead of the deploy.
+      - run: docker build -t arc-radar:ci .
