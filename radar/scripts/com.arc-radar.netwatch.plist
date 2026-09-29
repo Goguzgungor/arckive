@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Checks every minute that the model answers through the tunnel and repairs
+     the layer that does not (see scripts/netwatch.py). Installed by
+     scripts/install-netwatch.sh, which copies the script out of the repo so a
+     branch switch cannot take it away from launchd. -->
+<dict>
+  <key>Label</key><string>com.arc-radar.netwatch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/gokbot/Library/Application Support/arc-radar/netwatch.py</string>
+  </array>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/gokbot/Library/Logs/arc-radar-netwatch.log</string>
+  <key>StandardErrorPath</key><string>/Users/gokbot/Library/Logs/arc-radar-netwatch.log</string>
+</dict>
+</plist>

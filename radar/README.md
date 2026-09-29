@@ -151,6 +151,30 @@ layad and gate already hold 8918 and 8919, load none of them: point
 `LAYA_ENDPOINT` at the existing gate and reuse its `RADAR_TOKEN`, since a
 second copy would fail to bind those ports or, worse, load the model twice.
 
+### Staying reachable through outages
+
+launchd restarts the model, the gate or the tunnel if one of them exits, but
+not one that hangs, and nothing restarted the network under them: when the
+Mac's Wi-Fi dropped for nine and a half hours on 2026-09-29, both radars got
+Cloudflare's 530 for every model call until the network came back.
+
+`scripts/netwatch.py` runs every minute from a LaunchAgent and first checks
+that the gate answers through the tunnel. If it does not, it repairs the
+innermost broken layer, after three bad minutes in a row, with a cooldown
+that doubles up to an hour:
+
+| Broken | Seen as | Repair |
+|---|---|---|
+| model | layad does not answer `/health` | restart the model agent |
+| gate | the gate does not answer on loopback | restart the gate agent |
+| network | neither 1.1.1.1 nor captive.apple.com answers | turn Wi-Fi off and on (only if it is on) |
+| tunnel | the internet answers, the tunnel does not | restart cloudflared |
+
+It cannot fix a router or ISP that is down; then it keeps waiting, and logs
+when the model is reachable again. `--dry-run` shows what it would do.
+Install or update it with `./scripts/install-netwatch.sh`; it logs to
+`~/Library/Logs/arc-radar-netwatch.log`, and only when something is wrong.
+
 ### Environment variables
 
 | Variable | Default | Purpose |
