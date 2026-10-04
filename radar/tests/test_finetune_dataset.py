@@ -142,3 +142,15 @@ def test_the_majority_answer_is_held_to_a_multiple_of_the_minority(rows):
     for topic, (no, yes) in counts.items():
         cap = max(dataset.MAJORITY_FLOOR, dataset.MAJORITY_RATIO * min(no, yes) // dataset.PHRASINGS_EACH)
         assert max(no, yes) <= cap * dataset.PHRASINGS_EACH, (topic, yes, no)
+
+
+def test_the_nonsense_share_can_be_turned_down_to_none():
+    rows = dataset.build(synth.items(), nonsense_share=0.0)
+    assert not [qid for part in rows.values() for r in part for qid in r["questions"] if qid.startswith("nonsense.")]
+
+
+def test_the_cli_records_the_nonsense_share(tmp_path):
+    capture = tmp_path / "cap.json"
+    capture.write_text(json.dumps({"items": [], "txs": {}}))
+    assert dataset.main(["--capture", str(capture), "--out", str(tmp_path / "out"), "--nonsense-share", "0"]) == 0
+    assert json.loads((tmp_path / "out" / "stats.json").read_text())["nonsense_share"] == 0.0

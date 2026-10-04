@@ -53,7 +53,12 @@ MAJORITY_RATIO = 3
 MAJORITY_FLOOR = 50
 PHRASINGS_EACH = 2     # training phrasings asked of each chosen story
 LANE_REPEATS = 3       # lane rows are few; repeated in training so the questions do not out-vote them
-NONSENSE_SHARE = 0.05  # of rule questions: enough to keep nonsense flat, not enough to teach "unfamiliar -> no"
+# Of rule questions. The first run (2026-10-04, 5%) turned away all 14 of
+# eval's nonsense questions but also flattened four answerable ones the model
+# had not been taught ("is this spam or dust?", "did this go through 1inch?"):
+# nonsense labelled "no" everywhere teaches "unfamiliar -> no". Set per run
+# with --nonsense-share; stats.json records it.
+NONSENSE_SHARE = 0.05
 VAL_ONE_IN = 10        # one state in ten, by hash, is validation
 AUDIT_ROWS = 60
 
@@ -72,7 +77,7 @@ def lane_gold(lane: str) -> dict[str, Any]:
     return {"probabilities": {k: (1 - SMOOTH if k == lane else rest) for k in LANES}}
 
 
-def build(items: list[Item], seed: int = 0) -> dict[str, list[dict[str, Any]]]:
+def build(items: list[Item], seed: int = 0, nonsense_share: float = NONSENSE_SHARE) -> dict[str, list[dict[str, Any]]]:
     rng = random.Random(seed)
     summaries = [summarize(i) for i in items]
     stories: dict[str, Any] = {}
@@ -109,7 +114,7 @@ def build(items: list[Item], seed: int = 0) -> dict[str, list[dict[str, Any]]]:
                     ask(story, f"{topic}.{k}", text, yes)
                     n_rules += 1
     pool = sorted(stories)
-    for k in range(int(n_rules * NONSENSE_SHARE)):
+    for k in range(int(n_rules * nonsense_share)):
         ask(rng.choice(pool), f"nonsense.{k}", rng.choice(NONSENSE_TRAIN), False)
 
     rows: dict[str, list[dict[str, Any]]] = {"train": [], "val": []}
@@ -167,18 +172,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capture", type=Path, action="append", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--nonsense-share", type=float, default=NONSENSE_SHARE)
     args = parser.parse_args(argv)
     for path in args.capture:
         if path.resolve() == FIXTURE.resolve():
             raise SystemExit(f"{path} is eval.py's benchmark; it never becomes training data")
     items = [it for path in args.capture for it in load(path)] + synth.items()
-    rows = build(items, args.seed)
+    rows = build(items, args.seed, args.nonsense_share)
     args.out.mkdir(parents=True, exist_ok=True)
     for split, part in rows.items():
         with open(args.out / f"{split}.jsonl", "w", encoding="utf-8") as f:
             for row in part:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    summary = stats(rows)
+    summary = dict(stats(rows), nonsense_share=args.nonsense_share)
     (args.out / "stats.json").write_text(json.dumps(summary, indent=2))
     (args.out / "audit.md").write_text(audit(rows, args.seed))
     print(f"{len(items)} transfers -> train {summary['train']['questions']} questions in {summary['train']['rows']} rows, "
