@@ -2480,7 +2480,7 @@ Read all 60 entries of `$DATA/rows/audit.md`. For each, does the sentence alone 
 
 ```bash
 RUN="$MODELS/laya-multilingual-arc-$(date +%Y%m%d)-1"; mkdir -p "$RUN"
-PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
+PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.4 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
   .venv-ft/bin/python -m finetune.train --data "$DATA/rows" --out "$RUN" --epochs 3 \
   > "$RUN/supervise.log" 2>&1
 ```

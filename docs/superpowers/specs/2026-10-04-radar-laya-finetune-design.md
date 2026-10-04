@@ -153,7 +153,7 @@ USDC?" has no label, because "1 to 100 USDC" cannot answer it.
 - Settings: `soft-ce`, encoder lr 2e-5, head lr 1e-4, cosine schedule,
   ≤3 epochs, micro-batch 8 × accumulation 4, the checkpoint's own `max_len`
   1024 / `head_max_len` 256 (padding is to the longest in a batch, and the
-  served config stays the base's), fp32 on `mps`, `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5`. Expected:
+  served config stays the base's), fp32 on `mps`, `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5` (with the low watermark at 0.4: torch refuses a low ratio above the high one). Expected:
   roughly 20–40k rows, 30–90 min, peak ~6 GB.
 - Supervisor `radar/finetune/supervise.py`:
   - run the trainer as a child process;

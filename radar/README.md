@@ -230,7 +230,7 @@ MODELS="$HOME/Library/Application Support/arc-radar/finetune/models"
 uv venv --python 3.12 .venv-ft && uv pip install --python .venv-ft/bin/python -r finetune/requirements-ft.txt
 # 4. train, paused whenever the shared model slows down
 RUN="$MODELS/laya-multilingual-arc-$(date +%Y%m%d)-1"; mkdir -p "$RUN"
-PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
+PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.4 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
   .venv-ft/bin/python -m finetune.train --data "$DATA/rows" --out "$RUN"
 # 5. convert to what layad serves, serve it on 8920, check it answers as trained
 ~/.local/share/uv/tools/layad/bin/python -m laya_mlx convert --model "$RUN/final" --dtype float16 --output "$RUN/final-mlx"
