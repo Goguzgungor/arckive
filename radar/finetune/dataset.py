@@ -11,7 +11,10 @@ Three kinds of row, each asked the way the server asks it:
     labelled from the transfer's reading (questions.py);
   * the lane question over the shape sentence, verbatim, labelled with the
     fact table's lane -- only to keep the lanes where they are, at 99.8%;
-  * a few nonsense questions, labelled "no", so the gate keeps refusing them.
+  * a few nonsense questions, labelled "no", so the gate keeps refusing them;
+  * optionally, replay questions from outside the bank with the base model's
+    own answers as soft targets (replay.py), so what is not taught is not
+    forgotten.
 
 Stories are templated -- 133 distinct ones in 1,200 live transfers -- so rows
 are built per distinct story, not per transfer: a thousand copies of one swap
@@ -77,7 +80,8 @@ def lane_gold(lane: str) -> dict[str, Any]:
     return {"probabilities": {k: (1 - SMOOTH if k == lane else rest) for k in LANES}}
 
 
-def build(items: list[Item], seed: int = 0, nonsense_share: float = NONSENSE_SHARE) -> dict[str, list[dict[str, Any]]]:
+def build(items: list[Item], seed: int = 0, nonsense_share: float = NONSENSE_SHARE,
+          replay: dict[str, dict[str, float]] | None = None) -> dict[str, list[dict[str, Any]]]:
     rng = random.Random(seed)
     summaries = [summarize(i) for i in items]
     stories: dict[str, Any] = {}
@@ -117,6 +121,15 @@ def build(items: list[Item], seed: int = 0, nonsense_share: float = NONSENSE_SHA
     for k in range(int(n_rules * nonsense_share)):
         ask(rng.choice(pool), f"nonsense.{k}", rng.choice(NONSENSE_TRAIN), False)
 
+    for story, answers in sorted((replay or {}).items()):
+        if story not in stories:
+            continue
+        questions, gold = asked.setdefault(story, ({}, {}))
+        for k, (text, p) in enumerate(sorted(answers.items())):
+            # The base's own answer, unsmoothed: the point is to stay where it was.
+            questions[f"replay.{k}"] = rule_question(text)
+            gold[f"replay.{k}"] = {"probabilities": {"true": p, "false": 1 - p}}
+
     rows: dict[str, list[dict[str, Any]]] = {"train": [], "val": []}
     for story, (questions, gold) in sorted(asked.items()):
         rows["val" if is_val(shape_of[story]) else "train"].append({"state": story, "questions": questions, "gold": gold})
@@ -143,6 +156,8 @@ def stats(rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         for row in part:
             for qid, gold in row["gold"].items():
                 p = gold["probabilities"]
+                if qid.startswith("replay."):
+                    continue
                 if qid == "lane":
                     lanes[max(p, key=p.get)] += 1
                 else:
@@ -173,18 +188,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--nonsense-share", type=float, default=NONSENSE_SHARE)
+    parser.add_argument("--replay", type=Path, help="replay.py's answers: out-of-bank questions the base answered")
     args = parser.parse_args(argv)
     for path in args.capture:
         if path.resolve() == FIXTURE.resolve():
             raise SystemExit(f"{path} is eval.py's benchmark; it never becomes training data")
     items = [it for path in args.capture for it in load(path)] + synth.items()
-    rows = build(items, args.seed, args.nonsense_share)
+    replay = json.loads(args.replay.read_text()) if args.replay else None
+    rows = build(items, args.seed, args.nonsense_share, replay)
     args.out.mkdir(parents=True, exist_ok=True)
     for split, part in rows.items():
         with open(args.out / f"{split}.jsonl", "w", encoding="utf-8") as f:
             for row in part:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    summary = dict(stats(rows), nonsense_share=args.nonsense_share)
+    summary = dict(stats(rows), nonsense_share=args.nonsense_share,
+                   replay_questions=sum(qid.startswith("replay.") for part in rows.values()
+                                        for r in part for qid in r["questions"]))
     (args.out / "stats.json").write_text(json.dumps(summary, indent=2))
     (args.out / "audit.md").write_text(audit(rows, args.seed))
     print(f"{len(items)} transfers -> train {summary['train']['questions']} questions in {summary['train']['rows']} rows, "
