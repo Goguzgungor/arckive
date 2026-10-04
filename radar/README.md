@@ -298,9 +298,12 @@ The container's healthcheck calls `/healthz`, which answers 503 once no
 transfer has arrived for two minutes, so a dead feed marks the container
 unhealthy instead of leaving a frozen wall up.
 
-The model gate on the Mac is published by a Cloudflare Tunnel (`cloudflared
-tunnel run laya-gate`) at `https://laya-gate.brages.uk`, which is the default
-`LAYA_ENDPOINT` in both the Dockerfile and `docker-compose.yml`. The gate
+Arc's model gate on the Mac is published by a Cloudflare Tunnel (`cloudflared
+tunnel run laya-gate`) at `https://laya-arc.brages.uk`, which is the default
+`LAYA_ENDPOINT` in both the Dockerfile and `docker-compose.yml`; the same
+tunnel publishes the shared base model's gate, which the Stellar radar uses,
+at `https://laya-gate.brages.uk` — pointing `LAYA_ENDPOINT` back there is the
+rollback to the base model. The gate
 answers 401 without the bearer `RADAR_TOKEN`. Override `LAYA_ENDPOINT` if the
 model is reached another way — `scripts/tunnel.sh` sets up the SSH
 reverse-tunnel alternative, which lands the gate on the server's Docker bridge
