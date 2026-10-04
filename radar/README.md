@@ -113,6 +113,36 @@ one dollar?"), a second protocol in one transaction (a Relay deposit that
 swapped on Uniswap reads "Protocol: Relay"), and NFT mints through smart
 accounts, which no lane fits.
 
+### The fine-tuned model
+
+Since 2026-10-04 the radar runs its own fine-tune of `laya-multilingual`
+(see "Fine-tuning the model"): run `laya-multilingual-arc-20261004-3`,
+blended half way back toward the base (WiSE-FT, `finetune/blend.py`,
+alpha 0.5). Base against the shipped model, same code, same data:
+
+| | base | fine-tune |
+|---|---|---|
+| Fixture lanes (1,149 placed) | 99.8%, right lane at 0.83 | 100.0%, right lane at 0.99 |
+| Fixture, 30 questions: mean AUC / balanced accuracy (19 countable) | 0.925 / 0.824 | 0.988 / 0.968 |
+| Gate: answerable refused / nonsense turned away | 0 of 37 / 8 of 14 | 0 of 37 / 14 of 14 |
+| Test capture, held-out phrasings of taught topics (54) | 0.708 | 0.919 |
+| Test capture, topics never taught (36 phrasings) | 0.843 | 0.886 |
+| Test capture, Spanish / German / Russian (15) | 0.747 | 0.931 |
+
+The test capture is 3,000 live transfers taken after the training capture
+ended; "never taught" topics and phrasings reached training in no form. The
+fixture is `eval.py`'s benchmark and never reached training either.
+
+What it does worse than the base, measured: questions about fees and spam it
+was never taught keep their ranking ("was a fee charged?" AUC 1.00, "a
+worthless spam transfer" 0.93 against 0.99) but the gate's yes line, drawn
+from the probes, lands in the wrong place for them, so their highlighted sets
+are less accurate (balanced accuracy 0.96 -> 0.86 and 0.89 -> 0.51). "Is this
+spam?" is read backwards by both models (AUC 0.19 and 0.25). Turkish is out of
+scope for this radar and is not an acceptance criterion. Three full runs and
+the blend are recorded in the plan's ledger: the unblended runs taught the
+bank harder (balanced accuracy up to 0.990) but read untaught questions worse.
+
 ## Running it
 
 The decision model is served by [layad](https://github.com/rcwsr/layad), which
@@ -224,17 +254,21 @@ MODELS="$HOME/Library/Application Support/arc-radar/finetune/models"
 # 1. capture: training first, the test capture only after it ends
 .venv/bin/python scripts/capture.py 15000 --every 4 --out "$DATA/train.json"
 .venv/bin/python scripts/capture.py 3000 --every 4 --out "$DATA/test.json"
-# 2. rows, then read audit.md by hand before training on them
-.venv/bin/python -m finetune.dataset --capture "$DATA/train.json" --out "$DATA/rows"
+# 2. the base's own answers to out-of-bank questions (learning without forgetting),
+#    then the rows; read audit.md by hand before training on them
+.venv/bin/python -m finetune.replay --capture "$DATA/train.json" --out "$DATA/replay.json"
+.venv/bin/python -m finetune.dataset --capture "$DATA/train.json" --out "$DATA/rows" --replay "$DATA/replay.json"
 # 3. the trainer's own environment (torch + laya PR #899), never the radar's venv
 uv venv --python 3.12 .venv-ft && uv pip install --python .venv-ft/bin/python -r finetune/requirements-ft.txt
 # 4. train, paused whenever the shared model slows down
 RUN="$MODELS/laya-multilingual-arc-$(date +%Y%m%d)-1"; mkdir -p "$RUN"
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.4 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
   .venv-ft/bin/python -m finetune.train --data "$DATA/rows" --out "$RUN"
-# 5. convert to what layad serves, serve it on 8920, check it answers as trained
-~/.local/share/uv/tools/layad/bin/python -m laya_mlx convert --model "$RUN/final" --dtype float16 --output "$RUN/final-mlx"
-.venv-ft/bin/python -m finetune.parity --model "$RUN/final" --endpoint http://127.0.0.1:8920 --rows "$DATA/rows/val.jsonl"
+# 5. blend half way back to the base (WiSE-FT), convert to what layad serves,
+#    serve it on 8920, check it answers as trained
+.venv-ft/bin/python -m finetune.blend --ft "$RUN/final" --alpha 0.5 --out "$RUN/blend-0.5"
+~/.local/share/uv/tools/layad/bin/python -m laya_mlx convert --model "$RUN/blend-0.5" --dtype float16 --output "$RUN/blend-0.5-mlx"
+.venv-ft/bin/python -m finetune.parity --model "$RUN/blend-0.5" --endpoint http://127.0.0.1:8920 --rows "$DATA/rows/val.jsonl"
 # 6. accept: the fixture, then held-out phrasings, topics and languages on the test capture
 LAYA_ENDPOINT=http://127.0.0.1:8920 .venv/bin/python scripts/eval.py
 .venv/bin/python -m finetune.report --base http://127.0.0.1:8918 --ft http://127.0.0.1:8920 \
