@@ -79,8 +79,8 @@ Separations, each enforced by a test on the built dataset:
    `UNANSWERABLE`, `NONSENSE`), the control question, or a probe.
 2. **Held-out topics.** About a third of the question topics (and every one of
    their phrasings) never appear in training.
-3. **Held-out phrasings.** Each training topic keeps ≥2 English phrasings and
-   ≥1 Turkish phrasing out of training.
+3. **Held-out phrasings.** Each training topic has 6 English and 3 Turkish
+   phrasings; the last 2 English and the last Turkish one never reach training.
 4. **Held-out languages.** Spanish, German and Russian phrasings of a few
    topics are never trained. They check that multilingual reading survives,
    Russian covering a non-Latin script.
@@ -113,8 +113,9 @@ USDC?" has no label, because "1 to 100 USDC" cannot answer it.
 **Question bank** (`radar/finetune/questions.py`).
 - A topic is a truth function over the reading. Truth may be undefined, in
   which case the row is skipped.
-- Each topic has ≥8 English phrasings and ≥3 Turkish ones. Some topics also
-  carry Spanish, German and Russian phrasings.
+- A training topic has 6 English phrasings and 3 Turkish ones; a held-out
+  topic has 3 English and 1 Turkish. Some topics also carry Spanish, German
+  and Russian phrasings.
 - Each topic and phrasing carries its split: `train`, `heldout-phrasing`,
   `heldout-topic` or `heldout-language`.
 - Viewer questions are asked as `RULE_PREFIX + text`, exactly as the server
@@ -150,8 +151,9 @@ USDC?" has no label, because "1 to 100 USDC" cannot answer it.
   - save the checkpoint plus `manifest.json`: base revision, trainer SHA,
     dataset hashes, configuration and metrics.
 - Settings: `soft-ce`, encoder lr 2e-5, head lr 1e-4, cosine schedule,
-  ≤3 epochs, micro-batch 8 × accumulation 4, `max_len` 512, `head_max_len`
-  256, fp32 on `mps`, `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5`. Expected:
+  ≤3 epochs, micro-batch 8 × accumulation 4, the checkpoint's own `max_len`
+  1024 / `head_max_len` 256 (padding is to the longest in a batch, and the
+  served config stays the base's), fp32 on `mps`, `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5`. Expected:
   roughly 20–40k rows, 30–90 min, peak ~6 GB.
 - Supervisor `radar/finetune/supervise.py`:
   - run the trainer as a child process;
@@ -188,8 +190,10 @@ USDC?" has no label, because "1 to 100 USDC" cannot answer it.
     laya-arc.brages.uk`;
   - restart the tunnel agent, which interrupts the Stellar radar's model calls
     for a few seconds.
-- netwatch also checks `laya-arc.brages.uk` and repairs Arc's model and gate
-  agents with the same layered logic.
+- A second netwatch agent (`com.arc-radar.netwatch-arc`) runs the same script
+  with its URLs, state file and agent labels set by environment, and may repair
+  only the `model` and `gate` layers. The existing instance keeps repairing the
+  network and the shared tunnel, so two instances never toggle Wi-Fi.
 
 ## Acceptance (base vs fine-tune, same data, same code)
 
