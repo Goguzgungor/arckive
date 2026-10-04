@@ -1,0 +1,308 @@
+[
+ {
+  "id": 0,
+  "answer": "yes",
+  "evidence": "CCTP receiveMessage on MessageTransmitterV2 (0x81d40f21) from source domain 6 (Base): 5 USDC burned on Base (burnToken 0x833589..), TokenMessengerV2 MintAndWithdraw mints 4.999838 to the recipient and 0.000162 fee to 0xdd86b8 (log 5, Transfer from 0x0 with USDC Mint event). This transfer is the fee leg of a CCTP bridge-in; the USDC it carries was burned on Base.",
+  "confidence": "high"
+ },
+ {
+  "id": 1,
+  "answer": "no",
+  "evidence": "Uniswap UniversalRouter.execute: EOA pays 9.217655 USDC into the v4 PoolManager (log 5) and receives EXIT token; a fee hook (0x173c) takes its cut. Pure on-chain swap, no bridge contract or event.",
+  "confidence": "high"
+ },
+ {
+  "id": 2,
+  "answer": "no",
+  "evidence": "UniversalRouter swap USDC -> MEMESPAD via v4 PoolManager; log 14 is PoolManager paying the MemespadHook its fee, forwarded to MemespadTax. No bridge involved.",
+  "confidence": "high"
+ },
+ {
+  "id": 3,
+  "answer": "no",
+  "evidence": "UniswapV2Router02.swapExactTokensForTokensSupportingFeeOnTransferTokens: V2 pair 0x55935d (Sync+Swap) pays 0.001405 USDC to the trader (log 4). Same-chain DEX swap, no bridge.",
+  "confidence": "high"
+ },
+ {
+  "id": 4,
+  "answer": "yes",
+  "evidence": "EntryPoint v0.8 handleOps for EIP-7702 account 0x8fc5: RelayApprovalProxyV3 -> RelayRouterV3 -> 0x AllowanceHolder/ArcSettler swaps MDOG to 5.373064 USDC, then RelayRouterV3 deposits that USDC into RelayDepository (depositErc20, RelayErc20Deposit with order id) at log 30. This is the origin leg of a Relay cross-chain intent (solver fills on the destination chain); the chain does not name the destination, hence medium.",
+  "confidence": "medium"
+ },
+ {
+  "id": 5,
+  "answer": "yes",
+  "evidence": "LI.FI Permit2Proxy.callDiamondWithEIP2612Signature -> LiFiDiamond -> Across Universal_SpokePool FundsDeposited with destinationChainId 0x2105 (Base), inputToken Arc USDC, outputToken 0x833589.. (Base USDC), 148 USDC; LiFiTransferStarted emitted. Log 32 is the user's 148 USDC entering the Permit2Proxy.",
+  "confidence": "high"
+ },
+ {
+  "id": 6,
+  "answer": "yes",
+  "evidence": "EntryPoint v0.7 handleOps: 7702 account sends 0.76 USDC to LiFiDiamond; log 2 is the Diamond passing it through LI.FI FeeForwarder (0.0019 fee), then 0.7581 USDC is deposited into GasZipV2.deposit (Deposit event, chains=0x1fc) and LiFiTransferStarted(bridge='gasZipBridge', integrator 'pulsar-mobile', destinationChainId 0x4115). Funds left Arc via gas.zip.",
+  "confidence": "high"
+ },
+ {
+  "id": 7,
+  "answer": "no",
+  "evidence": "EOA sends 389.5 native USDC to unverified helper 0x43d8 (massTransfer/proxyBuy-style contract), which forwards to Uniswap UniversalRouter -> v4 PoolManager swap and returns QUOTA (0x1ff9) to the user. No bridge contract or event.",
+  "confidence": "high"
+ },
+ {
+  "id": 8,
+  "answer": "no",
+  "evidence": "Same 0x43d8 helper -> UniversalRouter -> v4 PoolManager swap of 101 USDC into QUOTA (0x77e2) returned to the sender. No bridge.",
+  "confidence": "high"
+ },
+ {
+  "id": 9,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute: EOA sells TRX (0x607e) into the v4 PoolManager and receives 32.4996 native USDC (log 10). Same-chain swap, no bridge.",
+  "confidence": "high"
+ },
+ {
+  "id": 10,
+  "answer": "yes",
+  "evidence": "Same CCTP receiveMessage tx as item 0: MessageReceived sourceDomain 6 (Base), TokenMessengerV2 MintAndWithdraw; the USDC at log 5 is minted from a Base burn (fee portion of the 5 USDC burned). Brought over via CCTP.",
+  "confidence": "high"
+ },
+ {
+  "id": 11,
+  "answer": "no",
+  "evidence": "0x43d8 helper -> UniversalRouter -> v4 PoolManager swap; log 4 is UniversalRouter handing 184.14 USDC to the PoolManager, QUOTA (0xa6e3) goes back to the user. No bridge/mint; USDC originated from the sender's own balance.",
+  "confidence": "high"
+ },
+ {
+  "id": 12,
+  "answer": "no",
+  "evidence": "OKX DexRouter.dagSwapTo: FRLT -> USDC via OKX adapter and v4 PoolManager; log 27 is DexRouter paying the 1.670795 USDC swap output to the user. Same-chain swap, nothing cross-chain.",
+  "confidence": "high"
+ },
+ {
+  "id": 13,
+  "answer": "no",
+  "evidence": "0x43d8 helper -> UniversalRouter -> v4 PoolManager swap of 66.49 USDC into SPCXx; log 0 is the EOA funding the helper. No bridge or mint event.",
+  "confidence": "high"
+ },
+ {
+  "id": 14,
+  "answer": "yes",
+  "evidence": "USDC contract 0x3600 emits Mint(minter 0xfd78ee.., to, amount) and Transfer from 0x0 twice (4.999838 and 0.000162) inside TokenMessengerV2 MintAndWithdraw during CCTP receiveMessage. Supply was created in this tx.",
+  "confidence": "high"
+ },
+ {
+  "id": 15,
+  "answer": "no",
+  "evidence": "Uniswap SwapRouter02.exactInputSingle on UniswapV3 pool USDC/EURC (0x6fd5, factory UniswapV3Factory 0xf0db): user pays 0.89373 USDC and receives 0.794436 EURC. Only Swap events; no Mint, no Transfer from 0x0.",
+  "confidence": "high"
+ },
+ {
+  "id": 16,
+  "answer": "no",
+  "evidence": "0x43d8 helper -> UniversalRouter -> v4 PoolManager swap 166.75 USDC -> SON token. Only Transfer and Swap events; no Mint or zero-address Transfer.",
+  "confidence": "high"
+ },
+ {
+  "id": 17,
+  "answer": "no",
+  "evidence": "UniversalRouter swap USDC -> MEMESPAD; log 10 is PoolManager paying MemespadHook its fee. No Mint event, USDC moved not created.",
+  "confidence": "high"
+ },
+ {
+  "id": 18,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute with 2e-6 USDC bought GLITCH (sent to 0xdead) through the v4 PoolManager; log 8 is UniversalRouter -> PoolManager. No WUSDC Deposit/Withdrawal or any wrap event in the receipt.",
+  "confidence": "high"
+ },
+ {
+  "id": 19,
+  "answer": "no",
+  "evidence": "SwapRouter02.exactInputSingle ARCT -> USDC on UniswapV3 pool 0xf890 (plus an ARCT DividendClaimed payout); log 1 is the pool paying 0.083262 USDC to the trader. No Deposit/Withdrawal events.",
+  "confidence": "high"
+ },
+ {
+  "id": 20,
+  "answer": "no",
+  "evidence": "0x43d8 helper -> UniversalRouter -> v4 PoolManager swap 67.815 USDC -> aurakidzzz; log 5 is helper -> UniversalRouter. Receipt has only Transfer/Swap events, no wrap or unwrap.",
+  "confidence": "high"
+ },
+ {
+  "id": 21,
+  "answer": "yes",
+  "evidence": "EOA -> 0x Protocol AllowanceHolder.exec -> ArcSettler (0x Settler) which swaps 35.5503 USDC for FOCI in the v4 PoolManager (FociMemeHook fee); log 29 is AllowanceHolder passing the USDC to the Settler. DEX swap via 0x.",
+  "confidence": "high"
+ },
+ {
+  "id": 22,
+  "answer": "yes",
+  "evidence": "buy() on an unverified meme-launchpad proxy (0x3c56) for ARCBP: user pays 0.5 USDC, gets 80M ARCBP and a 0.497933 USDC refund (log 4); the buy graduates the curve: Permit2 approval, hook PoolConfigured, Uniswap v4 PositionManager mint + ModifyLiquidity, LP NFT Locked, TradingEnabled, LogMemeTokenFinalized. Launchpad trade plus liquidity creation.",
+  "confidence": "high"
+ },
+ {
+  "id": 23,
+  "answer": "yes",
+  "evidence": "OKX DexRouter.dagSwapTo: SPCXx -> USDC through the OKX adapter and v4 PoolManager (Swap event); log 8 is the adapter forwarding 0.136667 USDC to the DexRouter. Aggregator swap.",
+  "confidence": "high"
+ },
+ {
+  "id": 24,
+  "answer": "no",
+  "evidence": "Plain native transfer: EOA 0xf56e -> EOA 0xa37e, 0.00313 USDC, empty calldata, single Transfer log. No contract interaction.",
+  "confidence": "high"
+ },
+ {
+  "id": 25,
+  "answer": "no",
+  "evidence": "EntryPoint v0.7 handleOps: ERC-4337 smart account (UpgradableMSCA proxy 0xb780) sends 1 wei (1e-18 USDC) to another MSCA proxy 0xffd1, paymaster-sponsored. No swap/liquidity/bridge events.",
+  "confidence": "high"
+ },
+ {
+  "id": 26,
+  "answer": "no",
+  "evidence": "Relayer 0x2db0 calls unverified batch-transfer contract 0x6344 (transfer_..((uint8,address,address,address,uint256)[])), moving a 0-value USDC transfer plus 8 units of homoglyph spam token 'USD Coin' (0xba49) from 0xcfea to 0xb9b2 — address-poisoning pattern, no DeFi action.",
+  "confidence": "high"
+ },
+ {
+  "id": 27,
+  "answer": "no",
+  "evidence": "Uniswap UniversalRouter.execute (0x4fca) swapping 2e-6 USDC into GLITCH via v4 PoolManager; log 23 is EOA -> UniversalRouter. OKX DexRouter (0x4e3b) is not in the trace.",
+  "confidence": "high"
+ },
+ {
+  "id": 28,
+  "answer": "no",
+  "evidence": "Same UniversalRouter -> v4 PoolManager GLITCH dust swap; log 8 is UniversalRouter -> PoolManager. No OKX contract involved.",
+  "confidence": "high"
+ },
+ {
+  "id": 29,
+  "answer": "no",
+  "evidence": "Plain native transfer EOA 0xf56e -> EOA 0x24a3, 0.00313 USDC, empty calldata, single log. No router at all.",
+  "confidence": "high"
+ },
+ {
+  "id": 30,
+  "answer": "yes",
+  "evidence": "Uniswap v4 PositionManager.multicall: Initialize new pool (native USDC / TRX 0xd9d8), mint position NFT, ModifyLiquidity with positive delta; log 4 is PositionManager settling 7000.53 USDC into the PoolManager alongside 995M TRX. Liquidity added.",
+  "confidence": "high"
+ },
+ {
+  "id": 31,
+  "answer": "yes",
+  "evidence": "Unverified rebalancer 0xea98 on Slipstream (AERO-CL NonfungiblePositionManager 0xc84b): Burn + DecreaseLiquidity + Collect on CLPool WETH/USDC 0x6f30 (log 6 is the pool paying out 1669.885874 USDC), swap, then Mint + IncreaseLiquidity into a new position #0x5177. Pool liquidity removed and re-added.",
+  "confidence": "high"
+ },
+ {
+  "id": 32,
+  "answer": "yes",
+  "evidence": "Slipstream NonfungiblePositionManager.mint on CLPool cirBTC/USDC (0xd945): pool Mint event and IncreaseLiquidity for token #0x516f; log 32 is the EOA paying 466.826064 USDC into the pool. Liquidity added.",
+  "confidence": "high"
+ },
+ {
+  "id": 33,
+  "answer": "no",
+  "evidence": "Plain native transfer EOA 0xf56e -> EOA 0xcd22, 0.00313 USDC, empty calldata, single log. No pool touched.",
+  "confidence": "high"
+ },
+ {
+  "id": 34,
+  "answer": "no",
+  "evidence": "Plain native transfer EOA 0xf56e -> EOA 0x57c3, 0.00313 USDC, empty calldata, single log. No pool touched.",
+  "confidence": "high"
+ },
+ {
+  "id": 35,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute: EOA sells TRX for 74.14 USDC (PoolManager -> EOA, log 5). Only a Swap event; no ModifyLiquidity/Mint/Burn — a trade through the pool, not a size change.",
+  "confidence": "high"
+ },
+ {
+  "id": 36,
+  "answer": "no",
+  "evidence": "Uniswap UniversalRouter -> v4 PoolManager dust swap (2e-6 USDC -> GLITCH); log 16 is EOA -> UniversalRouter. KyberSwap MetaAggregationRouterV2 (0x6131) is not involved.",
+  "confidence": "high"
+ },
+ {
+  "id": 37,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute: EOA pays 0.412207 USDC into v4 PoolManager (log 20) for MEMESPAD via MemespadHook. No KyberSwap contract or Swapped event.",
+  "confidence": "high"
+ },
+ {
+  "id": 38,
+  "answer": "no",
+  "evidence": "0x43d8 helper -> Uniswap UniversalRouter -> v4 PoolManager swap 124.99 USDC -> TRX; log 3 is EOA -> helper. KyberSwap router 0x6131 not present.",
+  "confidence": "high"
+ },
+ {
+  "id": 39,
+  "answer": "yes",
+  "evidence": "EOA 0xc875 (no code) calls unverified bot 0xd2a7 (synthraV3SwapCallback/unlockCallback) sending 1 wei native USDC (log 7, 1e-18 USDC); the bot arbitrages USDC->Minara on the v4 PoolManager against UniswapV3 pool 0xfd0d. Sender is a wallet and the tx is a swap, but the transfer is a 1-wei msg.value trigger rather than trade input, hence medium.",
+  "confidence": "medium"
+ },
+ {
+  "id": 40,
+  "answer": "yes",
+  "evidence": "EOA 0x8e53 (no code) calls unverified swap router 0x944f (synthraV3SwapCallback/unlockCallback): log 1 is its 0.038 USDC fee to the router (split to 3 EOAs) while 3.762 USDC goes into the v4 PoolManager and FOCI comes back; router emits a swap record. Wallet-funded swap.",
+  "confidence": "high"
+ },
+ {
+  "id": 41,
+  "answer": "yes",
+  "evidence": "EOA 0xc68e (no code) sends 3.2457 native USDC to router proxy 0x53dea (TransparentUpgradeableProxy, swap() with FeeCollected/Swap events) at log 16; it wraps/unwraps via WUSDC, swaps in v4 PoolManager and returns ARGON to the EOA. Wallet-funded swap.",
+  "confidence": "high"
+ },
+ {
+  "id": 42,
+  "answer": "no",
+  "evidence": "UniversalRouter -> v4 PoolManager swap; the transfer at log 8 is from UniversalRouter (contract 0x4fca, 24546 bytes) to PoolManager. Sender is a contract, not a wallet.",
+  "confidence": "high"
+ },
+ {
+  "id": 43,
+  "answer": "no",
+  "evidence": "UniversalRouter swap USDC -> MEMESPAD; the transfer at log 8 is MemespadHook (contract) paying MemespadTax (contract). Sender is a hook contract, not a wallet.",
+  "confidence": "high"
+ },
+ {
+  "id": 44,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute: EOA sells SPCXx; log 5 is PoolManager (contract) paying 28.65 USDC to the EOA. The transfer's sender is the PoolManager, not a wallet.",
+  "confidence": "high"
+ },
+ {
+  "id": 45,
+  "answer": "yes",
+  "evidence": "Recipient 0x53dea is a TransparentUpgradeableProxy (752 bytes, impl 0x03e27e12) acting as a swap router (swap(), FeeCollected, WUSDC wrap/unwrap, v4 PoolManager swap). Contract on the receiving end.",
+  "confidence": "high"
+ },
+ {
+  "id": 46,
+  "answer": "yes",
+  "evidence": "OKX DexRouter.dagSwapByOrderId PP -> USDC; log 12 is PoolManager paying 0.012843 USDC to 0x173c, an unverified Uniswap v4 fee hook (19970 bytes, poolManager() returns the PoolManager). Recipient is a contract.",
+  "confidence": "high"
+ },
+ {
+  "id": 47,
+  "answer": "yes",
+  "evidence": "OKX DexRouter.dagSwapByOrderId PP -> USDC; log 17 is PoolManager paying 0.35471 USDC to the OKX DexRouter 0x4e3b (verified contract), which then pays the user. Recipient is a contract.",
+  "confidence": "high"
+ },
+ {
+  "id": 48,
+  "answer": "no",
+  "evidence": "UniversalRouter.execute: EOA 0x4275 sells TRX; log 9 is PoolManager paying 62.93 USDC to 0x4275, whose eth_getCode is empty (plain EOA, no 7702 delegation). Recipient is a wallet.",
+  "confidence": "high"
+ },
+ {
+  "id": 49,
+  "answer": "no",
+  "evidence": "Adapter meta-router 0xacc5.swap(string,...) -> KyberSwap MetaAggregationRouterV2 (Swapped) sells FUCI via v4 PoolManager; log 19 is helper 0x6053 paying 85.847979 USDC to 0x0f1c, whose eth_getCode is empty. Recipient is a wallet.",
+  "confidence": "high"
+ },
+ {
+  "id": 50,
+  "answer": "no",
+  "evidence": "SwapRouter02.exactInputSingle TOLLY -> USDC on UniswapV3 pool 0x162d; log 40 is the pool paying 0.004789 USDC to 0x0450, whose eth_getCode is empty. Recipient is a wallet.",
+  "confidence": "high"
+ }
+]
