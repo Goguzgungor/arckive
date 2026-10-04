@@ -121,7 +121,7 @@ def test_normalize_ignores_case_spacing_and_the_question_mark():
 def test_what_the_story_cannot_decide_is_not_labelled(item):
     unread = item(ctx=False)
     r = reading_of(unread, summarize(unread))
-    assert truth("swap", r) is None and truth("cctp", r) is None and truth("spam", r) is None
+    assert truth("swap", r) is None and truth("cctp", r) is None
     # The amount and the two parties are still in the sentence.
     assert truth("over_100", r) is False and truth("to_wallet", r) is True
 
@@ -155,3 +155,19 @@ def test_two_sided_facts_are_never_asked_one_sided():
             assert ("yatır" in t) == ("çek" in t), p.text
         if p.topic == "wrap":
             assert " or " in t or " ya da " in t or "wrapped usdc" in t, p.text
+
+
+def test_spam_or_dust_is_any_transfer_under_a_cent(item):
+    # Decided by the user on 2026-10-05: "spam or dust" is every transfer of
+    # less than one cent, zero included, whatever else the transaction did.
+    swap_leg = item(value=4_000, selector="0x3593564c")
+    r = reading_of(swap_leg, summarize(swap_leg))
+    assert r.facts and truth("spam", r) is True
+    zero = item(value=0)
+    assert truth("spam", reading_of(zero, summarize(zero))) is True
+    unread = item(value=4_000, ctx=False)
+    assert truth("spam", reading_of(unread, summarize(unread))) is True  # the amount is still in the sentence
+    cent = item(value=10_000)
+    assert truth("spam", reading_of(cent, summarize(cent))) is False
+    assert not TOPICS["spam"].held_out
+    assert dict(bench.QUESTIONS)["Is this spam or dust?"](swap_leg, summarize(swap_leg)) is True
