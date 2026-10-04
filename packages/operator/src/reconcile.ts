@@ -77,6 +77,17 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
     return;
   }
 
+  const headerRef = spec.insights?.laya.headerSecretRef;
+  if (headerRef) {
+    const headerSecret = await deps.kube.getSecret(namespace, headerRef.name);
+    if (!headerSecret?.data?.[headerRef.key]) {
+      await setCondition(
+        condition('False', 'MissingInsightsSecret', `Secret ${headerRef.name}/${headerRef.key} not found`),
+      );
+      return;
+    }
+  }
+
   const desired = desiredResources({
     namespace,
     owner: { name, uid },

@@ -68,6 +68,19 @@ export const IndexerSpecSchema = z.object({
       intervalMs: z.number().int().positive().default(2000),
     })
     .default({}),
+  // Classify every indexed event's transaction into a lane through a Laya
+  // model gate. Only the URL reaches the worker's config; the header (a token)
+  // stays in its Secret and is injected as env.
+  insights: z
+    .object({
+      laya: z.object({
+        url: z.string().regex(/^https?:\/\//i, 'insights.laya.url must be http(s)://'),
+        headerSecretRef: z
+          .object({ name: z.string().min(1), key: z.string().min(1).default('header') })
+          .optional(),
+      }),
+    })
+    .optional(),
 });
 
 export type IndexerSpec = z.infer<typeof IndexerSpecSchema>;
@@ -110,6 +123,7 @@ export function renderWorkerConfig(crName: string, spec: IndexerSpec): WorkerCon
       };
     }),
     polling: spec.polling,
+    ...(spec.insights ? { insights: { laya: { url: spec.insights.laya.url } } } : {}),
   });
 }
 

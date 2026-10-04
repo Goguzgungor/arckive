@@ -65,6 +65,7 @@ pnpm bench:report                  # render report.html from results.json
 scripts/build-install.sh           # regenerate install.yaml from the chart
 cd radar && .venv/bin/pytest -q    # Arc Radar tests (Python)
 cd radar && .venv/bin/python scripts/eval.py   # Arc Radar accuracy on captured mainnet (needs layad)
+cd radar && .venv/bin/python scripts/export_parity.py > ../packages/core/test/fixtures/radar-parity.json  # insights parity fixture
 ```
 
 **Run `pnpm -r build` before `pnpm -r test`.** Only `packages/worker` aliases
@@ -109,6 +110,9 @@ The CRD schema is duplicated by design (OpenAPI for the API server, zod for
 runtime). Changing a spec field means touching, in order:
 
 1. `charts/arckive/crds/indexer.yaml` — OpenAPI v3 schema, printer columns.
+   (Example: `insights` went through every step below — CRD, `IndexerSpecSchema`
+   + `renderWorkerConfig` (URL only), `WorkerConfigSchema`, `resources.ts`
+   (`INSIGHTS_HEADER` env from `secretKeyRef`), parity test, `install.yaml`.)
 2. `packages/core/src/crd.ts` — `IndexerSpecSchema` and, if it reaches the
    worker, `renderWorkerConfig`.
 3. `packages/core/src/config.ts` — `WorkerConfigSchema` (the worker's view).
@@ -201,7 +205,8 @@ runs `getFinalizedBlockNumber` in parallel with `getLogs` and commits only up to
 
 Worker env: `DATABASE_URL` (required), `CONFIG_PATH` (default
 `/etc/arckive/config.json`; the operator mounts `/etc/arckive/config/config.json`),
-`HEALTH_PORT` (9090), `INDEXER_CR_NAME`, `INDEXER_CR_NAMESPACE`, `LOG_LEVEL`.
+`HEALTH_PORT` (9090), `INDEXER_CR_NAME`, `INDEXER_CR_NAMESPACE`, `LOG_LEVEL`,
+`INSIGHTS_HEADER` (optional; one `Name: value` header line for the Laya gate).
 Operator env: `WORKER_IMAGE` (required), `RESYNC_INTERVAL_MS`, `HEALTH_PORT`
 (8080), `LOG_LEVEL`.
 
@@ -209,9 +214,56 @@ Worker endpoints: `:9090/metrics` (Prometheus) and `:9090/healthz` (503 when
 `Degraded`). Metrics are prefixed `arckive_` — `blocks_behind`,
 `last_processed_block`, `events_ingested_total`, `rpc_errors_total`,
 `dead_letter_total`, `write_latency_seconds`, `ws_connected`,
-`head_notifications_total` — with an `indexer` default label.
+`head_notifications_total`, plus `insights_blocks_behind`,
+`insights_classified_total{lane}`, `insights_model_calls_total`,
+`insights_cache_hits_total`, `insights_errors_total{stage}` — with an
+`indexer` default label.
 
 Phases: `Provisioning` → `Backfilling` → `Live`, or `Degraded` on error.
+
+### Insights (Laya lanes)
+
+Optional (`spec.insights.laya.{url, headerSecretRef}`): every indexed event's
+transaction is classified into a lane by a Laya model gate and written to
+`_insights` (+ `_insights_cursor`) in the indexer's schema.
+
+- Pure logic in `core/src/insights/`: `signatures.ts` is a port of
+  `radar/radar/signatures.py`, `sentence.ts` of Radar's `shape` sentence and
+  `ruled_lane`, `lanes.ts` of its lane question and `settle_lane`. When Radar's
+  tables or sentence change, re-run `radar/scripts/export_parity.py` to
+  regenerate `core/test/fixtures/radar-parity.json`; the parity test fails
+  until the port matches. Lane order and wording are part of the measured
+  question — do not reword them.
+- Worker: `laya.ts` (gate client: ≤64 states/call, ≤1 call/s, per-sentence
+  cache), `txcontext.ts` (per block: `getBlock(full)` + `getBlockReceipts`;
+  `factory()` per pool, `getCode` per party, `symbol()`/`decimals()`),
+  `pacer.ts`, `insights.ts` + `insightsdb.ts` (the loop).
+- The loop runs **behind** `_cursor` and never inside ingest: the only ingest
+  change is the `PipelineDeps.onCommitted` wake-up hook. Insight failures never
+  touch `PhaseTracker`. Rows + cursor are one transaction, like `commitBatch`.
+- Insights share the RPC budget with ingest and must stay second: every insight
+  RPC call goes through one adaptive `Pacer` (sequential; starts at 4/s, halves
+  on -32005/429 or while ingest is `Degraded`, relaxes 3% per success up to
+  20/s), rounds run only while the ingest phase is `Live` (read, never set), a
+  tx sender is taken for a wallet without `getCode`, and insights use one
+  endpoint alone — the last http entry of `network.rpc` (`createInsightsRpc`:
+  no `fallback`, `retryCount: 0`, so a rate limit reaches the Pacer instead of
+  spilling onto ingest's endpoint). A round whose model call fails is kept and
+  only the model call is retried (`prepareRound` / `finishRound`): a gate
+  outage must cost no RPC. Arc mainnet's public RPC has a per-minute quota that
+  ingest alone (1 s polling) already hits. Do not add concurrency on this path.
+- Ruled lanes (no model call): `issuance`, `spam`, `uncertain` (Radar's) and
+  `no_transfer` — a non-transfer event whose tx logged no Transfer /
+  TransferSingle / TransferBatch and sent no value. Added after a 5-contract
+  mainnet test where the model filed approvals as lending (10% of rows).
+- The header is a secret: Secret → `INSIGHTS_HEADER` env, never `config.json`,
+  never logged; values must be printable ASCII (a CR/LF would make fetch quote
+  it in an error), and gate errors carry only the fetch error's name/code.
+  `token symbol()` text is sanitised before it reaches a sentence, and token
+  info is retried on transport errors (only a revert/no-data answer means "not
+  a token").
+- Accuracy is measured only for USDC on Arc (via Radar); other contracts are
+  unmeasured — do not claim figures for them.
 
 ### Benchmarks
 

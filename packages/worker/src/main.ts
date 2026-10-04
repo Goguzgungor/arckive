@@ -14,6 +14,9 @@ import { HeadSignal } from './signal.js';
 import { PhaseTracker } from './status.js';
 import { subscribeNewHeads } from './ws.js';
 import { crStatusTargetFromEnv, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
+import { prepareInsights, runInsightsLoop } from './insights.js';
+import { Pacer } from './pacer.js';
+import { INSIGHTS_RPC_PACE, createContextSource, createInsightsRpc, readTokenInfo } from './txcontext.js';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -50,14 +53,11 @@ async function main(): Promise<void> {
   }
 
   // Resolve each contract's ABI: mounted file > inline > explorer auto-fetch.
-  const defs: EventDef[] = (
-    await Promise.all(
-      cfg.contracts.map(async (c) => {
-        const abi = await resolveContractAbi(c, cfg.network.explorerApi);
-        return extractEventDefs(c.name, c.address, abi, c.events.length ? c.events : undefined);
-      }),
-    )
-  ).flat();
+  // Kept whole: insights also read the function names.
+  const abis = await Promise.all(cfg.contracts.map((c) => resolveContractAbi(c, cfg.network.explorerApi)));
+  const defs: EventDef[] = cfg.contracts.flatMap((c, i) =>
+    extractEventDefs(c.name, c.address, abis[i], c.events.length ? c.events : undefined),
+  );
 
   const headSignal = new HeadSignal();
   const deps: PipelineDeps = {
@@ -72,6 +72,21 @@ async function main(): Promise<void> {
     log,
   };
   await bootstrapIndexer(deps);
+
+  // Insights (optional) run beside ingest, woken by each committed range.
+  const insightsWake = new HeadSignal();
+  const insightsPacer = new Pacer(INSIGHTS_RPC_PACE);
+  const insights = cfg.insights
+    ? await prepareInsights({
+        cfg, pool, schema: deps.schema, defs, abis, metrics, log, wake: insightsWake,
+        context: createContextSource(createInsightsRpc(rpcs), { pacer: insightsPacer }),
+        readToken: (address, fallback) => readTokenInfo(client, address, fallback),
+        headerLine: process.env['INSIGHTS_HEADER'],
+        ingestPhase: () => phase.phase,
+        rpcPacer: insightsPacer,
+      })
+    : null;
+  if (insights) deps.onCommitted = () => insightsWake.notify();
 
   // When a ws endpoint exists, the newHeads subscription wakes the pipeline
   // immediately; polling intervalMs remains as a safety net. announceRpc
@@ -109,7 +124,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  await runLoop(deps, ctrl.signal);
+  await Promise.all([runLoop(deps, ctrl.signal), insights ? runInsightsLoop(insights, ctrl.signal) : null]);
   subscription?.close();
   stopCrStatus();
   server.close();

@@ -57,6 +57,85 @@ Data: `<contract>_<event>` tables in an `idx_<indexer>` schema
 control tables. Deleting the CR cleans up the worker resources and **never
 touches the DB**.
 
+## Insights (optional)
+
+A log says *what* a contract emitted; it does not say *what kind of
+transaction* that was. A `Transfer` reads the same whether it is a swap leg, a
+bridge deposit or a payroll payment. With `spec.insights` set, the worker
+works that out for every event it indexes and writes it next to the event:
+the **lane** (`swap`, `bridge`, `liquidity`, `vault`, `lending`,
+`signed_payment`, `payment`, `spam`, `issuance` for mint/burn, `no_transfer`
+for a transaction that moved no token and no value — an approval, an account
+being set up — or `uncertain`), the **protocol** that handled the transaction,
+and the **facts**
+that placed it. The lanes are decided by Laya, a local decision model, through
+a model gate you run (the same one behind Arc Radar, `radar/`); the worker only
+needs its URL and one header.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata: { name: laya-gate }
+stringData:
+  header: "Authorization: Bearer <token>"
+---
+apiVersion: arckive.org/v1alpha1
+kind: Indexer
+spec:
+  # ...network, storage, contracts...
+  insights:
+    laya:
+      url: https://laya-gate.example.com     # /ai/run/batch and /health are appended
+      headerSecretRef: { name: laya-gate }   # optional; key defaults to "header"
+```
+
+Results land in `idx_<indexer>._insights`, keyed like the event rows:
+
+```sql
+SELECT t.block_time, t.value, i.lane, i.lane_p, i.protocol
+FROM idx_usdc_arc.usdc_transfer t
+JOIN idx_usdc_arc._insights i USING (block_number, tx_hash, log_index)
+WHERE i.lane = 'bridge'
+ORDER BY t.block_number DESC LIMIT 20;
+```
+
+`lane_p` is the model's confidence (NULL when the transaction itself decides
+the lane — mint/burn, zero-value spam, no transfer, unreadable); `probabilities` keeps the
+whole distribution, and `sentence` is exactly what the model read.
+
+Insights run in their own loop behind the ingest cursor. Ingest never waits for
+the model: if the gate is slow, rate-limited or down, insights fall behind
+(`arckive_insights_blocks_behind`) and catch up, and the indexer stays `Live`.
+The worker sends at most 64 sentences per call and one call a second, and
+caches answers per sentence.
+
+Insights also share your RPC endpoints with ingest, so they take second place
+there too: they read each block once (`eth_getBlockByNumber` +
+`eth_getBlockReceipts` — the endpoint must support the latter), one call at a
+time, and only while ingest is `Live`. Their pace starts at four calls a second
+and adapts: it halves whenever an endpoint answers "rate limited" or ingest is
+failing, and creeps back up (to at most twenty a second) while calls go
+through. Insights use one endpoint, on its own: the last `http(s)` entry in
+`network.rpc` (ingest queries `ws(s)` entries first, then `http(s)` in order).
+List more than one and their reads land on a different endpoint's rate limit
+than ingest's — worth doing: Arc mainnet's public RPC has a per-minute quota
+that ingest alone, polling once a second, already runs into. The header Secret
+must hold one line of printable ASCII (a trailing newline is dropped). History is classified too, once ingest has caught up, from the start
+block the indexer resolved at the boot that enabled insights (for a tail-mode
+or negative `startBlock`, that boot's head).
+
+**How good is it?** For USDC on Arc the sentence the model reads is
+byte-for-byte Radar's (a test pins this against 1,200 captured mainnet
+transfers), where lanes agreed with an audited fact table 99.9% of the time.
+For any other contract or token the sentence is new to the model — the event
+and function names from your ABI stand in for Radar's protocol tables — and
+its accuracy is **unmeasured**. Read a sample before trusting it:
+
+```sql
+SELECT lane, lane_p, protocol, sentence, tx_hash
+FROM idx_<indexer>._insights ORDER BY random() LIMIT 50;
+```
+
 ## Benchmarks
 
 Every number comes from running the real worker and reading only its
@@ -83,7 +162,12 @@ The worker serves `:9090/metrics` (Prometheus) and `:9090/healthz`:
 `arckive_blocks_behind`, `arckive_events_ingested_total`,
 `arckive_rpc_errors_total`, `arckive_last_processed_block`,
 `arckive_dead_letter_total`, `arckive_write_latency_seconds`,
-`arckive_ws_connected`, `arckive_head_notifications_total`.
+`arckive_ws_connected`, `arckive_head_notifications_total`, and with insights
+`arckive_insights_blocks_behind`, `arckive_insights_classified_total{lane}`,
+`arckive_insights_model_calls_total`, `arckive_insights_cache_hits_total`,
+`arckive_insights_errors_total{stage}` (`stage` = `model`, `rpc` or `db`).
+Insight failures never mark the indexer `Degraded`: `/healthz` and the CR phase
+describe ingest only.
 
 ## Development
 

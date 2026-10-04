@@ -147,6 +147,29 @@ spec:
                       type: integer
                       minimum: 1
                       default: 2000
+                insights:
+                  type: object
+                  description: "Laya insights: classify every indexed event's transaction into a lane (swap, bridge, …) through a Laya model gate"
+                  required: [laya]
+                  properties:
+                    laya:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                          pattern: '^https?://'
+                          description: "base URL of the Laya gate; /ai/run/batch and /health are appended"
+                        headerSecretRef:
+                          type: object
+                          description: "Secret whose value is one header line sent to the gate, e.g. 'Authorization: Bearer …'"
+                          required: [name]
+                          properties:
+                            name:
+                              type: string
+                            key:
+                              type: string
+                              default: header
             status:
               type: object
               properties:

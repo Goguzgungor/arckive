@@ -44,6 +44,15 @@ export const WorkerConfigSchema = z.object({
       intervalMs: z.number().int().positive().default(2000),
     })
     .default({}),
+  // Laya insights (optional): where the model gate is. The header that
+  // authenticates to it is a secret and arrives as INSIGHTS_HEADER, never here.
+  insights: z
+    .object({
+      laya: z.object({
+        url: z.string().regex(/^https?:\/\//i, 'insights.laya.url must be http(s)://'),
+      }),
+    })
+    .optional(),
 });
 
 export type ContractConfig = z.infer<typeof ContractConfigSchema>;
