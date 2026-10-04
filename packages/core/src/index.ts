@@ -30,3 +30,27 @@ export {
   type IndexerSpec,
   type IndexerStatus,
 } from './crd.js';
+export {
+  FACT_BY_SELECTOR,
+  FACT_BY_TOPIC,
+  FACT_ORDER,
+  FACT_PHRASE,
+  FACTORY_CALL,
+  POOL_TOPICS,
+  factsOf,
+  protocolOf,
+  type Fact,
+  type TxContext,
+} from './insights/signatures.js';
+export {
+  TRANSFER_TOPIC,
+  ZERO_ADDRESS,
+  amountBucket,
+  describeEvent,
+  isTransferEvent,
+  type CallInfo,
+  type DescribeInput,
+  type Description,
+  type TokenInfo,
+  type TransferFields,
+} from './insights/sentence.js';
