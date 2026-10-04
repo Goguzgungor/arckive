@@ -115,7 +115,7 @@ never passes the ingest cursor.
   `BRIDGE_OUT/IN` and `bridge_direction` are not ported (questions only).
 - **`sentence.ts`** — `TxContext` (`to, selector, topics, sender, emitters,
   factories`, as in `radar/radar/types.py`), and
-  `describe(input) → { sentence, facts, protocol, ruled }` where `input` is the
+  `describeEvent(input) → { sentence, facts, protocol, ruled }` where `input` is the
   event row (table, event definition, decoded columns, contract address and
   name), the tx context (or `null`), party kinds (`address → isContract`), the
   token label and decimals, and the function-name map of the indexed contracts.
@@ -196,10 +196,25 @@ never passes the ingest cursor.
     the shared gate's budget, so this worker cannot starve the radars.
   - 30 s timeout per call. `fetch` is injected (DI, as in `AbiDeps`).
 - **`txcontext.ts`** — what Radar's `arc.py` `_items` does, through viem:
-  - one `getTransaction` + `getTransactionReceipt` per distinct tx in the round,
-    bounded concurrency (8), as `getBlockTimes` does; a tx or receipt that comes
-    back `null` or malformed yields `null` context for its rows (ruled
-    `uncertain`), a thrown RPC error fails the round;
+  - per distinct **block** in the round, `getBlock({ includeTransactions: true })`
+    + `getBlockReceipts` (2 calls per block; on Arc mainnet a block with USDC
+    events held 3.1 such transactions, so per-tx reads cost ~3× more); a
+    transaction its block does not hold yields `null` context for its rows
+    (ruled `uncertain`), a thrown RPC error fails the round;
+  - every insight RPC call goes through one adaptive `Pacer` — sequential,
+    starting 250 ms apart, halving its pace on a rate-limit answer (-32005 /
+    HTTP 429) or while ingest is `Degraded`, shortening the interval 3% per
+    successful call down to 50 ms — because insights share the endpoints'
+    rate limits with ingest; a transaction's sender is a wallet by definition
+    and is never sent to `getCode`; and insights use `network.rpc` in reverse
+    order so that, given
+    several endpoints, they load one ingest uses last. *Revised after the live
+    check:* the first version read per transaction, 8 at a time. Arc
+    mainnet's public RPC turned out to enforce a per-minute quota that ingest
+    alone, polling once a second, runs into (12 "rate limit exceeded" in 3 min
+    without insights on a second run; 1 on the first) — the quota varies too
+    much to attribute ingest errors to insights from a single pair of runs,
+    so the design takes the conservative side;
   - `factory()` (`0xc45a0155`) per pool that logged a `POOL_TOPICS` event,
     cached; a pool that cannot answer is asked again after 10 minutes;
   - `getCode` per transfer party, cached (`isContract`: EIP-7702 delegated
@@ -216,8 +231,9 @@ never passes the ingest cursor.
     larger than the cap is taken whole); reads the rows from every event table
     in the range; builds contexts, sentences, rulings; classifies the unruled
     sentences; writes `_insights` rows and the new cursor in one transaction.
-  - Idle (cursor caught up): waits for a wake-up from the ingest loop or
-    `polling.intervalMs`, whichever is first. The ingest loop gets one optional
+  - Idle (cursor caught up), or ingest not `Live` (backfilling or `Degraded` —
+    the phase is read, never set): waits for a wake-up from the ingest loop or
+    `polling.intervalMs`, whichever is first. Ingest has the RPC budget first. The ingest loop gets one optional
     hook, `PipelineDeps.onCommitted?.()`, called after `commitBatch`; this is the
     only change to the ingest path.
   - Errors: back off 1 s → 60 s and retry the same range. Nothing is written for
@@ -235,9 +251,9 @@ never passes the ingest cursor.
   indexer marked `Degraded`.
 - Model call fails (network, timeout, 401/403, 429, 5xx, malformed body) → the
   round fails; `arckive_insights_errors_total{stage="model"}`; backoff. A 401 or
-  403 is logged once per streak as "gate rejected the header" (the header value
-  is never logged).
-- RPC fails → same, with `stage="rpc"`.
+  403 is logged with the hint "the gate rejected INSIGHTS_HEADER" (the header
+  value is never logged).
+- RPC fails → same, with `stage="rpc"`; a database failure, `stage="db"`.
 - A state whose answer is missing from the response fails the round; a lane
   outside `LANES` is settled to `uncertain`.
 - Model identity is fetched at loop start and again after a failed round; a
@@ -253,7 +269,7 @@ Added to the existing registry (default label `indexer`):
 | `arckive_insights_classified_total{lane}` | counter | insight rows written |
 | `arckive_insights_model_calls_total` | counter | calls made to the gate |
 | `arckive_insights_cache_hits_total` | counter | sentences answered from cache |
-| `arckive_insights_errors_total{stage}` | counter | failed rounds, `stage` = `model` or `rpc` |
+| `arckive_insights_errors_total{stage}` | counter | failed rounds, `stage` = `model`, `rpc` or `db` |
 
 ## Testing
 
