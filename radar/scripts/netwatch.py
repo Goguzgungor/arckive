@@ -57,14 +57,30 @@ TIMEOUT = 8.0
 # they reach the tunnel; this one gets through to the gate.
 USER_AGENT = "arc-radar-netwatch/1.0"
 
+def agents(text: str) -> dict[str, list[str]]:
+    """'model=a,gate=b' -> {'model': ['a'], 'gate': ['b']}; '' -> {}."""
+    out: dict[str, list[str]] = {}
+    for part in text.split(","):
+        if "=" in part:
+            layer, label = (s.strip() for s in part.split("=", 1))
+            out.setdefault(layer, []).append(label)
+    return out
+
+
 # The agents on this Mac may carry either name: the ledger radar installed them
 # first, and this repo's templates use its own. Whichever is loaded is the one.
-LABELS = {
+# A second copy of this script watching Arc's own model sets its labels with
+# NETWATCH_AGENTS instead (com.arc-radar.netwatch-arc.plist).
+LABELS = agents(os.environ.get("NETWATCH_AGENTS", "")) or {
     "model": ["com.stellar-radar.model", "com.arc-radar.model"],
     "gate": ["com.stellar-radar.gate", "com.arc-radar.gate"],
     "tunnel": ["com.stellar-radar.tunnel", "com.arc-radar.tunnel"],
 }
 LAYERS = ["model", "gate", "network", "tunnel"]
+# Which layers this copy may repair. The copy watching Arc's model repairs
+# only its model and gate: the network and the tunnel are shared, and two
+# watchdogs toggling the same Wi-Fi would undo each other.
+REPAIRS = set(filter(None, os.environ.get("NETWATCH_REPAIRS", ",".join(LAYERS)).split(",")))
 
 
 def answers(url: str, *, ok_below: int = 500) -> bool:
@@ -183,6 +199,8 @@ def _run(command: list[str]) -> str:
 
 def repair(layer: str, dry_run: bool) -> str:
     """Carry out one repair; returns what was done, for the log."""
+    if layer not in REPAIRS:
+        return f"{layer} is down; left to the watchdog that owns it"
     if layer == "network":
         device = wifi_device()
         if not device:

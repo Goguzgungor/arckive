@@ -144,12 +144,16 @@ model call rather than sized for this app's own throughput alone: a large
 batch can hold the shared GPU for several seconds and starve the other app's
 work.
 
-The LaunchAgents in `scripts/` (`com.arc-radar.model.plist` for layad on
-8918, `com.arc-radar.gate.plist` for the gate on 8919, and the tunnel) are
-only for a Mac that does not already run them. On a Mac where another radar's
-layad and gate already hold 8918 and 8919, load none of them: point
-`LAYA_ENDPOINT` at the existing gate and reuse its `RADAR_TOKEN`, since a
-second copy would fail to bind those ports or, worse, load the model twice.
+Arc's model runs as its own pair of agents, beside the shared model and gate
+the Stellar radar uses on 8918 and 8919, which it never touches:
+`com.arc-radar.model` serves the fine-tuned checkpoint (see "Fine-tuning the
+model") on 8920 with the MLX cache capped at 1 GiB, and `com.arc-radar.gate`
+puts the same authenticating gate in front of it on 8921, run from its own
+installed copy of the radar in `~/arc-radar`, so checking out another branch
+never changes what is serving. Install or refresh both with
+`./scripts/install-arc-model.sh <model-dir>`. The gate is published as
+`https://laya-arc.brages.uk` by an extra ingress rule on the existing
+Cloudflare tunnel, and reuses the shared gate's `RADAR_TOKEN`.
 
 ### Staying reachable through outages
 
@@ -174,6 +178,10 @@ It cannot fix a router or ISP that is down; then it keeps waiting, and logs
 when the model is reachable again. `--dry-run` shows what it would do.
 Install or update it with `./scripts/install-netwatch.sh`; it logs to
 `~/Library/Logs/arc-radar-netwatch.log`, and only when something is wrong.
+Once Arc's own model is installed, the same script also installs a second copy
+(`com.arc-radar.netwatch-arc`) that watches `laya-arc.brages.uk` and may
+restart only Arc's model and gate; the network and the shared tunnel stay with
+the first copy, so two watchdogs never toggle the same Wi-Fi.
 
 ### Environment variables
 
@@ -200,6 +208,45 @@ capture and reports lane agreement against the evidence, the 24 questions'
 AUC and balanced accuracy at the gate's lines, and whether the gate still
 tells real questions from nonsense. It keeps every call as small as the
 server's own, because the GPU is shared.
+
+### Fine-tuning the model
+
+The base model reads transfers well (lanes 99.8%) but answers viewers'
+questions less well (balanced accuracy 0.82 on the fixture; amounts, DeFi and
+bridges weakest). `finetune/` trains it on Arc's own sentences; the design and
+its acceptance bars are in
+`docs/superpowers/specs/2026-10-04-radar-laya-finetune-design.md`. Data and
+checkpoints live outside git, in `~/Library/Application Support/arc-radar/finetune/`.
+
+```bash
+DATA="$HOME/Library/Application Support/arc-radar/finetune/data"
+MODELS="$HOME/Library/Application Support/arc-radar/finetune/models"
+# 1. capture: training first, the test capture only after it ends
+.venv/bin/python scripts/capture.py 15000 --every 4 --out "$DATA/train.json"
+.venv/bin/python scripts/capture.py 3000 --every 4 --out "$DATA/test.json"
+# 2. rows, then read audit.md by hand before training on them
+.venv/bin/python -m finetune.dataset --capture "$DATA/train.json" --out "$DATA/rows"
+# 3. the trainer's own environment (torch + laya PR #899), never the radar's venv
+uv venv --python 3.12 .venv-ft && uv pip install --python .venv-ft/bin/python -r finetune/requirements-ft.txt
+# 4. train, paused whenever the shared model slows down
+RUN="$MODELS/laya-multilingual-arc-$(date +%Y%m%d)-1"; mkdir -p "$RUN"
+PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
+  .venv-ft/bin/python -m finetune.train --data "$DATA/rows" --out "$RUN"
+# 5. convert to what layad serves, serve it on 8920, check it answers as trained
+~/.local/share/uv/tools/layad/bin/python -m laya_mlx convert --model "$RUN/final" --dtype float16 --output "$RUN/final-mlx"
+.venv-ft/bin/python -m finetune.parity --model "$RUN/final" --endpoint http://127.0.0.1:8920 --rows "$DATA/rows/val.jsonl"
+# 6. accept: the fixture, then held-out phrasings, topics and languages on the test capture
+LAYA_ENDPOINT=http://127.0.0.1:8920 .venv/bin/python scripts/eval.py
+.venv/bin/python -m finetune.report --base http://127.0.0.1:8918 --ft http://127.0.0.1:8920 \
+  --capture "$DATA/test.json" --rows "$DATA/rows"
+```
+
+The question bank (`finetune/questions.py`) keeps a third of its topics, two
+English and one Turkish phrasing of every other topic, and every Spanish,
+German and Russian phrasing out of training, and none of `eval.py`'s questions
+is ever trained on; tests hold all of it. `finetune/synth.py` adds transfers
+the stream rarely carries (lending, bridges into Arc, marketplaces), rendered
+by the real `summarize()`; they are training data only.
 
 ## Deploying
 
