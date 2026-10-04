@@ -1,14 +1,15 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
 import { pino } from 'pino';
+import { toFunctionSelector } from 'viem';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  TRANSFER_TOPIC, buildControlTables, buildEventTable, extractEventDefs,
+  TRANSFER_TOPIC, buildControlTables, buildEventTable, extractEventDefs, parseWorkerConfig,
   type DecodedRow, type LaneAnswer, type TxContext,
 } from '@arckive/core';
 import { bootstrap, commitBatch, initCursor } from '../src/db.js';
 import {
-  InsightsError, insightTargets, runInsightsLoop, runInsightsOnce, type InsightsDeps,
+  InsightsError, insightTargets, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
 } from '../src/insights.js';
 import { bootstrapInsights, capRange, getInsightsCursor } from '../src/insightsdb.js';
 import { LayaError } from '../src/laya.js';
@@ -194,6 +195,31 @@ describe('insights', () => {
     await expect.poll(async () => (await insights()).length, { timeout: 3_000 }).toBe(1);
     ctrl.abort();
     await loop;
+  });
+
+  it('prepareInsights creates the tables, reads token info and refuses a bad header', async () => {
+    await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+    await bootstrap(pool, buildControlTables(SCHEMA), defs.map((d) => buildEventTable(SCHEMA, d)));
+    const cfg = parseWorkerConfig({
+      indexerName: 'ins',
+      network: { chainId: 31337, rpc: ['http://127.0.0.1:1'] },
+      contracts: [
+        { name: 'tok', address: TOKEN, abiInline: [], startBlock: 50 },
+        { name: 'vault', address: VAULT, abiInline: [], startBlock: 70 },
+      ],
+      insights: { laya: { url: 'https://gate.example' } },
+    });
+    const vaultAbi = [{ type: 'function', name: 'depositFor', inputs: [], outputs: [], stateMutability: 'nonpayable' }];
+    const base = {
+      cfg, pool, schema: SCHEMA, defs, abis: [[], vaultAbi],
+      metrics: createMetrics('prep'), log: pino({ level: 'silent' }), wake: new HeadSignal(),
+      context: fakeContext({}), readToken: async () => ({ label: 'TKN', decimals: 6 }),
+    };
+    await expect(prepareInsights({ ...base, headerLine: 'nonsense secret' })).rejects.toThrow(/INSIGHTS_HEADER/);
+    const prepared = await prepareInsights({ ...base, headerLine: 'Authorization: Bearer x' });
+    expect(await getInsightsCursor(pool, SCHEMA)).toBe(49n);
+    expect(prepared.targets.find((t) => t.tableName === 'tok_transfer')?.token).toEqual({ label: 'TKN', decimals: 6 });
+    expect(prepared.called.get(VAULT)?.functions.get(toFunctionSelector('depositFor()'))).toBe('depositFor');
   });
 
   it('InsightsError names the stage that failed', () => {

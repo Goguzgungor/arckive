@@ -1,16 +1,17 @@
 import type pg from 'pg';
 import type { Logger } from 'pino';
 import {
-  describeEvent, eventColumns, isTransferEvent, planRange, settleLane,
-  type CallInfo, type EventDef, type LaneAnswer, type TokenInfo, type TxContext,
+  describeEvent, eventColumns, extractFunctionNames, isTransferEvent, planRange, settleLane,
+  type CallInfo, type EventDef, type LaneAnswer, type TokenInfo, type TxContext, type WorkerConfig,
 } from '@arckive/core';
 import { getCursor } from './db.js';
 import {
-  capRange, commitInsights, getInsightsCursor, readEventRows, type EventSource, type InsightRow,
+  bootstrapInsights, capRange, commitInsights, getInsightsCursor, readEventRows,
+  type EventSource, type InsightRow,
 } from './insightsdb.js';
-import { LayaError, type LayaClient } from './laya.js';
+import { LayaClient, LayaError, parseHeaderLine } from './laya.js';
 import type { Metrics } from './metrics.js';
-import { sleep } from './pipeline.js';
+import { initialCursor, sleep } from './pipeline.js';
 import type { ContextSource } from './txcontext.js';
 
 // The insight loop runs behind the ingest cursor, never in front of it and
@@ -176,4 +177,63 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
       backoffMs = Math.min(backoffMs * 2, 60_000);
     }
   }
+}
+
+export interface PrepareInsightsInput {
+  cfg: WorkerConfig;
+  pool: pg.Pool;
+  schema: string;
+  defs: EventDef[];
+  abis: unknown[]; // full ABIs, in cfg.contracts order
+  metrics: Metrics;
+  log: Logger;
+  wake: InsightsDeps['wake'];
+  context: ContextSource;
+  readToken: (address: string, fallback: string) => Promise<TokenInfo>;
+  headerLine: string | undefined; // INSIGHTS_HEADER
+  fetch?: typeof fetch;
+}
+
+export async function prepareInsights(input: PrepareInsightsInput): Promise<InsightsDeps> {
+  const { cfg, metrics } = input;
+  if (!cfg.insights) throw new Error('insights are not configured');
+  const header = input.headerLine ? parseHeaderLine(input.headerLine) : null;
+  const classifier = new LayaClient(cfg.insights.laya.url, header, {
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    onCall: () => metrics.insightsModelCalls.inc(),
+    onCacheHits: (n) => metrics.insightsCacheHits.inc(n),
+  });
+
+  const tokens = new Map<string, TokenInfo>();
+  for (const d of input.defs) {
+    if (isTransferEvent(d) && !tokens.has(d.address)) {
+      tokens.set(d.address, await input.readToken(d.address, d.contractName));
+    }
+  }
+  const called = new Map<string, CalledContract>(
+    cfg.contracts.map((c, i) => [
+      c.address.toLowerCase(),
+      { name: c.name, functions: extractFunctionNames(input.abis[i]) },
+    ]),
+  );
+
+  await bootstrapInsights(input.pool, input.schema, initialCursor(cfg));
+  // names the header, never its value
+  input.log.info(
+    { url: cfg.insights.laya.url, header: header?.name ?? null, tokens: Object.fromEntries(tokens) },
+    'insights enabled',
+  );
+  return {
+    pool: input.pool,
+    schema: input.schema,
+    targets: insightTargets(input.defs, tokens),
+    called,
+    context: input.context,
+    classifier,
+    metrics,
+    log: input.log,
+    batchBlocks: cfg.polling.batchBlocks,
+    intervalMs: cfg.polling.intervalMs,
+    wake: input.wake,
+  };
 }

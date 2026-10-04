@@ -21,18 +21,26 @@ export interface PipelineDeps {
   phase: PhaseTracker;
   headSignal: HeadSignal;
   log: Logger;
+  // Called after every committed range; the insight loop waits on it so it
+  // follows ingest without polling. The only thing ingest knows about insights.
+  onCommitted?: () => void;
+}
+
+// startBlock is resolved to a concrete number in main.ts (undefined -> head),
+// so the cursor starts just before the earliest contract's first block.
+export function initialCursor(cfg: WorkerConfig): bigint {
+  const startOf = (c: { startBlock?: number }) => BigInt(c.startBlock ?? 0);
+  const minStart = cfg.contracts.reduce(
+    (min, c) => (startOf(c) < min ? startOf(c) : min),
+    startOf(cfg.contracts[0]!),
+  );
+  return minStart - 1n;
 }
 
 export async function bootstrapIndexer(deps: PipelineDeps): Promise<void> {
   const tables = deps.defs.map((d) => buildEventTable(deps.schema, d));
   await bootstrap(deps.pool, buildControlTables(deps.schema), tables);
-  // startBlock is resolved to a concrete number in main.ts (undefined -> head)
-  const startOf = (c: { startBlock?: number }) => BigInt(c.startBlock ?? 0);
-  const minStart = deps.cfg.contracts.reduce(
-    (min, c) => (startOf(c) < min ? startOf(c) : min),
-    startOf(deps.cfg.contracts[0]!),
-  );
-  await initCursor(deps.pool, deps.schema, minStart - 1n);
+  await initCursor(deps.pool, deps.schema, initialCursor(deps.cfg));
 }
 
 export async function runOnce(deps: PipelineDeps): Promise<boolean> {
@@ -110,6 +118,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   const end = deps.metrics.writeLatency.startTimer();
   const inserted = await commitBatch(pool, schema, rows, dead, safeTo);
   end();
+  deps.onCommitted?.();
 
   metrics.eventsIngested.inc(inserted);
   metrics.deadLetters.inc(dead.length);

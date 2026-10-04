@@ -220,4 +220,21 @@ describe('pipeline', () => {
     const times = await getBlockTimes(client, [5n, 5n], known);
     expect(times.get(5n)!.getTime()).toBe(5000);
   });
+
+  it('tells onCommitted after each committed range, and only then', async () => {
+    let calls = 0;
+    const withHook: PipelineDeps = { ...deps, onCommitted: () => calls++ };
+    while (await runOnce(withHook)) { /* catch up */ }
+    const before = calls;
+    await runOnce(withHook); // nothing new
+    expect(calls).toBe(before);
+    const artifact = loadArtifact();
+    const wallet = createWalletClient({ account: privateKeyToAccount(PK), transport: http(anvil.url) }).extend(publicActions);
+    const txHash = await wallet.writeContract({
+      address: contractAddress, abi: artifact.abi as never, functionName: 'ping', args: [99n], chain: null,
+    });
+    await wallet.waitForTransactionReceipt({ hash: txHash });
+    while (await runOnce(withHook)) { /* catch up */ }
+    expect(calls).toBeGreaterThan(before);
+  });
 });
