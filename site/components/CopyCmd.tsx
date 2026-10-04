@@ -20,21 +20,7 @@ export default function CopyCmd({ cmd }: { cmd: string }) {
   return (
     <div className="install">
       <code>{cmd}</code>
-      <button type="button" className="btn btn-sm" onClick={copy}>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="9" y="9" width="11" height="11" rx="1.5" />
-          <path d="M5 15V6a2 2 0 0 1 2-2h9" />
-        </svg>
+      <button type="button" className="btn" onClick={copy}>
         {copied ? "Copied" : "Copy"}
       </button>
     </div>

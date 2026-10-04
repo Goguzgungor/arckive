@@ -1,644 +1,413 @@
-import Mark from "@/components/Mark";
-import ThemeToggle from "@/components/ThemeToggle";
-import ChaosLab from "@/components/ChaosLab";
 import CopyCmd from "@/components/CopyCmd";
-import IndexerStatus from "@/components/IndexerStatus";
-import LatestEvents from "@/components/LatestEvents";
-import { LiveIndexerProvider } from "@/components/LiveIndexer";
-import StarButton, { StarIcon } from "@/components/StarButton";
+import Mark from "@/components/Mark";
+import { DistantRange, FooterScene, Grain, HeroScene, RadarScene, SceneDefs } from "@/components/Scenery";
+import StarButton from "@/components/StarButton";
 
 const REPO = "https://github.com/Goguzgungor/arckive";
 const RADAR = "https://radar.arckive.org";
 
-function SecHead({ n, label }: { n: string; label: string }) {
-  return (
-    <div className="sec-head">
-      <span className="sec-no">{n}</span>
-      <span className="sec-label">{label}</span>
-    </div>
-  );
-}
+const LANES = ["swap", "bridge", "liquidity", "vault", "lending", "signed_payment", "payment", "no_transfer"];
 
-function Cover({
-  tint,
-  title,
-  sub,
-  name,
-  desc,
-}: {
-  tint: string;
-  title: React.ReactNode;
-  sub: string;
-  name: string;
-  desc: React.ReactNode;
-}) {
-  return (
-    <div className="book">
-      <div className={`cover ${tint}`}>
-        <span className="t">{title}</span>
-        <span className="s">{sub}</span>
-      </div>
-      <b>{name}</b>
-      <span>{desc}</span>
-    </div>
-  );
-}
+// Sample rows in the shape `_insights` writes; lanes and confidences are of
+// the kind measured on Arc mainnet, not a live feed.
+const SAMPLE = [
+  { event: "pool_manager.Swap", lane: "swap", p: "0.97", protocol: "Uniswap", hot: true },
+  { event: "usdc.Transfer", lane: "bridge", p: "0.97", protocol: "Relay" },
+  { event: "positions.IncreaseLiquidity", lane: "liquidity", p: "0.98", protocol: "Aerodrome" },
+  { event: "usdc.Transfer", lane: "signed_payment", p: "0.99", protocol: "usdc" },
+  { event: "permit2.Approval", lane: "no_transfer", p: "rule", protocol: "permit2" },
+];
+
+const COMPARE: [string, string, string, string, string][] = [
+  ["Data in your own database", "No", "Via graph-node", "If you build it", "Yes"],
+  ["Plain SQL access", "Dune SQL only", "GraphQL", "Raw JSON", "Yes"],
+  ["Reorgs and gaps", "Theirs", "Yes", "On you", "No reorgs on Arc · gap-free cursor"],
+  ["What each event was part of", "Write the SQL", "Write the mapping", "On you", "Built in · Insights"],
+  ["Setup", "Low", "Medium–high", "High", "One YAML"],
+];
 
 export default function Page() {
   return (
-    <LiveIndexerProvider>
-      <main>
-        {/* ———— utility row ———— */}
-        <div className="util">
-          <div className="wrap util-inner">
-            <span className="util-tagline">Kubernetes-native event indexer for Arc</span>
-            <div className="util-links">
-              <a className="hide-m" href={`${REPO}#readme`}>
-                Documentation
-              </a>
-              <a className="hide-m" href={REPO}>
-                GitHub
-              </a>
-              <a className="hide-m" href="#cta">
-                Install
-              </a>
-              <ThemeToggle />
-              <span className="version">v1alpha1</span>
-            </div>
-          </div>
-        </div>
+    <main>
+      <SceneDefs />
 
-        {/* ———— nav ———— */}
-        <nav className="nav" id="top">
-          <div className="wrap nav-inner">
-            <a className="brand" href="#top">
-              <Mark size={26} />
-              Arckive
-            </a>
-            <div className="nav-links">
-              <a className="hide-m" href="#how">
-                How it works
-              </a>
-              <a className="hide-m" href="#reliability">
-                Reliability
-              </a>
-              <a className="hide-m" href="#benchmarks">
-                Benchmarks
-              </a>
-              <a className="hide-m" href="#compare">
-                Compare
-              </a>
-              <a className="hide-m" href={RADAR}>
-                Arc Radar
-              </a>
-              <StarButton href={REPO} label="Star" />
-              <a className="btn btn-sm" href="#cta">
+      {/* ———— hero ———— */}
+      <header className="hero" id="top">
+        <HeroScene />
+        <Grain />
+        <div className="topbar">
+          <a className="brand" href="#top">
+            <Mark />
+            <span>Arckive</span>
+          </a>
+          <nav className="nav">
+            <a href="#how">How it works</a>
+            <a href="#insights">Insights</a>
+            <a href="#benchmarks">Benchmarks</a>
+            <a href={RADAR}>Arc Radar</a>
+            <a href={REPO}>GitHub</a>
+          </nav>
+        </div>
+        <div className="hero-body">
+          <div className="hero-copy">
+            <p className="label">Event indexer for Arc · v1alpha1 · Apache-2.0</p>
+            <h1>
+              Your chain events,
+              <br />
+              <em>in your own Postgres.</em>
+            </h1>
+            <p className="hero-sub">
+              A Kubernetes-native indexer for Arc. Declare one manifest; an operator keeps a worker streaming every
+              event into the database you already run.
+            </p>
+            <div className="ctas">
+              <a className="btn" href="#start">
                 Get started
               </a>
+              <a className="btn-line" href="#how">
+                See the manifest
+              </a>
             </div>
           </div>
-        </nav>
-
-        {/* ———— catalogue search row ———— */}
-        <div className="search-band">
-          <div className="wrap search">
-            <div className="search-q" aria-label="Example query">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M20 20l-3.5-3.5" />
-              </svg>
-              <span className="mono">
-                SELECT &quot;from&quot;, &quot;to&quot;, value FROM usdc_transfer WHERE
-                value &gt; 1000000000 ORDER BY block_number DESC;
-              </span>
+          <div className="stat-cards">
+            <div className="card stat-card">
+              <p>One typed table per event, committed together with its checkpoint.</p>
+              <p className="stat">
+                <span className="num">395 ms</span>
+                <span className="label">block → SQL, p50</span>
+              </p>
             </div>
-            <a className="search-go" href="#how">
-              Search
-            </a>
-            <span className="search-hint">
-              Plain SQL · your Postgres · no API in between
-            </span>
+            <div className="card stat-card">
+              <p>New: every event says what it was part of — a swap, a bridge, a payment.</p>
+              <p className="stat">
+                <span className="num">0.22 s</span>
+                <span className="label">lanes behind ingest</span>
+              </p>
+            </div>
           </div>
         </div>
+      </header>
 
-        {/* ———— hero ———— */}
-        <header className="hero">
-          <div className="wrap hero-grid">
-            <div className="hero-copy">
-              <a className="star-pill" href={REPO} target="_blank" rel="noopener noreferrer">
-                <StarIcon size={14} />
-                <span className="hide-m">Open source —</span> Star Arckive on GitHub
-                <span aria-hidden="true">→</span>
-              </a>
-              <h1>Your chain events, in your own Postgres.</h1>
-              <p className="hero-sub">
-                Give it an ABI, a contract address, and an RPC. Arckive streams
-                every on-chain event into your own PostgreSQL —{" "}
-                <strong>one table per event, reliable and gap-free</strong> —
-                from a single YAML manifest.
-              </p>
-              <div className="hero-ctas">
-                <a className="btn" href="#how">
-                  See the one manifest
-                </a>
-                <a className="btn-line" href="#reliability">
-                  Try to break it
-                </a>
-              </div>
-              <p className="meta-line">
-                Runs in your cluster · Apache-2.0 · arckive.org/v1alpha1
-              </p>
-            </div>
-            <IndexerStatus />
+      {/* ———— 01 how it works ———— */}
+      <section id="how" className="sec wrap">
+        <div className="sec-head ruled">
+          <div>
+            <p className="label">01 — How it works</p>
+            <h2>
+              Declare it. <em>The operator does the rest.</em>
+            </h2>
           </div>
-        </header>
+          <p className="lede">
+            One <code>Indexer</code> resource describes what you want. An operator turns it into a running worker and
+            keeps it that way.
+          </p>
+        </div>
+        <div className="steps">
+          <article className="paper step">
+            <p className="label accent">Step 01</p>
+            <h3>Write one manifest</h3>
+            <p>Network, Postgres, contracts. That is the whole setup.</p>
+            <pre>
+              <span className="k">kind</span>: Indexer{"\n"}
+              <span className="k">metadata</span>: {"{ "}
+              <span className="k">name</span>: usdc-arc{" }\n"}
+              <span className="k">spec</span>:{"\n"}
+              {"  "}
+              <span className="k">network</span>: {"{ "}
+              <span className="k">chainId</span>: 5042002{" }\n"}
+              {"  "}
+              <span className="k">contracts</span>:{"\n"}
+              {"    - "}
+              <span className="k">name</span>: usdc{"\n"}
+              {"      "}
+              <span className="k">address</span>: <span className="s">&quot;0x3600…0000&quot;</span>
+              {"\n"}
+              {"      "}
+              <span className="k">events</span>: [Transfer]
+            </pre>
+          </article>
+          <article className="paper step">
+            <p className="label accent">Step 02</p>
+            <h3>The operator provisions</h3>
+            <p>A reconcile loop turns the spec into running parts, and heals them.</p>
+            <div className="flow">
+              <div className="node">Indexer CR — one YAML</div>
+              <div className="link">↓ reconciles</div>
+              <div className="node hot">Arckive operator</div>
+              <div className="link">↓ provisions</div>
+              <div className="node">worker · schema · status</div>
+            </div>
+          </article>
+          <article className="paper step">
+            <p className="label accent">Step 03</p>
+            <h3>Query plain SQL</h3>
+            <p>Each event is a table in your Postgres. No API between you and your rows.</p>
+            <pre>
+              <span className="c">-- one table per event</span>
+              {"\n"}
+              <span className="k">SELECT</span> &quot;from&quot;, &quot;to&quot;, value{"\n"}
+              <span className="k">FROM</span> idx_usdc_arc.usdc_transfer{"\n"}
+              <span className="k">WHERE</span> value &gt; 1000000000{"\n"}
+              <span className="k">ORDER BY</span> block_number <span className="k">DESC</span>;
+            </pre>
+          </article>
+        </div>
+      </section>
 
-        {/* ———— the gap ———— */}
-        <div className="gap">
-          <div className="wrap gap-inner">
-            <span className="gap-label">The gap</span>
+      {/* ———— 02 insights ———— */}
+      <section id="insights" className="band-insights">
+        <DistantRange />
+        <Grain opacity={0.18} />
+        <div className="wrap insights">
+          <div className="insights-copy">
+            <p className="label accent">02 — Insights · new</p>
+            <h2>
+              Every event knows <em>what it was part of.</em>
+            </h2>
+            <p className="lede">
+              Turn on <code>insights</code> and each row gets a lane — the kind of transaction it belonged to — and the
+              protocol that handled it. The same engine as Arc Radar, for any contract you index. A URL and a header is
+              the whole configuration.
+            </p>
+            <div className="chips">
+              {LANES.map((l, i) => (
+                <span key={l} className={i === 0 ? "chip hot" : "chip"}>
+                  {l}
+                </span>
+              ))}
+            </div>
+            <p className="mono small">Ingest never waits for it · lanes run in their own loop</p>
+          </div>
+          <div className="insights-table">
+            <div className="card table-card">
+              <div className="table-head">
+                <span>idx_arc._insights</span>
+                <span className="faint">sample output</span>
+              </div>
+              <div className="scroll-x">
+                <table className="mono">
+                  <thead>
+                    <tr>
+                      <th>event</th>
+                      <th>lane</th>
+                      <th className="num">lane_p</th>
+                      <th>protocol</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SAMPLE.map((r) => (
+                      <tr key={`${r.event}-${r.lane}`}>
+                        <td>{r.event}</td>
+                        <td>
+                          <span className={r.hot ? "chip hot" : "chip"}>{r.lane}</span>
+                        </td>
+                        <td className={r.p === "rule" ? "num faint" : "num"}>{r.p}</td>
+                        <td className="soft">{r.protocol}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <pre className="table-sql">
+                <span className="k">SELECT</span> t.value, i.lane, i.protocol{"\n"}
+                <span className="k">FROM</span> usdc_transfer t <span className="k">JOIN</span> _insights i{" "}
+                <span className="k">USING</span> (block_number, tx_hash, log_index){"\n"}
+                <span className="k">WHERE</span> i.lane = <span className="s">&apos;bridge&apos;</span>;
+              </pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ———— 03 reliability ———— */}
+      <section id="reliability" className="sec wrap">
+        <p className="label">03 — Reliability</p>
+        <h2 className="h2-gap">
+          Even if the network blips, <em>no event is lost.</em>
+        </h2>
+        <div className="ruled-grid">
+          <div className="cell">
+            <span className="mono accent">/01</span>
+            <h3>Cursor and checkpoint</h3>
+            <p>The last processed block lives in Postgres. After any crash it resumes exactly there.</p>
+          </div>
+          <div className="cell">
+            <span className="mono accent">/02</span>
+            <h3>One transaction</h3>
+            <p>Event rows and the cursor advance commit together — everything, or nothing.</p>
+          </div>
+          <div className="cell">
+            <span className="mono accent">/03</span>
+            <h3>Built on Arc&apos;s finality</h3>
             <p>
-              Dune is delayed and rate-limited. Raw logs leave reorgs and
-              back-fill to you. The Graph means subgraphs and heavy ops. There
-              was no declarative path to your events, in your Postgres, in plain
-              SQL.
+              Indexes to the <code>finalized</code> tag. Finalized blocks never roll back, so there is no rollback code
+              at all.
             </p>
+          </div>
+          <div className="cell">
+            <span className="mono accent">/04</span>
+            <h3>RPC failover</h3>
+            <p>Endpoints are health-checked and kept in a fixed order. A blip never becomes a gap.</p>
           </div>
         </div>
+      </section>
 
-        {/* ———— 01 how it works ———— */}
-        <section id="how" className="section">
-          <div className="wrap">
-            <SecHead n="01" label="How it works" />
-            <h2>Declare it. The operator does the rest.</h2>
-            <p className="lede">
-              One <code>Indexer</code> resource describes what you want. A
-              Kubernetes operator keeps it true — database, schema, listener,
-              optional read API.
+      {/* ———— 04 benchmarks ———— */}
+      <section id="benchmarks" className="sec wrap">
+        <div className="sec-head">
+          <div>
+            <p className="label">04 — Benchmarks</p>
+            <h2>
+              Measured, <em>not promised.</em>
+            </h2>
+          </div>
+          <p className="lede">
+            Every number is read from the product&apos;s own output — Postgres rows and <code>/metrics</code>.
+            Reproduce it with <code>pnpm bench</code>.{" "}
+            <a className="underline" href="/benchmarks.html">
+              Full report
+            </a>
+          </p>
+        </div>
+        <div className="ruled-grid bench">
+          <div className="cell">
+            <span className="label">block → SQL, p50</span>
+            <p className="big">
+              395<span> ms</span>
             </p>
-
-            <div className="steps">
-              <div className="step">
-                <span className="step-no">Step 1</span>
-                <h3>Write one manifest</h3>
-                <p>
-                  Contracts, ABI ref, RPC pool, storage mode — the whole setup.
-                </p>
-                <div className="code">
-                  <pre>
-                    <span className="k">kind</span>: Indexer{"\n"}
-                    <span className="k">metadata</span>: {"{ "}
-                    <span className="k">name</span>: usdc-arc{" }\n"}
-                    <span className="k">spec</span>:{"\n"}
-                    {"  "}
-                    <span className="k">rpc</span>:{" "}
-                    <span className="c"># health-checked failover</span>
-                    {"\n"}
-                    {"    - "}
-                    <span className="s">https://rpc.arc.example</span>
-                    {"\n"}
-                    {"  "}
-                    <span className="k">storage</span>: {"{ "}
-                    <span className="k">mode</span>: Embedded{" }\n"}
-                    {"  "}
-                    <span className="k">contracts</span>:{"\n"}
-                    {"    - "}
-                    <span className="k">address</span>:{" "}
-                    <span className="s">&quot;0xA0b8…eB48&quot;</span>
-                    {"\n"}
-                    {"      "}
-                    <span className="k">abi</span>: {"{ "}
-                    <span className="k">configMapRef</span>: usdc-abi{" }\n"}
-                    {"      "}
-                    <span className="k">startBlock</span>: 0
-                  </pre>
-                </div>
-              </div>
-
-              <div className="step">
-                <span className="step-no">Step 2</span>
-                <h3>The operator provisions</h3>
-                <p>
-                  A reconcile loop turns the spec into running parts — and heals
-                  them.
-                </p>
-                <div className="flow">
-                  <div className="node">Indexer CR — 1 YAML</div>
-                  <div className="link">↓ reconciles</div>
-                  <div className="node hot">Arckive Operator</div>
-                  <div className="link">↓ provisions</div>
-                  <div className="node">postgres · schema · worker · read API</div>
-                </div>
-                <p className="heal">
-                  Pod dies? Config drifts? It converges back.
-                </p>
-              </div>
-
-              <div className="step">
-                <span className="step-no">Step 3</span>
-                <h3>Query plain SQL</h3>
-                <p>
-                  Each event is a table in your Postgres. No API between you and
-                  your data.
-                </p>
-                <div className="code">
-                  <pre>
-                    <span className="c">-- one table per event</span>
-                    {"\n"}
-                    <span className="k">SELECT</span> &quot;from&quot;,
-                    &quot;to&quot;, value{"\n"}
-                    <span className="k">FROM</span> usdc_transfer{"\n"}
-                    <span className="k">WHERE</span> value &gt; 1000000000{"\n"}
-                    <span className="k">ORDER BY</span> block_number{" "}
-                    <span className="k">DESC</span>;
-                  </pre>
-                  <div className="rows">
-                    <span className="row">
-                      <span>
-                        0x3786…39b3 <span className="c">→</span> 0xdbcc…38db
-                      </span>
-                      <b>3,020.95</b>
-                    </span>
-                    <span className="row">
-                      <span>
-                        0xb51a…159a <span className="c">→</span> 0xa7b3…5993
-                      </span>
-                      <b>3,454.57</b>
-                    </span>
-                    <span className="row">
-                      <span>
-                        0x9f21…c04a <span className="c">→</span> 0x53d0…b7da
-                      </span>
-                      <b>60,884.96</b>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <p className="steps-note">
-              ABI in → tables out · empty events list = every event ·{" "}
-              <code>startBlock: 0</code> backfills from genesis
+            <p>Arc testnet, live USDC traffic. p99 under one second.</p>
+          </div>
+          <div className="cell">
+            <span className="label">backfill</span>
+            <p className="big">
+              92.6<span> blocks/s</span>
             </p>
+            <p>5,107 blocks of history in 55 s — about 48× faster than the chain.</p>
           </div>
-        </section>
-
-        {/* ———— on the shelves now ———— */}
-        <section className="section alt shelves">
-          <div className="wrap">
-            <div className="shelf-head">
-              <div>
-                <h2>On the shelves now</h2>
-                <p className="shelf-sub">
-                  Schema <code>idx_usdc_arc</code> · one table per event, typed
-                  from the ABI, unique on (block, tx, log).
-                </p>
-              </div>
-              <div className="tabs">
-                <span className="tab on">Event tables</span>
-                <span className="tab">Control tables</span>
-              </div>
-            </div>
-            <div className="covers scroll-x">
-              <Cover
-                tint="peach"
-                title={
-                  <>
-                    usdc_
-                    <br />
-                    transfer
-                  </>
-                }
-                sub="idx_usdc_arc"
-                name="usdc_transfer"
-                desc={
-                  <>
-                    Transfer(address,address,uint256)
-                    <br />
-                    from, to text · value numeric(78,0)
-                  </>
-                }
-              />
-              <Cover
-                tint="salmon"
-                title={
-                  <>
-                    usdc_
-                    <br />
-                    approval
-                  </>
-                }
-                sub="idx_usdc_arc"
-                name="usdc_approval"
-                desc={
-                  <>
-                    Approval(address,address,uint256)
-                    <br />
-                    owner, spender text · value numeric(78,0)
-                  </>
-                }
-              />
-              <div className="covers-divider" aria-hidden="true" />
-              <Cover
-                tint="teal"
-                title="_cursor"
-                sub="control"
-                name="_cursor"
-                desc={
-                  <>
-                    last_block, updated_at
-                    <br />
-                    the checkpoint a restart resumes from
-                  </>
-                }
-              />
-              <Cover
-                tint="beige"
-                title="_meta"
-                sub="control"
-                name="_meta"
-                desc={
-                  <>
-                    key, value
-                    <br />
-                    reserved for indexer metadata
-                  </>
-                }
-              />
-              <Cover
-                tint="outline"
-                title={
-                  <>
-                    _dead_
-                    <br />
-                    letter
-                  </>
-                }
-                sub="control"
-                name="_dead_letter"
-                desc={
-                  <>
-                    logs that failed to decode
-                    <br />
-                    empty when healthy
-                  </>
-                }
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* ———— 02 reliability ———— */}
-        <section id="reliability" className="section">
-          <div className="wrap">
-            <SecHead n="02" label="Reliability" />
-            <h2>Even if the network blips, no data is lost.</h2>
-
-            <div className="rel-grid">
-              <div>
-                <p className="lede">
-                  A poll-based backbone chosen for loss-free, self-healing
-                  ingestion — not just latency. Don&apos;t take our word for it:
-                  break something.
-                </p>
-                <div className="mech-list">
-                  <div className="mech">
-                    <b>Cursor + checkpoint</b>
-                    <p>
-                      The last processed block lives in Postgres. After any crash
-                      it resumes exactly there.
-                    </p>
-                  </div>
-                  <div className="mech">
-                    <b>Gap-free backfill</b>
-                    <p>
-                      Event inserts and cursor advance share one transaction — a
-                      commit, or nothing.
-                    </p>
-                  </div>
-                  <div className="mech">
-                    <b>Reorg-safe on Arc</b>
-                    <p>
-                      Indexes to the <code>finalized</code> tag — BFT finality
-                      means finalized blocks never reorg.
-                    </p>
-                  </div>
-                  <div className="mech">
-                    <b>RPC failover</b>
-                    <p>
-                      A health-checked pool with rotation, backoff,
-                      circuit-breaker. A blip never becomes a gap.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <ChaosLab />
-            </div>
-          </div>
-        </section>
-
-        {/* ———— latest events ———— */}
-        <section className="section alt">
-          <div className="wrap">
-            <div className="events-head">
-              <h2>Latest events</h2>
-              <a href="#how">Open in SQL</a>
-            </div>
-            <LatestEvents />
-          </div>
-        </section>
-
-        {/* ———— arc radar ———— */}
-        <section id="radar" className="section radar-section">
-          <div className="wrap">
-            <div className="radar-band">
-              <div className="radar-copy">
-                <span className="sec-label">Live on Arc</span>
-                <h2>Every USDC transfer on Arc, sorted as it lands.</h2>
-                <p>
-                  Arc Radar files each transfer under swap, bridge, liquidity,
-                  payment and more, judged in real time by Laya. Ask it a
-                  yes/no question and the stream re-sorts while you watch.
-                </p>
-              </div>
-              <a className="btn" href={RADAR}>
-                Open Arc Radar <span aria-hidden="true">→</span>
-              </a>
-            </div>
-          </div>
-        </section>
-
-        {/* ———— 03 benchmarks ———— */}
-        <section id="benchmarks" className="section">
-          <div className="wrap">
-            <SecHead n="03" label="Benchmarks" />
-            <h2>Measured, not promised.</h2>
-            <p className="lede">
-              Every number comes from running the real worker against the public
-              Arc testnet and reading only its production surface — Postgres rows
-              and <code>/metrics</code>. Reproduce it with <code>pnpm bench</code>.
+          <div className="cell">
+            <span className="label">burst ingest</span>
+            <p className="big">
+              2,628<span> ev/s</span>
             </p>
-
-            <div className="bench-grid">
-              <div className="stat">
-                <span className="stat-label">block → SQL, p50</span>
-                <b>395 ms</b>
-                <span>
-                  Block close to queryable row on Arc testnet — live USDC
-                  traffic, WebSocket <code>newHeads</code> listening, not
-                  polling. Even p99 stays under a second (0.97 s).
-                </span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">backfill catch-up</span>
-                <b>92.6 blocks/s</b>
-                <span>
-                  5,107 blocks of real USDC history caught up in 55 seconds over
-                  a public RPC — about 48× faster than the chain. Zero RPC
-                  errors.
-                </span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">burst ingest</span>
-                <b>2,628 events/s</b>
-                <span>
-                  The decode + transactional-SQL write ceiling, measured with WAN
-                  latency out of the picture.
-                </span>
-              </div>
-            </div>
-
-            <p className="bench-note">
-              The budget is published too: the head signal is consumed straight
-              from the <code>newHeads</code> payload and one parallel{" "}
-              <code>eth_getLogs</code> round-trip later the row is committed. The
-              engine itself adds about 40 ms; the rest belongs to how fast the
-              RPC announces blocks, and it shrinks further with a cluster-local
-              Arc node. Full methodology and raw results:{" "}
-              <a href="/benchmarks.html">benchmark report</a> ·{" "}
-              <a href={`${REPO}/tree/main/docs/benchmarks`}>docs/benchmarks</a>.
-            </p>
+            <p>The decode and single-transaction write ceiling.</p>
           </div>
-        </section>
-
-        {/* ———— 04 compare ———— */}
-        <section id="compare" className="section alt">
-          <div className="wrap">
-            <SecHead n="04" label="Compare" />
-            <h2>A specific combination nobody else offers.</h2>
-
-            <div className="compare-scroll scroll-x">
-              <table className="compare">
-                <thead>
-                  <tr>
-                    <th />
-                    <th>Dune</th>
-                    <th>The Graph</th>
-                    <th>Raw RPC</th>
-                    <th className="us">Arckive</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>Data in your own DB</td>
-                    <td className="they">No</td>
-                    <td className="they">Via graph-node</td>
-                    <td className="they">If you build it</td>
-                    <td className="us">Yes</td>
-                  </tr>
-                  <tr>
-                    <td>Plain SQL access</td>
-                    <td className="they">Dune SQL only</td>
-                    <td className="they">GraphQL</td>
-                    <td className="they">Raw JSON</td>
-                    <td className="us">Yes</td>
-                  </tr>
-                  <tr>
-                    <td>Reorg &amp; gap handling</td>
-                    <td className="they">Theirs</td>
-                    <td className="they">Yes</td>
-                    <td className="they">On you</td>
-                    <td className="us">Built-in</td>
-                  </tr>
-                  <tr>
-                    <td>Setup effort</td>
-                    <td className="they">Low</td>
-                    <td className="they">Med–high</td>
-                    <td className="they">High</td>
-                    <td className="us">One YAML</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <p className="honest">
-              <strong>Honest positioning:</strong> Dune stays great for ad-hoc
-              analytics; The Graph for hosted multi-chain. Arckive is for teams
-              that want their own Postgres, plain SQL, and K8s-native ops —
-              together.
+          <div className="cell">
+            <span className="label accent">insights · new</span>
+            <p className="big">
+              0.22<span> s</span>
             </p>
+            <p>Median lane delay behind ingest — Arc mainnet, four contracts.</p>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* ———— get started ———— */}
-        <section id="cta" className="section cta-band">
-          <div className="wrap">
-            <span className="sec-label">Get started</span>
-            <h2>One YAML. A running indexer.</h2>
-            <p className="cta-sub">Runs in your cluster. Your data never leaves it.</p>
-            <CopyCmd cmd="kubectl apply -f https://arckive.org/install.yaml" />
-            <div className="star-ask">
-              <p>
-                <strong>Arckive is open source and built in the open.</strong>{" "}
-                If it saves you a subgraph, a GitHub star is the easiest way to
-                help other Arc builders find it.
-              </p>
-              <StarButton href={REPO} className="btn" />
+      {/* ———— arc radar ———— */}
+      <section id="radar" className="sec wrap">
+        <div className="radar">
+          <RadarScene />
+          <Grain opacity={0.22} />
+          <div className="radar-body">
+            <div>
+              <p className="label">Live on Arc mainnet</p>
+              <h2>
+                Arc Radar — <em>every USDC transfer, sorted as it lands.</em>
+              </h2>
+              <p className="lede">Swap, bridge, liquidity, payment. Ask the stream a yes/no question and watch it re-sort.</p>
             </div>
-            <p className="meta-line">
-              Runs in your cluster · Apache-2.0 · v1alpha1
+            <a className="btn" href={RADAR}>
+              Open Arc Radar →
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ———— 05 compare ———— */}
+      <section id="compare" className="sec wrap">
+        <p className="label">05 — Compare</p>
+        <h2 className="h2-gap">
+          A combination <em>nobody else offers.</em>
+        </h2>
+        <div className="scroll-x">
+          <table className="compare">
+            <thead>
+              <tr className="label">
+                <th />
+                <th>Dune</th>
+                <th>The Graph</th>
+                <th>Raw RPC</th>
+                <th className="accent">Arckive</th>
+              </tr>
+            </thead>
+            <tbody>
+              {COMPARE.map(([what, dune, graph, raw, us]) => (
+                <tr key={what}>
+                  <td>{what}</td>
+                  <td className="they">{dune}</td>
+                  <td className="they">{graph}</td>
+                  <td className="they">{raw}</td>
+                  <td>{us}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ———— get started ———— */}
+      <section id="start" className="start wrap">
+        <p className="label">Get started</p>
+        <h2>
+          One YAML. <em>A running indexer.</em>
+        </h2>
+        <CopyCmd cmd="kubectl apply -f https://arckive.org/install.yaml" />
+        <p className="star-ask">
+          Arckive is open source. If it saves you a subgraph, a star helps other Arc builders find it.
+        </p>
+        <StarButton href={REPO} className="btn-line" />
+        <p className="label">Runs in your cluster · your data never leaves it</p>
+      </section>
+
+      {/* ———— footer ———— */}
+      <footer className="footer">
+        <FooterScene />
+        <Grain opacity={0.22} />
+        <div className="footer-grid">
+          <div className="footer-brand">
+            <a className="brand" href="#top">
+              <Mark />
+              <span>Arckive</span>
+            </a>
+            <p className="footer-tag">
+              Your chain events, in your own Postgres.
+              <br />
+              Built for Arc · runs in your cluster.
             </p>
+            <p className="footer-copy">© 2026 Arckive · Apache-2.0</p>
           </div>
-        </section>
-
-        {/* ———— footer ———— */}
-        <footer className="footer">
-          <div className="wrap foot-grid">
-            <div className="foot-col">
-              <h2>Arckive</h2>
-              <p>
-                Kubernetes-native event indexer for Arc. Your data never leaves
-                your cluster.
-              </p>
-            </div>
-            <div className="foot-col">
+          <div className="footer-cols">
+            <div>
               <h2>Product</h2>
               <a href="#how">How it works</a>
-              <a href="#reliability">Reliability</a>
+              <a href="#insights">Insights</a>
               <a href="#benchmarks">Benchmarks</a>
-              <a href="#compare">Compare</a>
               <a href={RADAR}>Arc Radar</a>
             </div>
-            <div className="foot-col">
-              <h2>Documentation</h2>
+            <div>
+              <h2>Docs</h2>
               <a href={`${REPO}#readme`}>Quickstart</a>
               <a href="/install.yaml">install.yaml</a>
               <a href="/demo.yaml">demo.yaml</a>
-              <a href="/benchmarks.html">Benchmark report</a>
+              <a href="/benchmarks.html">Report</a>
             </div>
-            <div className="foot-col">
-              <h2>Contact</h2>
+            <div>
+              <h2>Project</h2>
               <a href={REPO}>GitHub</a>
-              <a href={`${REPO}/issues`}>Report an issue</a>
+              <a href={`${REPO}/issues`}>Issues</a>
+              <a href={`${REPO}/releases`}>Releases</a>
             </div>
           </div>
-          <div className="wrap foot-bottom">
-            <span>© 2026 Arckive · Apache-2.0</span>
-            <span>Kubernetes-native event indexer for Arc · v1alpha1</span>
-          </div>
-        </footer>
-      </main>
-    </LiveIndexerProvider>
+        </div>
+      </footer>
+    </main>
   );
 }
