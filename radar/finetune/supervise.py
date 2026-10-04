@@ -21,6 +21,13 @@ of this supervisor cannot be cleaned up; then continue the trainer by hand:
 
     pkill -CONT -f finetune.train && pkill -f finetune.train
 
+With --drops, a live radar's own drop counter is watched too: any new drop
+counts as over budget. The Stellar radar runs near capacity (about 106
+operations in, 100 out, per second), and on 2026-10-05 it dropped about 2,600
+operations during an Arc run whose model latency never left the budget; a
+small slowdown is enough to overflow its queue, so its own counter is the
+signal that matters.
+
 layad's p95 is over its last 512 requests, so after a pause the figure stays
 high until that window has turned over: expect pauses of a minute or more,
 not RESUME_AFTER.
@@ -54,9 +61,13 @@ def budget(baseline_p95: float) -> float:
 class Pacer:
     paused: bool = False
     calm_since: Optional[float] = None
+    last_drops: Optional[int] = None
 
-    def step(self, p95: Optional[float], limit: float, now: float) -> str:
-        if p95 is None or p95 > limit:
+    def step(self, p95: Optional[float], limit: float, now: float, drops: Optional[int] = None) -> str:
+        new_drop = drops is not None and self.last_drops is not None and drops > self.last_drops
+        if drops is not None:
+            self.last_drops = drops
+        if p95 is None or p95 > limit or new_drop:
             self.calm_since = None
             if not self.paused:
                 self.paused = True
@@ -95,10 +106,22 @@ def p95_from(url: str) -> Callable[[], Optional[float]]:
     return read
 
 
+def drops_from(url: str) -> Callable[[], Optional[int]]:
+    def read() -> Optional[int]:
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "arc-radar-finetune/1.0"}),
+                                        timeout=5) as response:
+                return int(json.load(response)["dropped"])
+        except Exception:  # noqa: BLE001 - an unreadable counter is no signal either way
+            return None
+    return read
+
+
 def supervise(cmd: list[str], *, read_p95: Callable[[], Optional[float]], log: Callable[[str], None],
               sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
               spawn=subprocess.Popen, signal_child: Callable[[int, int], None] = os.kill,
-              baseline_samples: int = BASELINE_SAMPLES, stdout=None) -> int:
+              baseline_samples: int = BASELINE_SAMPLES, stdout=None,
+              read_drops: Callable[[], Optional[int]] = lambda: None) -> int:
     samples = []
     for _ in range(baseline_samples):
         value = read_p95()
@@ -115,11 +138,12 @@ def supervise(cmd: list[str], *, read_p95: Callable[[], Optional[float]], log: C
         while child.poll() is None:
             now = clock()
             p95 = read_p95()
-            action = pacer.step(p95, limit, now)
+            drops = read_drops()
+            action = pacer.step(p95, limit, now, drops)
             if action == "pause":
                 signal_child(child.pid, signal.SIGSTOP)
                 paused_at = now
-                log(f"paused: shared model p95 {p95} ms")
+                log(f"paused: shared model p95 {p95} ms, live radar drops {drops}")
             elif action == "resume":
                 signal_child(child.pid, signal.SIGCONT)
                 paused_total += now - (paused_at if paused_at is not None else now)
@@ -145,6 +169,7 @@ def supervise(cmd: list[str], *, read_p95: Callable[[], Optional[float]], log: C
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--health", default=HEALTH)
+    parser.add_argument("--drops", default="", help="a live radar's stats URL whose 'dropped' counter must not rise")
     parser.add_argument("--log", default="", help="the trainer's output goes here; supervision lines go to stdout")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -157,7 +182,8 @@ def main() -> int:
         print(f"{time.strftime('%H:%M:%S')} {line}", flush=True)
 
     exit_on_hangup()
-    return supervise(cmd, read_p95=p95_from(args.health), log=log, stdout=out)
+    return supervise(cmd, read_p95=p95_from(args.health), log=log, stdout=out,
+                     read_drops=drops_from(args.drops) if args.drops else (lambda: None))
 
 
 if __name__ == "__main__":

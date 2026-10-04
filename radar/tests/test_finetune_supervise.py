@@ -137,3 +137,20 @@ def test_a_trainer_that_ignores_terminate_is_killed():
         sv.supervise(["train"], read_p95=lambda: 40.0, log=lambda line: None, sleep=sleep, clock=lambda: 0.0,
                      spawn=lambda cmd, **kw: child, signal_child=lambda pid, sig: None, baseline_samples=0)
     assert child.terminated and child.killed
+
+
+def test_a_new_drop_on_a_live_radar_pauses_like_a_slow_model():
+    # The Stellar radar runs near capacity: its model stayed under the latency
+    # budget while ~2,600 operations were dropped during Arc training.
+    p = sv.Pacer()
+    assert p.step(40.0, 120.0, 0.0, drops=100) == ""
+    assert p.step(40.0, 120.0, 5.0, drops=101) == "pause"
+    assert p.step(40.0, 120.0, 10.0, drops=101) == ""                     # calm starts
+    assert p.step(40.0, 120.0, 10.0 + sv.RESUME_AFTER, drops=101) == "resume"
+
+
+def test_an_unreadable_drop_counter_is_ignored():
+    p = sv.Pacer()
+    assert p.step(40.0, 120.0, 0.0, drops=None) == ""
+    assert p.step(40.0, 120.0, 5.0, drops=7) == ""
+    assert p.step(40.0, 120.0, 10.0, drops=None) == ""
