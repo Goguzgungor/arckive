@@ -19,6 +19,8 @@ labels=(com.arc-radar.netwatch)
 for label in "${labels[@]}"; do
   sed "s#/Users/gokbot#$HOME#g" "$HERE/$label.plist" > "$HOME/Library/LaunchAgents/$label.plist"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  # bootout returns before the old job is gone; wait, or bootstrap fails.
+  for _ in $(seq 1 40); do launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break; sleep 0.25; done
   launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$label.plist"
 done
 echo "netwatch installed (${labels[*]}); it logs to ~/Library/Logs/arc-radar-netwatch*.log only when something is wrong"

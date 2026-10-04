@@ -30,6 +30,9 @@ sed -e "s#/Users/gokbot#$HOME#g" -e "s#__MODEL_DIR__#$MODEL#g" \
 sed "s#/Users/gokbot#$HOME#g" "$HERE/com.arc-radar.gate.plist" > "$AGENTS/com.arc-radar.gate.plist"
 for label in com.arc-radar.model com.arc-radar.gate; do
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  # bootout returns before the old job is gone; bootstrapping then fails with
+  # "Input/output error" and leaves the agent unloaded (2026-10-05).
+  for _ in $(seq 1 40); do launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break; sleep 0.25; done
   launchctl bootstrap "gui/$(id -u)" "$AGENTS/$label.plist"
 done
 echo "Arc model on 127.0.0.1:8920 ($MODEL); gate on 127.0.0.1:8921"
