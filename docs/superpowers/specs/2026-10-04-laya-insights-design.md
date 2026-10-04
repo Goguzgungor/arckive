@@ -140,9 +140,13 @@ never passes the ingest cursor.
     - no tx context → `uncertain`;
     - transfer-shaped, a zero-address side, no `bridge` fact → `issuance`;
     - transfer-shaped, value 0, no fact beyond `smart_account`/`fee` → `spam`;
-    - transfer-shaped, no facts, not plain, no function name → `uncertain`.
-    Other events are only ruled `uncertain` when their context is missing; with
-    an event name to read they go to the model.
+    - transfer-shaped, no facts, not plain, no function name → `uncertain`;
+    - any other event whose transaction logged no Transfer / TransferSingle /
+      TransferBatch and sent no value → `no_transfer` (*added after the
+      five-contract mainnet test*: asked anyway, the model filed direct Permit2
+      approvals as lending and smart-account deployments as payment — 10% of
+      the rows).
+    Otherwise other events go to the model, with their event name to read.
   - **Protocol** — `protocolOf(ctx)`; when it is empty and `tx.to` is an indexed
     contract, that contract's name; else `''`.
 - **`lanes.ts`** — `LANES` and `LANE_QUESTION` copied verbatim, order included
@@ -206,9 +210,11 @@ never passes the ingest cursor.
     HTTP 429) or while ingest is `Degraded`, shortening the interval 3% per
     successful call down to 50 ms — because insights share the endpoints'
     rate limits with ingest; a transaction's sender is a wallet by definition
-    and is never sent to `getCode`; and insights use `network.rpc` in reverse
-    order so that, given
-    several endpoints, they load one ingest uses last. *Revised after the live
+    and is never sent to `getCode`; and insights use one endpoint alone — the
+    last http entry of `network.rpc`, with no fallback and no transport
+    retries, so a rate-limit answer reaches the pacer rather than spilling
+    onto ingest's endpoint (*revised after review*: reversing the list did
+    nothing for ws+http configs, which `createRpc` orders ws-first). *Revised after the live
     check:* the first version read per transaction, 8 at a time. Arc
     mainnet's public RPC turned out to enforce a per-minute quota that ingest
     alone, polling once a second, runs into (12 "rate limit exceeded" in 3 min
@@ -236,8 +242,10 @@ never passes the ingest cursor.
     `polling.intervalMs`, whichever is first. Ingest has the RPC budget first. The ingest loop gets one optional
     hook, `PipelineDeps.onCommitted?.()`, called after `commitBatch`; this is the
     only change to the ingest path.
-  - Errors: back off 1 s → 60 s and retry the same range. Nothing is written for
-    a failed round.
+  - Errors: back off 1 s → 60 s. Nothing is written for a failed round. A round
+    whose *model* call failed is kept (`prepareRound` / `finishRound`) and only
+    the model call is retried, so a gate outage costs no RPC; any other failure
+    reads the round afresh.
 - **`main.ts`** — when `cfg.insights` is set: parse `INSIGHTS_HEADER`, keep the
   full ABIs (today only events are extracted) to build the function-name maps,
   read token info, create the insights tables and cursor (initialised like

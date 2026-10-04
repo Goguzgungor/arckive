@@ -64,8 +64,10 @@ transaction* that was. A `Transfer` reads the same whether it is a swap leg, a
 bridge deposit or a payroll payment. With `spec.insights` set, the worker
 works that out for every event it indexes and writes it next to the event:
 the **lane** (`swap`, `bridge`, `liquidity`, `vault`, `lending`,
-`signed_payment`, `payment`, `spam`, `issuance` for mint/burn, or
-`uncertain`), the **protocol** that handled the transaction, and the **facts**
+`signed_payment`, `payment`, `spam`, `issuance` for mint/burn, `no_transfer`
+for a transaction that moved no token and no value — an approval, an account
+being set up — or `uncertain`), the **protocol** that handled the transaction,
+and the **facts**
 that placed it. The lanes are decided by Laya, a local decision model, through
 a model gate you run (the same one behind Arc Radar, `radar/`); the worker only
 needs its URL and one header.
@@ -98,7 +100,7 @@ ORDER BY t.block_number DESC LIMIT 20;
 ```
 
 `lane_p` is the model's confidence (NULL when the transaction itself decides
-the lane — mint/burn, zero-value spam, unreadable); `probabilities` keeps the
+the lane — mint/burn, zero-value spam, no transfer, unreadable); `probabilities` keeps the
 whole distribution, and `sentence` is exactly what the model read.
 
 Insights run in their own loop behind the ingest cursor. Ingest never waits for
@@ -113,12 +115,14 @@ there too: they read each block once (`eth_getBlockByNumber` +
 time, and only while ingest is `Live`. Their pace starts at four calls a second
 and adapts: it halves whenever an endpoint answers "rate limited" or ingest is
 failing, and creeps back up (to at most twenty a second) while calls go
-through. With more
-than one entry in `network.rpc`, insights use the list from the back, so their
-reads land on a different endpoint's rate limit than ingest's. Give them one:
-Arc mainnet's public RPC has a per-minute quota that ingest alone, polling once
-a second, already runs into. History is classified too, from the indexer's
-start block, once ingest has caught up.
+through. Insights use one endpoint, on its own: the last `http(s)` entry in
+`network.rpc` (ingest queries `ws(s)` entries first, then `http(s)` in order).
+List more than one and their reads land on a different endpoint's rate limit
+than ingest's — worth doing: Arc mainnet's public RPC has a per-minute quota
+that ingest alone, polling once a second, already runs into. The header Secret
+must hold one line of printable ASCII (a trailing newline is dropped). History is classified too, once ingest has caught up, from the start
+block the indexer resolved at the boot that enabled insights (for a tail-mode
+or negative `startBlock`, that boot's head).
 
 **How good is it?** For USDC on Arc the sentence the model reads is
 byte-for-byte Radar's (a test pins this against 1,200 captured mainnet

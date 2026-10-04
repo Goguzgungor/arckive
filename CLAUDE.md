@@ -110,6 +110,9 @@ The CRD schema is duplicated by design (OpenAPI for the API server, zod for
 runtime). Changing a spec field means touching, in order:
 
 1. `charts/arckive/crds/indexer.yaml` — OpenAPI v3 schema, printer columns.
+   (Example: `insights` went through every step below — CRD, `IndexerSpecSchema`
+   + `renderWorkerConfig` (URL only), `WorkerConfigSchema`, `resources.ts`
+   (`INSIGHTS_HEADER` env from `secretKeyRef`), parity test, `install.yaml`.)
 2. `packages/core/src/crd.ts` — `IndexerSpecSchema` and, if it reaches the
    worker, `renderWorkerConfig`.
 3. `packages/core/src/config.ts` — `WorkerConfigSchema` (the worker's view).
@@ -242,12 +245,23 @@ transaction is classified into a lane by a Laya model gate and written to
   RPC call goes through one adaptive `Pacer` (sequential; starts at 4/s, halves
   on -32005/429 or while ingest is `Degraded`, relaxes 3% per success up to
   20/s), rounds run only while the ingest phase is `Live` (read, never set), a
-  tx sender is taken for a wallet without `getCode`, and insights use `network.rpc`
-  in reverse order (`insightsRpcs`) so a multi-endpoint config keeps their load
-  off ingest's primary. Arc mainnet's public RPC has a per-minute quota that
+  tx sender is taken for a wallet without `getCode`, and insights use one
+  endpoint alone — the last http entry of `network.rpc` (`createInsightsRpc`:
+  no `fallback`, `retryCount: 0`, so a rate limit reaches the Pacer instead of
+  spilling onto ingest's endpoint). A round whose model call fails is kept and
+  only the model call is retried (`prepareRound` / `finishRound`): a gate
+  outage must cost no RPC. Arc mainnet's public RPC has a per-minute quota that
   ingest alone (1 s polling) already hits. Do not add concurrency on this path.
+- Ruled lanes (no model call): `issuance`, `spam`, `uncertain` (Radar's) and
+  `no_transfer` — a non-transfer event whose tx logged no Transfer /
+  TransferSingle / TransferBatch and sent no value. Added after a 5-contract
+  mainnet test where the model filed approvals as lending (10% of rows).
 - The header is a secret: Secret → `INSIGHTS_HEADER` env, never `config.json`,
-  never logged. `token symbol()` text is sanitised before it reaches a sentence.
+  never logged; values must be printable ASCII (a CR/LF would make fetch quote
+  it in an error), and gate errors carry only the fetch error's name/code.
+  `token symbol()` text is sanitised before it reaches a sentence, and token
+  info is retried on transport errors (only a revert/no-data answer means "not
+  a token").
 - Accuracy is measured only for USDC on Arc (via Radar); other contracts are
   unmeasured — do not claim figures for them.
 
