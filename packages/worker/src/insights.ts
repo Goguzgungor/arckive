@@ -2,12 +2,12 @@ import type pg from 'pg';
 import type { Logger } from 'pino';
 import {
   describeEvent, eventColumns, extractFunctionNames, isTransferEvent, planRange, settleLane,
-  type CallInfo, type EventDef, type LaneAnswer, type TokenInfo, type TxContext, type WorkerConfig,
+  type CallInfo, type Description, type EventDef, type LaneAnswer, type TokenInfo, type TxContext, type WorkerConfig,
 } from '@arckive/core';
 import { getCursor } from './db.js';
 import {
   bootstrapInsights, capRange, commitInsights, getInsightsCursor, readEventRows,
-  type EventSource, type InsightRow,
+  type EventRow, type EventSource, type InsightRow,
 } from './insightsdb.js';
 import { LayaClient, LayaError, parseHeaderLine } from './laya.js';
 import type { Metrics } from './metrics.js';
@@ -98,13 +98,23 @@ function callOf(ctx: TxContext | null, called: ReadonlyMap<string, CalledContrac
   return { contract: contract.name, fn: contract.functions.get(ctx.selector) ?? null };
 }
 
-export async function runInsightsOnce(deps: InsightsDeps, model: string | null): Promise<boolean> {
+// One round's reading: the rows past the insights cursor, their transactions
+// and the sentences describing them. Everything here is settled chain data,
+// so a round whose model call fails can be retried from this unchanged.
+export interface PreparedRound {
+  ingested: bigint; // _cursor when the round was read
+  fromBlock: bigint;
+  toBlock: bigint;
+  described: Array<{ row: EventRow; d: Description }>;
+}
+
+export async function prepareRound(deps: InsightsDeps): Promise<PreparedRound | null> {
   const { pool, schema, metrics } = deps;
   const [done, ingested] = await at('db', Promise.all([getInsightsCursor(pool, schema), getCursor(pool, schema)]));
   if (done === null || ingested === null) throw new Error('no insights cursor — call bootstrapInsights first');
   metrics.insightsBlocksBehind.set(Number(ingested > done ? ingested - done : 0n));
   const range = planRange(done, ingested, deps.batchBlocks);
-  if (!range) return false;
+  if (!range) return null;
 
   const toBlock = await at('db', capRange(pool, schema, deps.targets, range.fromBlock, range.toBlock, MAX_ROWS_PER_ROUND));
   const rows = await at('db', readEventRows(pool, schema, deps.targets, range.fromBlock, toBlock));
@@ -139,7 +149,13 @@ export async function runInsightsOnce(deps: InsightsDeps, model: string | null):
       }),
     };
   });
+  return { ingested, fromBlock: range.fromBlock, toBlock, described };
+}
 
+// The round's model call and its write: rows and cursor in one transaction.
+export async function finishRound(deps: InsightsDeps, round: PreparedRound, model: string | null): Promise<void> {
+  const { pool, schema, metrics } = deps;
+  const { described, toBlock } = round;
   const ask = [...new Set(described.filter((x) => !x.d.ruled).map((x) => x.d.sentence))];
   const answers = ask.length ? await at('model', deps.classifier.classify(ask)) : new Map<string, LaneAnswer>();
 
@@ -155,11 +171,17 @@ export async function runInsightsOnce(deps: InsightsDeps, model: string | null):
   const inserted = await at('db', commitInsights(pool, schema, insights, toBlock));
 
   for (const lane of inserted) metrics.insightsClassified.inc({ lane });
-  metrics.insightsBlocksBehind.set(Number(ingested - toBlock));
+  metrics.insightsBlocksBehind.set(Number(round.ingested > toBlock ? round.ingested - toBlock : 0n));
   deps.log.info(
-    { fromBlock: range.fromBlock, toBlock, rows: insights.length, asked: ask.length },
+    { fromBlock: round.fromBlock, toBlock, rows: insights.length, asked: ask.length },
     'insights range processed',
   );
+}
+
+export async function runInsightsOnce(deps: InsightsDeps, model: string | null): Promise<boolean> {
+  const round = await prepareRound(deps);
+  if (!round) return false;
+  await finishRound(deps, round, model);
   return true;
 }
 
@@ -167,6 +189,7 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
   let model = await deps.classifier.identity();
   let backoffMs = 1000;
   let failing = false;
+  let pending: PreparedRound | null = null;
   while (!signal.aborted) {
     const phase = deps.ingestPhase();
     if (phase !== 'Live') {
@@ -178,7 +201,16 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
       continue;
     }
     try {
-      const progressed = await runInsightsOnce(deps, model);
+      // A round whose model call failed is kept and retried as it was: its
+      // blocks do not change, and re-reading them on every retry through a
+      // gate outage would spend the RPC quota ingest depends on — on a range
+      // that grows with every retry as ingest moves on.
+      pending ??= await prepareRound(deps);
+      const progressed = pending !== null;
+      if (pending) {
+        await finishRound(deps, pending, model);
+        pending = null;
+      }
       if (failing) {
         failing = false;
         model = (await deps.classifier.identity()) ?? model;
@@ -190,6 +222,8 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
       // Never touches the phase: /healthz and the CR phase describe ingest,
       // and a gate that is down must not take the indexer out of service.
       const stage = err instanceof InsightsError ? err.stage : 'db';
+      // only a failed model call keeps its round; anything else reads afresh
+      if (stage !== 'model') pending = null;
       deps.metrics.insightsErrors.inc({ stage });
       const status = err instanceof InsightsError && err.cause instanceof LayaError ? err.cause.status : undefined;
       deps.log.error(
@@ -233,7 +267,12 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
   const tokens = new Map<string, TokenInfo>();
   for (const d of input.defs) {
     if (isTransferEvent(d) && !tokens.has(d.address)) {
-      tokens.set(d.address, await input.readToken(d.address, d.contractName));
+      const info = await input.readToken(d.address, d.contractName);
+      if (info.decimals === null) {
+        // amounts will only read zero or nonzero for this token
+        input.log.warn({ contract: d.contractName, address: d.address }, 'insights: token decimals unreadable');
+      }
+      tokens.set(d.address, info);
     }
   }
   const called = new Map<string, CalledContract>(

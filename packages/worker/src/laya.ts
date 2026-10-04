@@ -21,16 +21,21 @@ export interface HeaderLine {
 }
 
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+// Printable ASCII, space and tab. A newline would make a second header (and
+// fetch quotes an invalid value verbatim in its error, which would then be
+// logged on every retry); anything above ASCII fails on every call.
+const VALUE = /^[\t\x20-\x7e]*$/;
 
 // INSIGHTS_HEADER is a whole header line, "Name: value". The value is a
 // secret: no error here repeats any of the line.
 export function parseHeaderLine(line: string): HeaderLine {
   const i = line.indexOf(':');
   const name = i > 0 ? line.slice(0, i).trim() : '';
-  if (!name || !TOKEN.test(name)) {
-    throw new LayaError('INSIGHTS_HEADER must be one header line, "Name: value"');
+  const value = line.slice(i + 1).trim();
+  if (!name || !TOKEN.test(name) || !VALUE.test(value)) {
+    throw new LayaError('INSIGHTS_HEADER must be one header line, "Name: value", in printable ASCII');
   }
-  return { name, value: line.slice(i + 1).trim() };
+  return { name, value };
 }
 
 const BatchResponse = z.object({
@@ -141,7 +146,12 @@ export class LayaClient {
     try {
       res = await doFetch(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (cause) {
-      throw new LayaError(`gate unreachable: ${cause instanceof Error ? cause.message : String(cause)}`, undefined, { cause });
+      // Only the error's name and code: fetch's own message can quote the
+      // request's headers, and this error is logged on every retry.
+      const code = (cause as { code?: unknown; cause?: { code?: unknown } } | null)?.cause?.code
+        ?? (cause as { code?: unknown } | null)?.code;
+      const name = cause instanceof Error ? cause.name : typeof cause;
+      throw new LayaError(`gate unreachable (${name}${typeof code === 'string' ? ` ${code}` : ''})`);
     }
     if (!res.ok) throw new LayaError(`gate answered HTTP ${res.status}`, res.status);
     try {

@@ -1,13 +1,17 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createWalletClient, http, publicActions, toFunctionSelector, type PublicClient } from 'viem';
+import {
+  ContractFunctionZeroDataError, HttpRequestError, createWalletClient, http, publicActions, toFunctionSelector, type PublicClient,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRANSFER_TOPIC, ZERO_ADDRESS, factsOf, protocolOf } from '@arckive/core';
 import { createRpc } from '../src/rpc.js';
 import { Pacer } from '../src/pacer.js';
-import { createContextSource, insightsRpcs, isContractCode, readTokenInfo, tokenLabel } from '../src/txcontext.js';
+import { createServer } from 'node:http';
+import { isRateLimited } from '../src/pacer.js';
+import { createContextSource, createInsightsRpc, insightsRpc, isContractCode, readTokenInfo, tokenLabel } from '../src/txcontext.js';
 import { startAnvil, type AnvilHandle } from './helpers/anvil.js';
 
 const PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
@@ -44,10 +48,58 @@ describe('tokenLabel', () => {
   });
 });
 
-describe('insightsRpcs', () => {
-  it('takes the endpoints from the back, so insights load the one ingest uses last', () => {
-    expect(insightsRpcs(['https://a', 'https://b', 'wss://c'])).toEqual(['wss://c', 'https://b', 'https://a']);
-    expect(insightsRpcs(['https://only'])).toEqual(['https://only']);
+describe('insightsRpc', () => {
+  it('takes the last http endpoint — ingest queries ws first, then http in order', () => {
+    expect(insightsRpc(['wss://a', 'https://b'])).toBe('https://b');
+    expect(insightsRpc(['https://a', 'https://b', 'wss://c'])).toBe('https://b');
+    expect(insightsRpc(['wss://a', 'wss://b'])).toBe('wss://b');
+    expect(insightsRpc(['https://only'])).toBe('https://only');
+  });
+
+  it('lets a rate limit through on the first answer: no retries, no fallback', async () => {
+    let hits = 0;
+    const server = createServer((_req, res) => { hits++; res.writeHead(429).end(); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as { port: number };
+    try {
+      const err = await createInsightsRpc([`http://127.0.0.1:${port}`]).getBlockNumber().catch((e: unknown) => e);
+      expect(isRateLimited(err)).toBe(true);
+      expect(hits).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe('readTokenInfo', () => {
+  const fakeClient = (answers: Record<string, unknown[]>) => {
+    const calls: string[] = [];
+    const client = {
+      readContract: async ({ functionName }: { functionName: string }) => {
+        calls.push(functionName);
+        const next = answers[functionName]!.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      },
+    } as unknown as PublicClient;
+    return { client, calls };
+  };
+
+  it('retries an endpoint that is failing rather than deciding it is not a token', async () => {
+    const busy = () => new HttpRequestError({ url: 'x', status: 503 });
+    const { client } = fakeClient({ symbol: [busy(), busy(), 'TKN'], decimals: [6] });
+    const slept: number[] = [];
+    const info = await readTokenInfo(client, '0x' + '11'.repeat(20), 'tok', { sleep: async (ms) => { slept.push(ms); } });
+    expect(info).toEqual({ label: 'TKN', decimals: 6 });
+    expect(slept).toEqual([1000, 2000]);
+  });
+
+  it('falls back at once when the contract answers that it has no such function', async () => {
+    const none = () => new ContractFunctionZeroDataError({ functionName: 'symbol' });
+    const { client, calls } = fakeClient({ symbol: [none()], decimals: [none()] });
+    const info = await readTokenInfo(client, '0x' + '11'.repeat(20), 'tok', { sleep: async () => { throw new Error('no sleeping'); } });
+    expect(info).toEqual({ label: 'tok', decimals: null });
+    expect(calls).toEqual(['symbol', 'decimals']);
   });
 });
 
@@ -91,6 +143,7 @@ describe('txcontext (anvil)', () => {
     expect(ctx.topics).toEqual([TRANSFER_TOPIC, V3_SWAP]);
     expect(ctx.emitters).toEqual([token.toLowerCase(), pool.toLowerCase()]);
     expect(ctx.factories).toEqual({ [pool.toLowerCase()]: AERO });
+    expect(ctx.valueSent).toBe(false);
     expect(factsOf(ctx)).toEqual(['swap']);
     expect(protocolOf(ctx)).toBe('Aerodrome');
   });

@@ -119,7 +119,8 @@ describe('insights', () => {
       context: fakeContext({
         [tx(1)]: ctx({ selector: '0x3593564c', to: UNIVERSAL_ROUTER, topics: [TRANSFER_TOPIC, V3_SWAP] }),
         [tx(2)]: ctx({}),
-        [tx(3)]: ctx({ to: VAULT, selector: '0x12345678', topics: ['0x' + '77'.repeat(32)] }),
+        [tx(3)]: ctx({ to: VAULT, selector: '0x12345678', topics: ['0x' + '77'.repeat(32), TRANSFER_TOPIC] }),
+        [tx(5)]: ctx({ to: VAULT, selector: '0x12345678', topics: ['0x' + '77'.repeat(32)] }),
         [tx(4)]: ctx({}),
       }),
       classifier,
@@ -268,6 +269,34 @@ describe('insights', () => {
     await runInsightsOnce(deps, 'laya-test');
     expect(askedParties).toEqual([WALLET2]);
     expect((await insights())[0].sentence).toMatch(/^TKN moved from a wallet to a wallet/);
+  });
+
+  it('a gate outage retries the model call only, never the chain reads', async () => {
+    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    let reads = 0;
+    const inner = deps.context;
+    deps.context = { ...inner, contexts: (txs) => { reads++; return inner.contexts(txs); } };
+    classifier.state.fail = new LayaError('gate answered HTTP 503', 503);
+    const ctrl = new AbortController();
+    const loop = runInsightsLoop(deps, ctrl.signal);
+    await expect
+      .poll(async () => (await deps.metrics.insightsErrors.get()).values.find((v) => v.labels.stage === 'model')?.value ?? 0, { timeout: 8_000 })
+      .toBeGreaterThan(1);
+    // ingest moves on meanwhile; the failed round must not grow to take it in
+    await commitBatch(pool, SCHEMA, [depositRow(101, 3)], [], 101n);
+    classifier.state.fail = null;
+    await expect.poll(async () => (await insights()).length, { timeout: 10_000 }).toBe(2);
+    ctrl.abort();
+    await loop;
+    expect(reads).toBe(2); // the kept round (block 100), then the next one (block 101)
+  });
+
+  it('a transaction that moved nothing is ruled no_transfer and never asked', async () => {
+    await commitBatch(pool, SCHEMA, [depositRow(100, 5)], [], 100n);
+    await runInsightsOnce(deps, 'laya-test');
+    const [row] = await insights();
+    expect(row).toMatchObject({ lane: 'no_transfer', ruled: true, lane_p: null, model: null });
+    expect(classifier.asked.flat()).toEqual([]);
   });
 
   it('InsightsError names the stage that failed', () => {

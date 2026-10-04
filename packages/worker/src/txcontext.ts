@@ -1,4 +1,7 @@
-import { erc20Abi, type PublicClient } from 'viem';
+import {
+  AbiDecodingZeroDataError, BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError,
+  createPublicClient, erc20Abi, http, webSocket, type PublicClient,
+} from 'viem';
 import { FACTORY_CALL, POOL_TOPICS, ZERO_ADDRESS, type TokenInfo, type TxContext } from '@arckive/core';
 import { Pacer, type PaceLimits } from './pacer.js';
 
@@ -28,11 +31,25 @@ export function isContractCode(code: string | undefined): boolean {
   return !(code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 2 * 23);
 }
 
-// Ingest queries its endpoints in config order (rank: false), so the first one
-// carries its load. Insights take them from the back: given more than one,
-// they spend another endpoint's rate limit, not the one ingest depends on.
-export function insightsRpcs(rpcs: readonly string[]): string[] {
-  return [...rpcs].reverse();
+// Ingest queries ws endpoints first, then http, in config order (rpc.ts,
+// rank: false), so the first of them carries its load. Insights take the last
+// http endpoint (the last ws one if there is no http): given more than one,
+// they spend another endpoint's rate limit than the one ingest depends on.
+export function insightsRpc(rpcs: readonly string[]): string {
+  const httpUrls = rpcs.filter((u) => /^https?:\/\//i.test(u));
+  const pool = httpUrls.length ? httpUrls : rpcs;
+  return pool[pool.length - 1]!;
+}
+
+// One endpoint, no fallback, no transport retries: a rate-limit answer has to
+// reach the pacer (pacer.ts) to slow it down. Behind viem's fallback it would
+// be retried on the next endpoint — ingest's — and count as a success.
+export function createInsightsRpc(rpcs: readonly string[]): PublicClient {
+  const url = insightsRpc(rpcs);
+  const transport = /^wss?:\/\//i.test(url)
+    ? webSocket(url, { timeout: 10_000, retryCount: 0 })
+    : http(url, { timeout: 10_000, retryCount: 0 });
+  return createPublicClient({ transport });
 }
 
 // symbol() is text anyone deploying a token chooses, and it lands in the
@@ -42,16 +59,49 @@ export function tokenLabel(symbol: string | null, fallback: string): string {
   return /^[A-Za-z0-9$._-]{1,16}$/.test(s) ? s : fallback;
 }
 
-export async function readTokenInfo(client: PublicClient, address: string, fallback: string): Promise<TokenInfo> {
+// The contract answered, and the answer is no: it reverted or has no such
+// function. Anything else — a timeout, a 503, a rate limit — says nothing
+// about the token.
+function isDefiniteNo(err: unknown): boolean {
+  return (
+    err instanceof BaseError &&
+    err.walk(
+      (e) =>
+        e instanceof ContractFunctionRevertedError ||
+        e instanceof ContractFunctionZeroDataError ||
+        e instanceof AbiDecodingZeroDataError,
+    ) !== null
+  );
+}
+
+export interface TokenReadOptions {
+  attempts?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+// Read once at startup and used for the life of the process, so a failing
+// endpoint is retried (1 s, 2 s, 4 s, 8 s) rather than taken to mean "not a
+// token" — which would turn "USDC … 1 to 100 USDC" into "usdc … a nonzero
+// amount of usdc" in every sentence until the next restart.
+export async function readTokenInfo(
+  client: PublicClient, address: string, fallback: string, opts: TokenReadOptions = {},
+): Promise<TokenInfo> {
+  const attempts = opts.attempts ?? 5;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const at = address as `0x${string}`;
-  const [symbol, decimals] = await Promise.allSettled([
-    client.readContract({ address: at, abi: erc20Abi, functionName: 'symbol' }),
-    client.readContract({ address: at, abi: erc20Abi, functionName: 'decimals' }),
-  ]);
-  return {
-    label: tokenLabel(symbol.status === 'fulfilled' ? symbol.value : null, fallback),
-    decimals: decimals.status === 'fulfilled' ? decimals.value : null,
-  };
+  async function read<F extends 'symbol' | 'decimals'>(functionName: F) {
+    for (let i = 0; ; i++) {
+      try {
+        return await client.readContract({ address: at, abi: erc20Abi, functionName });
+      } catch (err) {
+        if (isDefiniteNo(err) || i + 1 >= attempts) return null;
+        await sleep(1000 * 2 ** i);
+      }
+    }
+  }
+  const symbol = await read('symbol');
+  const decimals = await read('decimals');
+  return { label: tokenLabel(typeof symbol === 'string' ? symbol : null, fallback), decimals: typeof decimals === 'number' ? decimals : null };
 }
 
 export interface TxRef {
@@ -115,6 +165,7 @@ export function createContextSource(client: PublicClient, opts: ContextSourceOpt
         sender: tx.from.toLowerCase(),
         emitters: logs.map((l) => l.address.toLowerCase()),
         factories: {},
+        valueSent: tx.value > 0n,
       });
     }
   }

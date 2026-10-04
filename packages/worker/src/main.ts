@@ -16,7 +16,7 @@ import { subscribeNewHeads } from './ws.js';
 import { crStatusTargetFromEnv, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
 import { prepareInsights, runInsightsLoop } from './insights.js';
 import { Pacer } from './pacer.js';
-import { INSIGHTS_RPC_PACE, createContextSource, insightsRpcs, readTokenInfo } from './txcontext.js';
+import { INSIGHTS_RPC_PACE, createContextSource, createInsightsRpc, readTokenInfo } from './txcontext.js';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   const insights = cfg.insights
     ? await prepareInsights({
         cfg, pool, schema: deps.schema, defs, abis, metrics, log, wake: insightsWake,
-        context: createContextSource(createRpc(insightsRpcs(rpcs)), { pacer: insightsPacer }),
+        context: createContextSource(createInsightsRpc(rpcs), { pacer: insightsPacer }),
         readToken: (address, fallback) => readTokenInfo(client, address, fallback),
         headerLine: process.env['INSIGHTS_HEADER'],
         ingestPhase: () => phase.phase,

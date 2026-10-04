@@ -241,6 +241,7 @@ export interface TxContext {
   sender: string; // tx.from, lowercase
   emitters: string[]; // the address that emitted each of `topics`, same order
   factories: Record<string, string>; // pool address -> the factory that deployed it
+  valueSent?: boolean; // the transaction carried native value (not in Radar's context)
 }
 
 export function factsOf(ctx: TxContext | null): Fact[] {

@@ -36,6 +36,17 @@ describe('parseHeaderLine', () => {
     expect(parseHeaderLine('X-Api-Key:k')).toEqual({ name: 'X-Api-Key', value: 'k' });
   });
 
+  it('drops the newline a Secret file usually ends with', () => {
+    expect(parseHeaderLine('Authorization: Bearer t\n')).toEqual({ name: 'Authorization', value: 'Bearer t' });
+  });
+
+  it('refuses a value that could split into another header, without echoing it', () => {
+    for (const bad of ['Authorization: Bearer secret-token\nX-Other: y', 'Authorization: Bearer secret\r-token', 'Authorization: secret-token\u0000', 'Authorization: secret-token’']) {
+      expect(() => parseHeaderLine(bad)).toThrow(LayaError);
+      try { parseHeaderLine(bad); } catch (err) { expect(String(err)).not.toContain('secret-token'); }
+    }
+  });
+
   it('refuses a malformed line without echoing it', () => {
     for (const bad of ['no-colon secret-token', ': secret-token', 'Bad Name: secret-token']) {
       expect(() => parseHeaderLine(bad)).toThrow(LayaError);
@@ -89,6 +100,18 @@ describe('LayaClient.classify', () => {
     await expect(short.classify(['a'])).rejects.toBeInstanceOf(LayaError);
     const down = new LayaClient('https://g', null, { fetch: (async () => { throw new TypeError('fetch failed'); }) as typeof fetch });
     await expect(down.classify(['a'])).rejects.toBeInstanceOf(LayaError);
+  });
+
+  it('never carries what fetch said into the error, which can quote the header', async () => {
+    const leaky = (async () => {
+      throw new TypeError('Headers.append: "Bearer TOPSECRET" is an invalid header value.', { cause: Object.assign(new Error('x'), { code: 'ERR_INVALID_CHAR' }) });
+    }) as typeof fetch;
+    const client = new LayaClient('https://g', null, { fetch: leaky });
+    const err = await client.classify(['a']).catch((e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(LayaError);
+    const chain = [err.message, String((err as Error & { cause?: unknown }).cause ?? '')].join(' ');
+    expect(chain).not.toContain('TOPSECRET');
+    expect(err.message).toContain('TypeError');
   });
 });
 

@@ -13,6 +13,15 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // empty input, transfer, transferFrom
 const PLAIN_SELECTORS: ReadonlySet<string> = new Set(['0x', '0xa9059cbb', '0x23b872dd']);
 
+// Logs that mean a token moved: ERC-20 and ERC-721 Transfer, ERC-1155
+// TransferSingle and TransferBatch. On Arc a native USDC movement is logged as
+// a Transfer too (from 0xff…fe); elsewhere it shows only as value sent.
+const MOVEMENT_TOPICS: ReadonlySet<string> = new Set([
+  TRANSFER_TOPIC,
+  '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62', // TransferSingle
+  '0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb', // TransferBatch
+]);
+
 // Facts that describe who sent a transaction or what it cost, not what it did.
 // A zero transfer with only these beside it still did nothing.
 const INCIDENTAL: ReadonlySet<Fact> = new Set<Fact>(['smart_account', 'fee']);
@@ -124,13 +133,21 @@ function tail(ctx: TxContext | null, facts: Fact[], plain: boolean): string {
 // Radar's ruled_lane, generalised. Mint and burn are not a judgement; a zero
 // transfer with nothing else happening is spam; and where nothing is
 // recognisable the model answered arbitrarily ("vault" at 0.82, "lending" at
-// 0.64, depending only on wording), so those rows are uncertain. Other events
-// carry their own name for the model to read, so only an unreadable
-// transaction rules them.
+// 0.64, depending only on wording), so those rows are uncertain.
+//
+// Other events carry their own name for the model to read, but every lane is
+// a way money moves, and some transactions move none: an approval, an account
+// being set up. Asked anyway, the model filed direct Permit2 approvals as
+// "lending" (0.45) and smart-account deployments as "payment" (0.51) — 10% of
+// a ten-minute mainnet sample across five contracts. Whether anything moved is
+// the transaction's to say, so it is ruled: no_transfer.
 function ruledLane(input: DescribeInput, facts: Fact[], plain: boolean, called: string): string {
   const { ctx, transfer: t } = input;
   if (!ctx) return 'uncertain';
-  if (!t || !input.token) return '';
+  if (!t || !input.token) {
+    const moved = ctx.valueSent === true || ctx.topics.some((topic) => MOVEMENT_TOPICS.has(topic));
+    return moved ? '' : 'no_transfer';
+  }
   if ((t.from === ZERO_ADDRESS || t.to === ZERO_ADDRESS) && !facts.includes('bridge')) return 'issuance';
   if (t.value === 0n && facts.every((f) => INCIDENTAL.has(f))) return 'spam';
   if (!facts.length && !plain && !called) return 'uncertain';

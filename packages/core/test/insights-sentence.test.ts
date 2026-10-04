@@ -67,7 +67,7 @@ describe('amountBucket', () => {
 
 describe('describeEvent — other events', () => {
   it('names the contract and the event, then the facts', () => {
-    const d = describeEvent(custom({ ctx: ctx({ topics: [V3_SWAP] }) }));
+    const d = describeEvent(custom({ ctx: ctx({ topics: [TRANSFER_TOPIC, V3_SWAP] }) }));
     expect(d.sentence).toBe(
       'The vault contract logged Deposited. In the same transaction: tokens were swapped on an exchange.',
     );
@@ -92,12 +92,28 @@ describe('describeEvent — other events', () => {
   });
 
   it('goes to the model unless the transaction could not be read', () => {
-    expect(describeEvent(custom()).ruled).toBe('');
+    expect(describeEvent(custom({ ctx: ctx({ topics: [TRANSFER_TOPIC] }) })).ruled).toBe('');
     const unread = describeEvent(custom({ ctx: null }));
     expect(unread.ruled).toBe('uncertain');
     expect(unread.sentence).toBe(
       'The vault contract logged Deposited. The rest of the transaction could not be read.',
     );
+  });
+});
+
+describe('describeEvent — transactions that moved nothing', () => {
+  const APPROVAL = '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925';
+  const TRANSFER_SINGLE = '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62';
+
+  it('an approval or a setting changed, with no token and no value moving, is no_transfer', () => {
+    const d = describeEvent(custom({ eventName: 'Approval', ctx: ctx({ topics: [APPROVAL] }), call: { contract: 'vault', fn: 'approve' } }));
+    expect(d.ruled).toBe('no_transfer');
+  });
+
+  it('any token transfer, or value sent with the call, is a movement', () => {
+    expect(describeEvent(custom({ ctx: ctx({ topics: [APPROVAL, TRANSFER_TOPIC] }) })).ruled).toBe('');
+    expect(describeEvent(custom({ ctx: ctx({ topics: [TRANSFER_SINGLE] }) })).ruled).toBe('');
+    expect(describeEvent(custom({ ctx: ctx({ topics: [], valueSent: true }) })).ruled).toBe('');
   });
 });
 
