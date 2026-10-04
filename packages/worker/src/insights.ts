@@ -11,7 +11,9 @@ import {
 } from './insightsdb.js';
 import { LayaClient, LayaError, parseHeaderLine } from './laya.js';
 import type { Metrics } from './metrics.js';
+import type { Pacer } from './pacer.js';
 import { initialCursor, sleep } from './pipeline.js';
+import type { Phase } from './status.js';
 import type { ContextSource } from './txcontext.js';
 
 // The insight loop runs behind the ingest cursor, never in front of it and
@@ -50,6 +52,11 @@ export interface InsightsDeps {
   batchBlocks: number;
   intervalMs: number;
   wake: { wait(ms: number, signal: AbortSignal): Promise<void> };
+  // Read, never set: insights run only while ingest is Live. While it
+  // backfills or is Degraded, the RPC budget is ingest's.
+  ingestPhase: () => Phase;
+  // the pacer every insight RPC call goes through (txcontext.ts)
+  rpcPacer: Pick<Pacer, 'backOff'>;
 }
 
 export class InsightsError extends Error {
@@ -101,10 +108,18 @@ export async function runInsightsOnce(deps: InsightsDeps, model: string | null):
 
   const toBlock = await at('db', capRange(pool, schema, deps.targets, range.fromBlock, range.toBlock, MAX_ROWS_PER_ROUND));
   const rows = await at('db', readEventRows(pool, schema, deps.targets, range.fromBlock, toBlock));
-  const contexts = await at('rpc', deps.context.contexts(rows.map((r) => r.txHash)));
-  const parties = await at('rpc', deps.context.partyKinds(
-    rows.flatMap((r) => (r.transfer && contexts.get(r.txHash) ? [r.transfer.from, r.transfer.to] : [])),
+  const contexts = await at('rpc', deps.context.contexts(rows));
+  // A transaction's sender is a wallet — a contract cannot send one, and an
+  // EIP-7702 account counts as a wallet (txcontext.isContractCode) — so the
+  // chain is asked only about the other parties.
+  const senders: Record<string, boolean> = {};
+  for (const c of contexts.values()) if (c) senders[c.sender] = false;
+  const asked = await at('rpc', deps.context.partyKinds(
+    rows
+      .flatMap((r) => (r.transfer && contexts.get(r.txHash) ? [r.transfer.from, r.transfer.to] : []))
+      .filter((a) => !Object.hasOwn(senders, a)),
   ));
+  const parties = { ...asked, ...senders };
 
   const byTable = new Map(deps.targets.map((t) => [t.tableName, t]));
   const described = rows.map((row) => {
@@ -153,6 +168,15 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
   let backoffMs = 1000;
   let failing = false;
   while (!signal.aborted) {
+    const phase = deps.ingestPhase();
+    if (phase !== 'Live') {
+      // Degraded is ingest failing — often on the endpoint's rate limit, which
+      // insights share — so insights slow down too; while it backfills they
+      // only wait their turn.
+      if (phase === 'Degraded') deps.rpcPacer.backOff();
+      await deps.wake.wait(deps.intervalMs, signal);
+      continue;
+    }
     try {
       const progressed = await runInsightsOnce(deps, model);
       if (failing) {
@@ -191,6 +215,8 @@ export interface PrepareInsightsInput {
   context: ContextSource;
   readToken: (address: string, fallback: string) => Promise<TokenInfo>;
   headerLine: string | undefined; // INSIGHTS_HEADER
+  ingestPhase: () => Phase;
+  rpcPacer: Pick<Pacer, 'backOff'>;
   fetch?: typeof fetch;
 }
 
@@ -235,5 +261,7 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     batchBlocks: cfg.polling.batchBlocks,
     intervalMs: cfg.polling.intervalMs,
     wake: input.wake,
+    ingestPhase: input.ingestPhase,
+    rpcPacer: input.rpcPacer,
   };
 }

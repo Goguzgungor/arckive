@@ -1,14 +1,19 @@
-import {
-  TransactionNotFoundError, TransactionReceiptNotFoundError, erc20Abi, type PublicClient,
-} from 'viem';
+import { erc20Abi, type PublicClient } from 'viem';
 import { FACTORY_CALL, POOL_TOPICS, ZERO_ADDRESS, type TokenInfo, type TxContext } from '@arckive/core';
+import { Pacer, type PaceLimits } from './pacer.js';
 
 // What the insight loop needs to know about a transaction beyond its own
 // event: the function called, every event logged, who deployed the pools it
 // touched, and whether each transfer party is a wallet or a contract. Ported
-// from radar/radar/arc.py (_items).
+// from radar/radar/arc.py (_items), which reads per transaction; this reads
+// per block — one block and its receipts — because on Arc mainnet a block
+// with USDC events carried 3.1 such transactions on average, so per block is
+// a third of the calls on an RPC budget shared with ingest.
 
-const CONC = 8;
+// Every RPC call made for insights goes through one pacer, one at a time:
+// four a second to start, as fast as twenty a second on an endpoint that
+// takes it, as slow as one per 8 s on one that does not (see pacer.ts).
+export const INSIGHTS_RPC_PACE: PaceLimits = { startMs: 250, minMs: 50, maxMs: 8000 };
 const CACHE_MAX = 50_000;
 // A pool that cannot answer factory() fails the same way every time; asked
 // again only after this long.
@@ -21,6 +26,13 @@ const FACTORY_RETRY_MS = 600_000;
 export function isContractCode(code: string | undefined): boolean {
   if (!code || code === '0x' || code === '0x0') return false;
   return !(code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 2 * 23);
+}
+
+// Ingest queries its endpoints in config order (rank: false), so the first one
+// carries its load. Insights take them from the back: given more than one,
+// they spend another endpoint's rate limit, not the one ingest depends on.
+export function insightsRpcs(rpcs: readonly string[]): string[] {
+  return [...rpcs].reverse();
 }
 
 // symbol() is text anyone deploying a token chooses, and it lands in the
@@ -42,9 +54,15 @@ export async function readTokenInfo(client: PublicClient, address: string, fallb
   };
 }
 
+export interface TxRef {
+  txHash: string;
+  blockNumber: bigint;
+}
+
 export interface ContextSource {
-  // null for a transaction the node does not have; an RPC failure rejects.
-  contexts(txHashes: readonly string[]): Promise<Map<string, TxContext | null>>;
+  // keyed by txHash; null for a transaction its block does not hold. An RPC
+  // failure rejects.
+  contexts(txs: readonly TxRef[]): Promise<Map<string, TxContext | null>>;
   // address -> is a contract; the zero address is never asked about.
   partyKinds(addresses: readonly string[]): Promise<Record<string, boolean>>;
 }
@@ -67,43 +85,45 @@ class Lru<V> {
   }
 }
 
-async function mapLimit<T, R>(items: readonly T[], fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = [];
-  for (let i = 0; i < items.length; i += CONC) out.push(...(await Promise.all(items.slice(i, i + CONC).map(fn))));
-  return out;
+export interface ContextSourceOptions {
+  now?: () => number;
+  pacer?: Pick<Pacer, 'run'>;
 }
 
-export function createContextSource(client: PublicClient, now: () => number = Date.now): ContextSource {
+export function createContextSource(client: PublicClient, opts: ContextSourceOptions = {}): ContextSource {
+  const now = opts.now ?? Date.now;
+  const pacer = opts.pacer ?? new Pacer(INSIGHTS_RPC_PACE);
   const codes = new Lru<boolean>(CACHE_MAX);
   const factories = new Lru<string>(CACHE_MAX);
   const unreadable = new Map<string, number>(); // pool -> when factory() may be asked again
 
-  async function read(hash: string): Promise<TxContext | null> {
-    const h = hash as `0x${string}`;
-    let tx, receipt;
-    try {
-      [tx, receipt] = await Promise.all([client.getTransaction({ hash: h }), client.getTransactionReceipt({ hash: h })]);
-    } catch (err) {
-      if (err instanceof TransactionNotFoundError || err instanceof TransactionReceiptNotFoundError) return null;
-      throw err;
+  // The wanted transactions of one block, from the block and its receipts.
+  async function readBlock(blockNumber: bigint, wanted: ReadonlySet<string>, out: Map<string, TxContext>): Promise<void> {
+    const block = await pacer.run(() => client.getBlock({ blockNumber, includeTransactions: true }));
+    const receipts = await pacer.run(() => client.getBlockReceipts({ blockNumber }));
+    const byHash = new Map(receipts.map((r) => [r.transactionHash.toLowerCase(), r]));
+    for (const tx of block.transactions) {
+      const hash = tx.hash.toLowerCase();
+      const receipt = byHash.get(hash);
+      if (!wanted.has(hash) || !receipt) continue;
+      const logs = receipt.logs.filter((l) => l.topics.length > 0);
+      const input = tx.input ?? '0x';
+      out.set(hash, {
+        to: tx.to ? tx.to.toLowerCase() : null,
+        selector: input.length >= 10 ? input.slice(0, 10).toLowerCase() : '0x',
+        topics: logs.map((l) => l.topics[0]!.toLowerCase()),
+        sender: tx.from.toLowerCase(),
+        emitters: logs.map((l) => l.address.toLowerCase()),
+        factories: {},
+      });
     }
-    const logs = receipt.logs.filter((l) => l.topics.length > 0);
-    const input = tx.input ?? '0x';
-    return {
-      to: tx.to ? tx.to.toLowerCase() : null,
-      selector: input.length >= 10 ? input.slice(0, 10).toLowerCase() : '0x',
-      topics: logs.map((l) => l.topics[0]!.toLowerCase()),
-      sender: tx.from.toLowerCase(),
-      emitters: logs.map((l) => l.address.toLowerCase()),
-      factories: {},
-    };
   }
 
   // Which exchange a swap happened on is a fact about the pool, not about the
   // event it logs: Uniswap v3's Swap is logged, byte for byte, by every fork.
   async function askFactory(pool: string): Promise<void> {
     try {
-      const { data } = await client.call({ to: pool as `0x${string}`, data: FACTORY_CALL });
+      const { data } = await pacer.run(() => client.call({ to: pool as `0x${string}`, data: FACTORY_CALL }));
       if (data && data.length >= 42) {
         factories.set(pool, `0x${data.slice(-40).toLowerCase()}`);
         unreadable.delete(pool);
@@ -116,39 +136,48 @@ export function createContextSource(client: PublicClient, now: () => number = Da
   }
 
   return {
-    async contexts(txHashes) {
-      const hashes = [...new Set(txHashes)];
-      const ctxs = await mapLimit(hashes, read);
-      const poolsOf = ctxs.map((c) =>
-        c ? [...new Set(c.emitters.filter((e, i) => e && POOL_TOPICS.has(c.topics[i]!)))] : [],
-      );
+    async contexts(txs) {
+      const byBlock = new Map<bigint, Set<string>>();
+      for (const t of txs) {
+        const set = byBlock.get(t.blockNumber) ?? new Set<string>();
+        set.add(t.txHash.toLowerCase());
+        byBlock.set(t.blockNumber, set);
+      }
+      const read = new Map<string, TxContext>();
+      for (const [blockNumber, wanted] of byBlock) await readBlock(blockNumber, wanted, read);
+
+      const poolsOf = new Map<string, string[]>();
+      for (const [hash, c] of read) {
+        poolsOf.set(hash, [...new Set(c.emitters.filter((e, i) => e && POOL_TOPICS.has(c.topics[i]!)))]);
+      }
       const clock = now();
-      const ask = [...new Set(poolsOf.flat())].filter(
+      const ask = [...new Set([...poolsOf.values()].flat())].filter(
         (p) => factories.get(p) === undefined && (unreadable.get(p) ?? 0) <= clock,
       );
-      await mapLimit(ask, askFactory);
+      for (const p of ask) await askFactory(p);
       if (unreadable.size > 10_000) {
         for (const [p, until] of unreadable) if (until <= clock) unreadable.delete(p);
       }
       const out = new Map<string, TxContext | null>();
-      hashes.forEach((h, i) => {
-        const c = ctxs[i] ?? null;
+      for (const t of txs) {
+        const c = read.get(t.txHash.toLowerCase()) ?? null;
         if (c) {
-          for (const p of poolsOf[i]!) {
+          for (const p of poolsOf.get(t.txHash.toLowerCase()) ?? []) {
             const f = factories.get(p);
             if (f) c.factories[p] = f;
           }
         }
-        out.set(h, c);
-      });
+        out.set(t.txHash, c);
+      }
       return out;
     },
 
     async partyKinds(addresses) {
       const wanted = [...new Set(addresses)].filter((a) => a !== ZERO_ADDRESS);
-      const unknown = wanted.filter((a) => codes.get(a) === undefined);
-      const got = await mapLimit(unknown, (a) => client.getCode({ address: a as `0x${string}` }));
-      unknown.forEach((a, i) => codes.set(a, isContractCode(got[i])));
+      for (const a of wanted.filter((x) => codes.get(x) === undefined)) {
+        const code = await pacer.run(() => client.getCode({ address: a as `0x${string}` }));
+        codes.set(a, isContractCode(code));
+      }
       const out: Record<string, boolean> = {};
       for (const a of wanted) {
         const v = codes.get(a);

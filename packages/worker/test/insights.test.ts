@@ -60,11 +60,19 @@ const ctx = (over: Partial<TxContext>): TxContext => ({
   emitters: [TOKEN], factories: {}, ...over,
 });
 
+const askedParties: string[] = [];
 function fakeContext(contexts: Record<string, TxContext | null>): ContextSource {
   return {
-    contexts: async (hashes) => new Map(hashes.map((h) => [h, contexts[h] ?? null])),
-    partyKinds: async (addrs) => Object.fromEntries(addrs.map((a) => [a, false])),
+    contexts: async (txs) => new Map(txs.map((t) => [t.txHash, contexts[t.txHash] ?? null])),
+    partyKinds: async (addrs) => {
+      askedParties.push(...addrs);
+      return Object.fromEntries(addrs.map((a) => [a, false]));
+    },
   };
+}
+
+function fakePacer() {
+  return { backOffs: 0, backOff() { this.backOffs++; } };
 }
 
 function fakeClassifier() {
@@ -120,7 +128,10 @@ describe('insights', () => {
       batchBlocks: 100,
       intervalMs: 60_000,
       wake: new HeadSignal(),
+      ingestPhase: () => 'Live',
+      rpcPacer: fakePacer(),
     };
+    askedParties.length = 0;
   });
 
   const insights = async () =>
@@ -214,12 +225,49 @@ describe('insights', () => {
       cfg, pool, schema: SCHEMA, defs, abis: [[], vaultAbi],
       metrics: createMetrics('prep'), log: pino({ level: 'silent' }), wake: new HeadSignal(),
       context: fakeContext({}), readToken: async () => ({ label: 'TKN', decimals: 6 }),
+      ingestPhase: () => 'Live' as const, rpcPacer: fakePacer(),
     };
     await expect(prepareInsights({ ...base, headerLine: 'nonsense secret' })).rejects.toThrow(/INSIGHTS_HEADER/);
     const prepared = await prepareInsights({ ...base, headerLine: 'Authorization: Bearer x' });
     expect(await getInsightsCursor(pool, SCHEMA)).toBe(49n);
     expect(prepared.targets.find((t) => t.tableName === 'tok_transfer')?.token).toEqual({ label: 'TKN', decimals: 6 });
     expect(prepared.called.get(VAULT)?.functions.get(toFunctionSelector('depositFor()'))).toBe('depositFor');
+  });
+
+  it('waits while ingest is not Live, so ingest keeps the RPC to itself', async () => {
+    let live = false;
+    deps.ingestPhase = () => (live ? 'Live' : 'Backfilling');
+    await commitBatch(pool, SCHEMA, [depositRow(100, 3)], [], 100n);
+    const ctrl = new AbortController();
+    const loop = runInsightsLoop(deps, ctrl.signal);
+    (deps.wake as HeadSignal).notify();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await insights()).toEqual([]);
+    live = true;
+    (deps.wake as HeadSignal).notify();
+    await expect.poll(async () => (await insights()).length, { timeout: 3_000 }).toBe(1);
+    ctrl.abort();
+    await loop;
+  });
+
+  it('slows its RPC pace while ingest is Degraded', async () => {
+    const pacer = fakePacer();
+    deps.rpcPacer = pacer;
+    deps.ingestPhase = () => 'Degraded';
+    deps.intervalMs = 20;
+    const ctrl = new AbortController();
+    const loop = runInsightsLoop(deps, ctrl.signal);
+    await expect.poll(() => pacer.backOffs, { timeout: 2_000 }).toBeGreaterThan(1);
+    ctrl.abort();
+    await loop;
+  });
+
+  it('takes a transaction’s sender for a wallet without asking the chain', async () => {
+    // tx(1)'s sender is WALLET, the transfer's from; only WALLET2 needs asking
+    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    await runInsightsOnce(deps, 'laya-test');
+    expect(askedParties).toEqual([WALLET2]);
+    expect((await insights())[0].sentence).toMatch(/^TKN moved from a wallet to a wallet/);
   });
 
   it('InsightsError names the stage that failed', () => {
