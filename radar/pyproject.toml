@@ -17,3 +17,6 @@ packages = ["radar"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# finetune/ sits beside the radar package, not inside it: it is tooling, not
+# runtime, and the Docker image does not need it importable.
+pythonpath = ["."]
