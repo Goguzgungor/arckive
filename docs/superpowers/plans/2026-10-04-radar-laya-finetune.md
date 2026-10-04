@@ -2590,3 +2590,31 @@ In Dokploy (project Arckive → service `radar` → Environment) set `LAYA_ENDPO
 - [ ] **Step 16: PR, memory**
 
 Push `feat/radar-finetune`, open a PR to `main` with the acceptance tables, merge it once CI passes. Update the Arc Radar memory with the run folder, the numbers, the new ports/hostname, and the rollback.
+
+- [ ] **Step 17: Publish on Hugging Face (only if accepted; outward-facing)**
+
+Added 2026-10-04 at the user's request: once trained, the benchmarks are
+produced and the model is shared on Hugging Face. Needs the user's HF login
+(`hf auth login`, a write token) and the namespace they choose; nothing is
+uploaded before both exist.
+
+- Two model repos, mirroring the community layout: `<ns>/laya-multilingual-arc`
+  (the PyTorch `final/`, loads with `laya.load`) and `<ns>/laya-multilingual-arc-mlx`
+  (the fp16 `final-mlx/`, loads with layad / laya-mlx).
+- Model card: base `convaiinnovations/laya-multilingual` @ `1720e3e3…`,
+  Apache-2.0 with attribution (copy the base's LICENSE/NOTICE terms); the exact
+  sentence format it expects (`summarize.py`'s `shape` and `story`,
+  `RULE_PREFIX`, the lane question verbatim, option order); training data
+  (counts from `stats.json`, synthetic share, frozen embeddings, epochs kept);
+  the benchmark tables base → fine-tune from `eval-base/ft.txt` and
+  `report.txt`, with n and what each split means; honest limits (Arc USDC
+  sentences only, other contracts unmeasured, temperatures for the lane kept
+  from the base).
+- A benchmark dataset repo `<ns>/arc-usdc-laya-bench`: the test capture's story
+  and shape sentences with each held-out question and its label. Sentences carry
+  no addresses or hashes by design (summarize.py), so nothing private leaves;
+  the training rows (`train.jsonl`, `val.jsonl`) can go in the same repo.
+- Upload with `huggingface_hub.upload_folder`, then load each repo back from the
+  Hub (`laya.load("<ns>/laya-multilingual-arc")`, layad with
+  `LAYAD_MODEL=<ns>/laya-multilingual-arc-mlx`) and answer one sentence, to
+  prove what was published is what was measured.
