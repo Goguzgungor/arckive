@@ -124,7 +124,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   return true;
 }
 
-const sleep = (ms: number, signal: AbortSignal) =>
+export const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
     const t = setTimeout(resolve, ms);
     signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });

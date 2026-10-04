@@ -45,6 +45,33 @@ export function createMetrics(indexerName: string) {
       help: 'batch commit duration',
       registers: [registry],
     }),
+    insightsBlocksBehind: new Gauge({
+      name: 'arckive_insights_blocks_behind',
+      help: 'block gap between the ingest cursor and the insights cursor',
+      registers: [registry],
+    }),
+    insightsClassified: new Counter({
+      name: 'arckive_insights_classified_total',
+      help: 'insight rows written, by lane',
+      labelNames: ['lane'] as const,
+      registers: [registry],
+    }),
+    insightsModelCalls: new Counter({
+      name: 'arckive_insights_model_calls_total',
+      help: 'calls made to the Laya gate',
+      registers: [registry],
+    }),
+    insightsCacheHits: new Counter({
+      name: 'arckive_insights_cache_hits_total',
+      help: 'sentences answered from the cache instead of the gate',
+      registers: [registry],
+    }),
+    insightsErrors: new Counter({
+      name: 'arckive_insights_errors_total',
+      help: 'failed insight rounds, by stage (model, rpc, db)',
+      labelNames: ['stage'] as const,
+      registers: [registry],
+    }),
   };
 }
 
