@@ -105,6 +105,8 @@ export function desiredResources(input: {
     },
   };
 
+  const insightsHeader = spec.insights?.laya.headerSecretRef;
+
   const deployment: kind.Deployment = {
     apiVersion: 'apps/v1',
     kind: 'Deployment',
@@ -146,6 +148,15 @@ export function desiredResources(input: {
                   name: 'INDEXER_CR_NAMESPACE',
                   valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } },
                 },
+                // the gate's header carries a token: Secret -> env, never the ConfigMap
+                ...(insightsHeader
+                  ? [
+                      {
+                        name: 'INSIGHTS_HEADER',
+                        valueFrom: { secretKeyRef: { name: insightsHeader.name, key: insightsHeader.key } },
+                      },
+                    ]
+                  : []),
               ],
               ports: [{ containerPort: 9090, name: 'health' }],
               livenessProbe: {

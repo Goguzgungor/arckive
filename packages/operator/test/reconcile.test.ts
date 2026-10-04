@@ -117,6 +117,23 @@ describe('reconcile', () => {
     expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('MissingDsnSecret');
   });
 
+  it('missing insights header Secret: Provisioned=False/MissingInsightsSecret', async () => {
+    const kube = makeFake();
+    const cr = makeCr();
+    cr.spec!.insights = { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate', key: 'header' } } };
+    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(kube.applied).toEqual([]);
+    expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('MissingInsightsSecret');
+  });
+
+  it('insights header Secret present: reconciles', async () => {
+    const kube = makeFake({ secrets: { 'pg-dsn': { url: 'ZHNu' }, 'laya-gate': { header: 'eA==' } } });
+    const cr = makeCr();
+    cr.spec!.insights = { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate', key: 'header' } } };
+    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(kube.applied).toHaveLength(5);
+  });
+
   it('invalid spec: Provisioned=False/InvalidSpec', async () => {
     const kube = makeFake();
     const cr = makeCr();

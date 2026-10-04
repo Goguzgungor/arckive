@@ -119,3 +119,30 @@ describe('configHash', () => {
     expect(a).toMatch(/^[0-9a-f]{16}$/);
   });
 });
+
+describe('insights', () => {
+  const withInsights = {
+    ...raw,
+    insights: { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate' } } },
+  };
+
+  it('defaults the header key and carries only the URL to the worker', () => {
+    const spec = IndexerSpecSchema.parse(withInsights);
+    expect(spec.insights?.laya.headerSecretRef?.key).toBe('header');
+    const cfg = renderWorkerConfig('demo', spec);
+    expect(cfg.insights).toEqual({ laya: { url: 'https://laya-gate.example' } });
+    expect(JSON.stringify(cfg)).not.toContain('laya-gate"');
+  });
+
+  it('rejects a URL that is not http(s)', () => {
+    const bad = { ...raw, insights: { laya: { url: 'ftp://x' } } };
+    expect(IndexerSpecSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('without insights the worker config, and so its hash, is what it was before insights existed', () => {
+    const cfg = renderWorkerConfig('demo', IndexerSpecSchema.parse(raw));
+    expect('insights' in cfg).toBe(false);
+    // computed on the commit before spec.insights existed: no rollout for existing indexers
+    expect(configHash(cfg)).toBe('43420313e1f130e0');
+  });
+});

@@ -49,7 +49,7 @@ describe('Indexer CRD manifest', () => {
 
   it('spec schema defines the same top-level fields as zod', () => {
     expect(Object.keys(v.schema.openAPIV3Schema.properties.spec.properties).sort()).toEqual(
-      ['contracts', 'network', 'polling', 'storage'],
+      ['contracts', 'insights', 'network', 'polling', 'storage'],
     );
   });
 });

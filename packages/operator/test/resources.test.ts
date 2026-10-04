@@ -112,3 +112,25 @@ describe('desiredResources', () => {
     expect(d.roleBinding.roleRef.name).toBe('arckive-demo-status');
   });
 });
+
+describe('desiredResources — insights', () => {
+  const withInsights = IndexerSpecSchema.parse({
+    ...spec,
+    insights: { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate' } } },
+  });
+  const env = (s: typeof spec) =>
+    desiredResources({ ...input, spec: s }).deployment.spec!.template.spec!.containers[0]!.env!;
+
+  it('the header comes from its Secret and never reaches the ConfigMap', () => {
+    expect(env(withInsights).find((e) => e.name === 'INSIGHTS_HEADER')).toEqual({
+      name: 'INSIGHTS_HEADER',
+      valueFrom: { secretKeyRef: { name: 'laya-gate', key: 'header' } },
+    });
+    const cm = desiredResources({ ...input, spec: withInsights }).configMap.data!['config.json']!;
+    expect(JSON.parse(cm).insights).toEqual({ laya: { url: 'https://laya-gate.example' } });
+  });
+
+  it('no INSIGHTS_HEADER without insights', () => {
+    expect(env(spec).map((e) => e.name)).not.toContain('INSIGHTS_HEADER');
+  });
+});
