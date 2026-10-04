@@ -96,3 +96,44 @@ def test_an_interrupted_supervisor_never_leaves_the_trainer_stopped():
                      signal_child=lambda pid, sig: sent.append(sig), baseline_samples=2)
     assert sent[0] == signal.SIGSTOP and sent[-1] == signal.SIGCONT
     assert child.terminated
+
+
+def test_sigterm_and_sighup_unwind_so_the_trainer_is_continued():
+    import os
+
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        sv.exit_on_hangup()
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with pytest.raises(SystemExit):
+                os.kill(os.getpid(), sig)
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+
+
+class StubbornChild(FakeChild):
+    def __init__(self):
+        super().__init__(polls_until_exit=100)
+        self.killed = False
+
+    def wait(self, timeout=None):
+        import subprocess
+        if not self.killed:
+            raise subprocess.TimeoutExpired("train", timeout)
+        return -9
+
+    def kill(self):
+        self.killed = True
+
+
+def test_a_trainer_that_ignores_terminate_is_killed():
+    child = StubbornChild()
+
+    def sleep(_):
+        raise SystemExit(143)
+
+    with pytest.raises(SystemExit):
+        sv.supervise(["train"], read_p95=lambda: 40.0, log=lambda line: None, sleep=sleep, clock=lambda: 0.0,
+                     spawn=lambda cmd, **kw: child, signal_child=lambda pid, sig: None, baseline_samples=0)
+    assert child.terminated and child.killed

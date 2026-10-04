@@ -116,3 +116,29 @@ def test_main_writes_the_trainer_format(tmp_path):
     first = json.loads((tmp_path / "out" / "train.jsonl").read_text().splitlines()[0])
     assert set(first) == {"state", "questions", "gold"} and set(first["gold"]) <= set(first["questions"])
     assert (tmp_path / "out" / "audit.md").read_text().count("\n- ") >= 60
+
+
+def test_a_story_lives_on_the_same_side_as_its_shape(rows):
+    shape_of = {}
+    for it in synth.items():
+        s = summarize(it)
+        shape_of[s["story"]] = s["shape"]
+        shape_of[s["shape"]] = s["shape"]
+    for split, part in rows.items():
+        for r in part:
+            assert dataset.is_val(shape_of[r["state"]]) == (split == "val"), r["state"]
+
+
+def test_the_majority_answer_is_held_to_a_multiple_of_the_minority(rows):
+    counts = {}
+    for part in rows.values():
+        for r in part:
+            for qid, gold in r["gold"].items():
+                topic = qid.split(".")[0]
+                if qid == "lane" or topic == "nonsense":
+                    continue
+                p = gold["probabilities"]
+                counts.setdefault(topic, [0, 0])[p["true"] > p["false"]] += 1
+    for topic, (no, yes) in counts.items():
+        cap = max(dataset.MAJORITY_FLOOR, dataset.MAJORITY_RATIO * min(no, yes) // dataset.PHRASINGS_EACH)
+        assert max(no, yes) <= cap * dataset.PHRASINGS_EACH, (topic, yes, no)

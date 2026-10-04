@@ -16,7 +16,9 @@ Three kinds of row, each asked the way the server asks it:
 Stories are templated -- 133 distinct ones in 1,200 live transfers -- so rows
 are built per distinct story, not per transfer: a thousand copies of one swap
 leg would teach the model that one sentence. Validation is one state in ten
-by hash, so a sentence is never both trained on and used to choose the epoch.
+by the hash of its shape sentence, so a lane sentence and every story that
+reads like it fall on the same side: nothing is both trained on and used to
+choose the epoch.
 """
 from __future__ import annotations
 
@@ -42,7 +44,13 @@ from radar.summarize import summarize  # noqa: E402
 from radar.types import Item  # noqa: E402
 
 SMOOTH = 0.05          # targets 0.95/0.05, not 1/0: hard targets push the logits without bound
-PER_ANSWER = 300       # distinct stories per topic per answer
+PER_ANSWER = 300       # distinct stories per topic per answer, at most
+# The commoner answer is held to MAJORITY_RATIO times the rarer one (never
+# below MAJORITY_FLOOR stories): bridges into Arc, lending and CCTP are rare in
+# the stream, and 300 "no" stories against 40 "yes" would teach "no" rather
+# than reading.
+MAJORITY_RATIO = 3
+MAJORITY_FLOOR = 50
 PHRASINGS_EACH = 2     # training phrasings asked of each chosen story
 LANE_REPEATS = 3       # lane rows are few; repeated in training so the questions do not out-vote them
 NONSENSE_SHARE = 0.05  # of rule questions: enough to keep nonsense flat, not enough to teach "unfamiliar -> no"
@@ -68,9 +76,11 @@ def build(items: list[Item], seed: int = 0) -> dict[str, list[dict[str, Any]]]:
     rng = random.Random(seed)
     summaries = [summarize(i) for i in items]
     stories: dict[str, Any] = {}
+    shape_of: dict[str, str] = {}
     for it, s in zip(items, summaries):
         # One story reads one way (tests/test_finetune_questions.py), so the first transfer stands for all.
         stories.setdefault(s["story"], reading_of(it, s))
+        shape_of[s["story"]] = s["shape"]  # a story fixes its shape: same facts, parties and bucket
     texts: dict[str, list[str]] = {}
     for p in phrasings():
         if p.split == "train":
@@ -90,10 +100,11 @@ def build(items: list[Item], seed: int = 0) -> dict[str, list[dict[str, Any]]]:
             t = truth(topic, stories[story])
             if t is not None:
                 answers[t].append(story)
+        cap = min(PER_ANSWER, max(MAJORITY_FLOOR, MAJORITY_RATIO * min(len(answers[True]), len(answers[False]))))
         for yes in (True, False):
             group = answers[yes]
             rng.shuffle(group)
-            for story in group[:PER_ANSWER]:
+            for story in group[:cap]:
                 for k, text in enumerate(rng.sample(texts[topic], min(PHRASINGS_EACH, len(texts[topic])))):
                     ask(story, f"{topic}.{k}", text, yes)
                     n_rules += 1
@@ -103,7 +114,7 @@ def build(items: list[Item], seed: int = 0) -> dict[str, list[dict[str, Any]]]:
 
     rows: dict[str, list[dict[str, Any]]] = {"train": [], "val": []}
     for story, (questions, gold) in sorted(asked.items()):
-        rows["val" if is_val(story) else "train"].append({"state": story, "questions": questions, "gold": gold})
+        rows["val" if is_val(shape_of[story]) else "train"].append({"state": story, "questions": questions, "gold": gold})
 
     shapes: dict[str, str] = {}
     for s in summaries:

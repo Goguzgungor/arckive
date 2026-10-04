@@ -33,3 +33,14 @@ def test_sha256_file(tmp_path):
 def test_clamp_reaches_per_type_lists():
     # laya stores the per-type temperatures as a list (one per question type).
     assert clamp({"temperature": [0.1, 1.0, 9.0]}, 0.5, 5.0) == {"temperature": [0.5, 1.0, 5.0]}
+
+
+def test_only_types_with_enough_validation_are_refitted():
+    from finetune.trainlib import merge_temperatures
+
+    qtypes = {"choice": 0, "score": 1, "noul": 2}
+    base = {"temperature": [1.0, 1.0, 1.0], "temperature_by_options": {"choice:6-10": 1.4}}
+    fitted = {"temperature": [0.6, 1.0, 1.3], "temperature_by_options": {"choice:6-10": 0.7, "noul:2": 1.25}}
+    got = merge_temperatures(base, fitted, {"choice": 40, "noul": 3000}, qtypes, min_n=500)
+    # A few dozen lane rows cannot carry a fit the radar gates on; the base's stays.
+    assert got == {"temperature": [1.0, 1.0, 1.3], "temperature_by_options": {"choice:6-10": 1.4, "noul:2": 1.25}}

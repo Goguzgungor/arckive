@@ -178,7 +178,8 @@ TOPICS: dict[str, Topic] = {
     ), ("Bu bir dolardan az mı?", "1 USDC'den az mı gönderildi?", "Tutar bir doların altında mı?"),
         (("es", "¿Es menos de un dólar?"), ("de", "Ist das weniger als ein Dollar?"),
          ("ru", "Это меньше одного доллара?"))),
-    "under_cent": Topic(lambda r: r.amount < 0.01, (
+    # Zero is a bucket of its own in the story ("zero USDC", zero_amount), not dust.
+    "under_cent": Topic(lambda r: None if r.amount == 0 else r.amount < 0.01, (
         "Is this less than one cent?", "Was a fraction of a cent sent?",
         "Is the amount below 0.01 USDC?", "Is this a dust amount?",
         "Did less than a cent of USDC move?", "Is this a tiny dust transfer?",
@@ -237,11 +238,14 @@ TOPICS: dict[str, Topic] = {
         "Is this decentralized finance activity?", "Did this use a DeFi app?",
         "Is this transfer part of DeFi?", "Did a DeFi protocol handle this?",
     ), ("Bu bir DeFi işlemi mi?", "Burada bir DeFi protokolü kullanıldı mı?", "Bu transfer DeFi'nin bir parçası mı?")),
+    # The story says "deposited into or withdrawn from a vault" and "wrapped or
+    # unwrapped": it cannot tell the two directions apart, so no phrasing asks
+    # about one of them alone.
     "vault": Topic(_facts("vault"), (
-        "Were funds deposited into a vault?", "Did money go in or out of a vault?",
-        "Is this a vault deposit?", "Was a vault used here?",
+        "Was money put into or taken out of a vault?", "Did money go in or out of a vault?",
+        "Did this transaction touch a vault?", "Was a vault used here?",
         "Did someone deposit into or withdraw from a vault?", "Is a vault involved?",
-    ), ("Fonlar bir kasaya mı yatırıldı?", "Burada bir vault kullanıldı mı?",
+    ), ("Bir kasaya para yatırıldı ya da çekildi mi?", "Burada bir vault kullanıldı mı?",
         "Bu bir vault yatırma ya da çekme işlemi mi?")),
     "lending": Topic(_facts("lending"), (
         "Was a loan involved?", "Did someone borrow or repay?",
@@ -249,10 +253,11 @@ TOPICS: dict[str, Topic] = {
         "Is this borrowing or lending?", "Did a lending protocol handle this?",
     ), ("Burada bir kredi var mı?", "Biri borç aldı ya da ödedi mi?", "Bu bir borç verme işlemi mi?")),
     "wrap": Topic(_facts("wrap"), (
-        "Was USDC wrapped or unwrapped?", "Did someone wrap USDC?",
-        "Is this a wrapping of USDC?", "Was wrapped USDC involved?",
-        "Did USDC get wrapped here?", "Was USDC unwrapped?",
-    ), ("USDC sarmalandı mı?", "Burada USDC wrap edildi mi?", "Wrapped USDC kullanıldı mı?")),
+        "Was USDC wrapped or unwrapped?", "Was USDC converted to or from its wrapped form?",
+        "Is wrapping or unwrapping of USDC involved?", "Was wrapped USDC involved?",
+        "Did USDC get wrapped or unwrapped here?", "Did USDC move in or out of its wrapped form?",
+    ), ("USDC sarmalandı ya da sarmalı çözüldü mü?", "Burada wrapped USDC kullanıldı mı?",
+        "USDC wrap ya da unwrap edildi mi?")),
     "cctp": Topic(_protocol("CCTP"), (
         "Was CCTP used?", "Did Circle's CCTP move this?",
         "Is this a CCTP transfer?", "Did this use the Cross-Chain Transfer Protocol?",

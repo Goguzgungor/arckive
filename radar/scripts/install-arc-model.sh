@@ -21,15 +21,9 @@ mkdir -p "$APP"
 uv venv -q --allow-existing --python 3.12 "$APP/.venv"
 uv pip install -q --python "$APP/.venv/bin/python" --reinstall "$HERE/.."
 
-# The same token the deployed radar already sends, taken from the shared
-# gate's env file. Written once, owner-only, and never printed.
-if [ ! -f "$ENV_FILE" ]; then
-  token="$(grep -E '^RADAR_TOKEN=' "$HOME/.config/stellar-radar/env" | head -1 || true)"
-  [ -n "$token" ] || { echo "no RADAR_TOKEN= line in ~/.config/stellar-radar/env" >&2; exit 1; }
-  mkdir -p "$(dirname "$ENV_FILE")"
-  umask 077
-  printf '%s\nRADAR_GATE_PORT=8921\nLAYAD_ENDPOINT=http://127.0.0.1:8920\n' "$token" > "$ENV_FILE"
-fi
+# The same token the deployed radar already sends, kept from the existing file
+# or taken from the shared gate's; the ports are rewritten every time.
+"$HERE/arc-gate-env.sh" "$ENV_FILE" "$HOME/.config/stellar-radar/env"
 
 sed -e "s#/Users/gokbot#$HOME#g" -e "s#__MODEL_DIR__#$MODEL#g" \
   "$HERE/com.arc-radar.model.plist" > "$AGENTS/com.arc-radar.model.plist"

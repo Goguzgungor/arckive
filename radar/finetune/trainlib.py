@@ -56,3 +56,23 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def merge_temperatures(base: dict, fitted: dict, counts: dict[str, int], qtypes: dict[str, int],
+                       min_n: int) -> dict:
+    """The temperatures to serve: refitted for each question type with at least
+    `min_n` validation records, the base checkpoint's for the rest.
+
+    Validation holds one lane row per shape -- a few dozen to a hundred -- while
+    the yes/no questions number in the thousands. laya fits a type's scalar from
+    ten records up, and the lane's confidence is what the radar's "uncertain"
+    cut-off reads, so a fit over fifty points could move every lane on the wall.
+    """
+    temperature = list(base.get("temperature") or [1.0] * len(qtypes))
+    by_options: dict = {}
+    for name, index in qtypes.items():
+        source = fitted if counts.get(name, 0) >= min_n else base
+        temperature[index] = (source.get("temperature") or temperature)[index]
+        by_options.update({k: v for k, v in (source.get("temperature_by_options") or {}).items()
+                           if k.split(":")[0] == name})
+    return {"temperature": temperature, "temperature_by_options": by_options}

@@ -134,3 +134,24 @@ def test_what_the_story_cannot_decide_is_not_labelled(item):
     r = reading_of(undirected, summarize(undirected))
     assert truth("bridge", r) is True
     assert truth("bridge_out", r) is None and truth("bridge_in", r) is None
+
+
+def test_zero_is_its_own_bucket_not_dust(item):
+    # The story says "zero USDC", not "less than one cent of USDC (dust)".
+    zero = item(value=0)
+    r = reading_of(zero, summarize(zero))
+    assert truth("zero_amount", r) is True and truth("under_cent", r) is None
+    dust = item(value=4_000)
+    assert truth("under_cent", reading_of(dust, summarize(dust))) is True
+
+
+def test_two_sided_facts_are_never_asked_one_sided():
+    # The story says "deposited into or withdrawn from a vault" and "USDC was
+    # wrapped or unwrapped": it cannot back a question about one direction.
+    for p in phrasings():
+        t = p.text.lower()
+        if p.topic == "vault":
+            assert ("deposit" in t) == ("withdr" in t), p.text
+            assert ("yatır" in t) == ("çek" in t), p.text
+        if p.topic == "wrap":
+            assert " or " in t or " ya da " in t or "wrapped usdc" in t, p.text

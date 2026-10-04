@@ -12,9 +12,18 @@ stayed under budget for RESUME_AFTER seconds. The budget is twice the p95
 measured before training starts, never under FLOOR_MS.
 
 A model that does not answer counts as over budget: it is restarting, and a
-cold model is the worst time to compete with it. On any exit the trainer is
-continued before it is terminated, so a stopped process never outlives this
-one holding GPU memory.
+cold model is the worst time to compete with it. On any exit -- Ctrl-C, or
+SIGTERM/SIGHUP when the shell that started it goes away -- the trainer is
+continued before it is terminated (and killed if it will not go), so a stopped
+process never outlives this one holding GPU memory. A stopped process answers
+only SIGCONT and SIGKILL, so it would not see the hangup itself. Only SIGKILL
+of this supervisor cannot be cleaned up; then continue the trainer by hand:
+
+    pkill -CONT -f finetune.train && pkill -f finetune.train
+
+layad's p95 is over its last 512 requests, so after a pause the figure stays
+high until that window has turned over: expect pauses of a minute or more,
+not RESUME_AFTER.
 """
 from __future__ import annotations
 
@@ -64,6 +73,18 @@ class Pacer:
         return ""
 
 
+def exit_on_hangup() -> None:
+    """Make SIGTERM and SIGHUP unwind like Ctrl-C, so supervise()'s cleanup runs.
+
+    Python's default for both is to die on the spot, skipping every finally.
+    """
+    def leave(signum: int, _frame) -> None:
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, leave)
+
+
 def p95_from(url: str) -> Callable[[], Optional[float]]:
     def read() -> Optional[float]:
         try:
@@ -109,7 +130,11 @@ def supervise(cmd: list[str], *, read_p95: Callable[[], Optional[float]], log: C
         if child.poll() is None:
             signal_child(child.pid, signal.SIGCONT)
             child.terminate()
-            child.wait(timeout=30)
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=30)
     elapsed = clock() - started
     if paused_at is not None:
         paused_total += clock() - paused_at
@@ -131,6 +156,7 @@ def main() -> int:
     def log(line: str) -> None:
         print(f"{time.strftime('%H:%M:%S')} {line}", flush=True)
 
+    exit_on_hangup()
     return supervise(cmd, read_p95=p95_from(args.health), log=log, stdout=out)
 
 

@@ -15,7 +15,9 @@ What it does, and why each choice (the design record has the measurements):
   * options never shuffled -- the lane order is part of the measured question;
   * the epoch kept is the one with the lowest validation cross-entropy, and
     training stops after one epoch without improvement;
-  * temperatures fitted on validation and clamped to what MLX will serve.
+  * temperatures fitted on validation and clamped to what MLX will serve --
+    only for question types with MIN_REFIT validation records; the lane keeps
+    the base's (see trainlib.merge_temperatures).
 """
 from __future__ import annotations
 
@@ -28,11 +30,12 @@ from pathlib import Path
 
 os.environ.setdefault("USE_TF", "0")  # laya.load can deadlock when TensorFlow is importable (model card)
 
-from finetune.trainlib import Stop, clamp, improved, sha256_file, val_metrics  # noqa: E402
+from finetune.trainlib import Stop, clamp, improved, merge_temperatures, sha256_file, val_metrics  # noqa: E402
 
 BASE_REPO = "convaiinnovations/laya-multilingual"
 BASE_REVISION = "1720e3e3357cfe1e281542e223f8273b0890ca34"
 TRAINER = "laya PR #899 @ GuilhermeFusari/laya deb477dc85467c4198009271ebd7a5f07001131d"
+MIN_REFIT = 500  # validation records a question type needs before its temperature is refitted
 
 
 def freeze_embeddings(model) -> int:
@@ -45,7 +48,7 @@ def freeze_embeddings(model) -> int:
 def main() -> int:
     from huggingface_hub import snapshot_download
     from laya.calibrate import fit_temperature_map
-    from laya.common import TEMP_MAX, TEMP_MIN
+    from laya.common import QTYPES, TEMP_MAX, TEMP_MIN
     from laya.train import (TrainConfig, calibration_records, items_from_rows, load_checkpoint, read_jsonl,
                             resolve_device, save_checkpoint, train_model)
 
@@ -97,8 +100,11 @@ def main() -> int:
     best, best_tok, best_cfg = load_checkpoint(str(args.out / "best"))
     best.to(device).eval()
     fitted = fit_temperature_map(calibration_records(best, best_tok, val_items, device, max_len, head_max_len))
-    fitted = clamp({"temperature": fitted["temperature"],
-                    "temperature_by_options": fitted["temperature_by_options"] or {}}, TEMP_MIN, TEMP_MAX)
+    names = {index: name for name, index in QTYPES.items()}
+    counts: dict[str, int] = {}
+    for it in val_items:
+        counts[names[it["qtype"]]] = counts.get(names[it["qtype"]], 0) + 1
+    fitted = clamp(merge_temperatures(cfg, fitted, counts, QTYPES, MIN_REFIT), TEMP_MIN, TEMP_MAX)
     out_cfg = dict(best_cfg, fine_tuned=True, temperature=fitted["temperature"])
     out_cfg.pop("temperature_by_options", None)  # an inherited bucket map would mask the new fit at inference
     if fitted["temperature_by_options"]:
@@ -117,6 +123,7 @@ def main() -> int:
         "epochs": history,
         "kept_epoch": min(history, key=lambda h: h["ce"])["epoch"],
         "temperatures": fitted,
+        "refitted_types": sorted(n for n, c in counts.items() if c >= MIN_REFIT),
         "device": str(device),
         "seconds": round(time.time() - started),
     }
