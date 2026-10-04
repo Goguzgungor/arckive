@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Arckive — Daylight</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#f3eee6}
+a{color:#2f2a20;text-decoration:none}a:hover{color:#9c3f14}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.label{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#6b6252}
+.card{background:rgba(255,255,255,.42);border:1px solid rgba(47,42,32,.12);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.paper{background:rgba(255,255,255,.38);border:1px solid rgba(47,42,32,.12)}
+.chip{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;border:1px solid rgba(47,42,32,.32);border-radius:999px;padding:3px 10px;white-space:nowrap;color:#2f2a20}
+.chip.hot{background:#b33a12;border-color:#b33a12;color:#fff8f2}
+.grain{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.blk{font-family:"JetBrains Mono",monospace;font-size:10px;fill:rgba(255,246,238,.9);letter-spacing:.04em}
+.tag{font-family:"JetBrains Mono",monospace;font-size:11px;fill:#2f2a20;letter-spacing:.06em}
+code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.86em;color:#9c3f14}
+pre{margin:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px;line-height:1.7;color:#2f2a20;white-space:pre;overflow-x:auto}
+.k{color:#9c3f14}.c{color:#7d7464}.s{color:#4f3f86}
+table{border-collapse:collapse;width:100%}
+@media (max-width:760px){.navlinks{display:none !important}}
+</style>
+</helmet>
+<div style="--accent: {{accent}}; font-family: 'Instrument Serif', Georgia, serif; color: #2f2a20; background: #f3eee6; min-height: 100vh; overflow: hidden">
+
+<svg width="0" height="0" style="position: absolute" aria-hidden="true"><defs>
+<filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix></filter>
+<linearGradient id="far" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c9b2db"></stop><stop offset="1" stop-color="#e9c4cc"></stop></linearGradient>
+<linearGradient id="near" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a98fcb"></stop><stop offset="1" stop-color="#d9a9bd"></stop></linearGradient>
+<linearGradient id="field" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0b07c"></stop><stop offset="1" stop-color="#df7b45"></stop></linearGradient>
+<linearGradient id="block" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a4a"></stop><stop offset="1" stop-color="#cf4418"></stop></linearGradient>
+</defs></svg>
+
+<!-- ———————— HERO ———————— -->
+<header id="top" style="position: relative; min-height: 940px; display: flex; flex-direction: column; background: linear-gradient(180deg, #dfeaf0 0%, #eef0ec 34%, #f7e3d4 58%, #f3c9b4 72%)">
+<svg viewBox="0 0 1440 520" preserveAspectRatio="xMidYMax slice" style="position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 520px" aria-hidden="true">
+<polygon fill="url(#far)" points="0,190 120,100 210,130 330,50 430,85 560,10 640,60 760,25 880,70 990,0 1120,60 1230,30 1340,80 1440,50 1440,280 0,280"></polygon>
+<polygon fill="url(#near)" opacity=".9" points="0,240 90,180 180,205 300,140 420,200 520,160 640,215 780,170 900,220 1030,160 1160,215 1290,180 1440,225 1440,300 0,300"></polygon>
+<rect x="0" y="280" width="1440" height="240" fill="url(#field)"></rect>
+<path d="M0 352 Q 360 342 720 357 T 1440 350" stroke="#6f8f6a" stroke-width="12" fill="none" opacity=".45"></path>
+<path d="M0 410 Q 420 398 760 416 T 1440 408" stroke="#6f8f6a" stroke-width="9" fill="none" opacity=".35"></path>
+<path d="M0 470 Q 380 460 740 474 T 1440 468" stroke="#6f8f6a" stroke-width="7" fill="none" opacity=".28"></path>
+<path d="M724 520 C 712 470 700 410 716 330" stroke="#f6d6b8" stroke-width="22" fill="none" opacity=".6"></path>
+<rect x="662" y="300" width="120" height="32" fill="url(#block)"></rect>
+<text x="676" y="320" class="blk">#24,231,535</text>
+<rect x="674" y="268" width="120" height="32" fill="url(#block)" opacity=".95"></rect>
+<text x="688" y="288" class="blk">#24,231,536</text>
+<rect x="654" y="236" width="120" height="32" fill="url(#block)" opacity=".9"></rect>
+<text x="668" y="256" class="blk">#24,231,537</text>
+<rect x="668" y="204" width="120" height="32" fill="url(#block)" opacity=".84"></rect>
+<text x="682" y="224" class="blk">#24,231,538</text>
+<rect x="660" y="172" width="120" height="32" fill="url(#block)" opacity=".78"></rect>
+<text x="674" y="192" class="blk">#24,231,539</text>
+<rect x="672" y="140" width="120" height="32" fill="url(#block)" opacity=".7"></rect>
+<text x="686" y="160" class="blk">#24,231,540</text>
+<line x1="732" y1="140" x2="732" y2="112" stroke="#2f2a20" stroke-width="1"></line>
+<rect x="680" y="88" width="104" height="22" rx="11" fill="rgba(255,255,255,.6)" stroke="rgba(47,42,32,.35)"></rect>
+<text x="732" y="103" text-anchor="middle" class="tag">HEAD · LIVE</text>
+<circle cx="709" cy="430" r="4" fill="#2f2a20"></circle>
+<line x1="709" y1="430" x2="640" y2="430" stroke="#2f2a20" stroke-width="1"></line>
+<rect x="566" y="419" width="74" height="22" rx="11" fill="rgba(255,255,255,.6)" stroke="rgba(47,42,32,.35)"></rect>
+<text x="603" y="434" text-anchor="middle" class="tag">_cursor</text>
+</svg>
+<svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)" opacity=".2"></rect></svg>
+
+<div style="position: relative; display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: clamp(24px, 4vw, 56px) clamp(20px, 5.8vw, 84px) 0; flex-wrap: wrap">
+<a href="#top" style="display: flex; align-items: center; gap: 14px"><svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22" fill="none" stroke="rgba(47,42,32,.25)" stroke-width="6"></circle><path d="M32 10 A22 22 0 0 1 51 21" fill="none" stroke="{{accent}}" stroke-width="6" stroke-linecap="round"></path><circle cx="51" cy="21" r="5" fill="#2f2a20"></circle></svg><span style="font-size: 34px; letter-spacing: .02em; text-transform: uppercase">Arckive</span></a>
+<nav class="navlinks" style="display: flex; gap: clamp(20px, 3vw, 48px); font-size: 21px; text-transform: uppercase; flex-wrap: wrap">
+<a href="#how">How it works</a>
+<a href="#insights">Insights</a>
+<a href="#benchmarks">Benchmarks</a>
+<a href="https://radar.arckive.org">Arc Radar</a>
+<a href="https://github.com/Goguzgungor/arckive">GitHub</a>
+</nav>
+</div>
+
+<div style="position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 40px; padding: clamp(40px, 6vw, 88px) clamp(20px, 5.8vw, 84px) 0; flex-wrap: wrap">
+<div style="max-width: 760px; display: flex; flex-direction: column; gap: 26px">
+<p class="label" style="margin: 0">Event indexer for Arc · v1alpha1 · Apache-2.0</p>
+<h1 style="margin: 0; font-weight: 400; font-size: clamp(52px, 7.4vw, 112px); line-height: .98; letter-spacing: -.01em">Your chain events,<br><em>in your own Postgres.</em></h1>
+<p style="margin: 0; max-width: 560px; font-size: 24px; line-height: 1.3; color: #4a4336">A Kubernetes-native indexer for Arc. Declare one manifest; an operator keeps a worker streaming every event into the database you already run.</p>
+<div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center">
+<a href="#start" class="mono" style="background: #2f2a20; color: #fbf6ee; padding: 15px 24px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase">Get started</a>
+<a href="#how" class="mono" style="padding: 15px 4px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; border-bottom: 1px solid rgba(47,42,32,.45)">See the manifest</a>
+</div>
+</div>
+<div style="display: flex; gap: 10px; flex-wrap: wrap">
+<div class="card" style="width: 250px; min-height: 230px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 24px">
+<p style="margin: 0; font-size: 19px; line-height: 1.3; color: #4a4336">One typed table per event, committed together with its checkpoint.</p>
+<p style="margin: 0; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 56px; line-height: 1">395 ms</span><span class="label">block → SQL, p50</span></p>
+</div>
+<div class="card" style="width: 250px; min-height: 230px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 24px">
+<p style="margin: 0; font-size: 19px; line-height: 1.3; color: #4a4336">New: every event says what it was part of — a swap, a bridge, a payment.</p>
+<p style="margin: 0; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 56px; line-height: 1">0.22 s</span><span class="label">lanes behind ingest</span></p>
+</div>
+</div>
+</div>
+</header>
+
+<!-- ———————— HOW IT WORKS ———————— -->
+<section id="how" style="position: relative; max-width: 1360px; margin: 0 auto; padding: clamp(88px, 10vw, 150px) clamp(20px, 3.4vw, 48px) 40px">
+<div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; flex-wrap: wrap; margin-bottom: 56px; border-bottom: 1px solid rgba(47,42,32,.18); padding-bottom: 32px">
+<div><p class="label" style="margin: 0 0 18px">01 — How it works</p>
+<h2 style="margin: 0; font-weight: 400; font-size: clamp(42px, 5.4vw, 80px); line-height: 1; letter-spacing: -.01em">Declare it. <em>The operator does the rest.</em></h2></div>
+<p style="margin: 0; max-width: 380px; font-size: 21px; line-height: 1.35; color: #4a4336">One <code>Indexer</code> resource describes what you want. An operator turns it into a running worker and keeps it that way.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px">
+<article class="paper" style="padding: 28px; display: flex; flex-direction: column; gap: 16px">
+<p class="label" style="margin: 0; color: #9c3f14">Step 01</p>
+<h3 style="margin: 0; font-weight: 400; font-size: 34px; line-height: 1">Write one manifest</h3>
+<p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">Network, Postgres, contracts. That is the whole setup.</p>
+<pre style="background: rgba(47,42,32,.05); padding: 18px; border: 1px solid rgba(47,42,32,.08)"><span class="k">kind</span>: Indexer
+<span class="k">metadata</span>: { <span class="k">name</span>: usdc-arc }
+<span class="k">spec</span>:
+  <span class="k">network</span>: { <span class="k">chainId</span>: 5042002 }
+  <span class="k">contracts</span>:
+    - <span class="k">name</span>: usdc
+      <span class="k">address</span>: <span class="s">"0x3600…0000"</span>
+      <span class="k">events</span>: [Transfer]</pre>
+</article>
+<article class="paper" style="padding: 28px; display: flex; flex-direction: column; gap: 16px">
+<p class="label" style="margin: 0; color: #9c3f14">Step 02</p>
+<h3 style="margin: 0; font-weight: 400; font-size: 34px; line-height: 1">The operator provisions</h3>
+<p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">A reconcile loop turns the spec into running parts, and heals them.</p>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div class="mono" style="border: 1px solid rgba(47,42,32,.18); padding: 14px 16px; font-size: 13px">Indexer CR — one YAML</div>
+<div class="mono" style="font-size: 12px; color: #7d7464; padding-left: 16px">↓ reconciles</div>
+<div class="mono" style="padding: 14px 16px; font-size: 13px; background: #b33a12; color: #fff8f2">Arckive operator</div>
+<div class="mono" style="font-size: 12px; color: #7d7464; padding-left: 16px">↓ provisions</div>
+<div class="mono" style="border: 1px solid rgba(47,42,32,.18); padding: 14px 16px; font-size: 13px">worker · schema · status</div>
+</div>
+</article>
+<article class="paper" style="padding: 28px; display: flex; flex-direction: column; gap: 16px">
+<p class="label" style="margin: 0; color: #9c3f14">Step 03</p>
+<h3 style="margin: 0; font-weight: 400; font-size: 34px; line-height: 1">Query plain SQL</h3>
+<p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">Each event is a table in your Postgres. No API between you and your rows.</p>
+<pre style="background: rgba(47,42,32,.05); padding: 18px; border: 1px solid rgba(47,42,32,.08)"><span class="c">-- one table per event</span>
+<span class="k">SELECT</span> "from", "to", value
+<span class="k">FROM</span> idx_usdc_arc.usdc_transfer
+<span class="k">WHERE</span> value &gt; 1000000000
+<span class="k">ORDER BY</span> block_number <span class="k">DESC</span>;</pre>
+</article>
+</div>
+</section>
+
+<!-- ———————— INSIGHTS ———————— -->
+<section id="insights" style="position: relative; margin-top: clamp(88px, 10vw, 150px); overflow: hidden; background: linear-gradient(180deg, #e7e2ef 0%, #efe4ec 40%, #f6e3d6 100%)">
+<svg viewBox="0 0 1440 200" preserveAspectRatio="xMidYMax slice" style="position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 200px; opacity: .55" aria-hidden="true"><polygon fill="url(#far)" points="0,120 140,60 260,95 400,30 520,80 660,20 780,70 920,35 1060,90 1200,40 1320,85 1440,55 1440,200 0,200"></polygon></svg>
+<svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)" opacity=".18"></rect></svg>
+<div style="position: relative; max-width: 1360px; margin: 0 auto; padding: clamp(72px, 8vw, 120px) clamp(20px, 3.4vw, 48px) clamp(120px, 12vw, 200px); display: flex; gap: clamp(32px, 4vw, 72px); flex-wrap: wrap; align-items: flex-start">
+<div style="flex: 1 1 360px; max-width: 500px; display: flex; flex-direction: column; gap: 22px">
+<p class="label" style="margin: 0; color: #9c3f14">02 — Insights · new</p>
+<h2 style="margin: 0; font-weight: 400; font-size: clamp(42px, 5vw, 76px); line-height: 1; letter-spacing: -.01em">Every event knows <em>what it was part of.</em></h2>
+<p style="margin: 0; font-size: 21px; line-height: 1.38; color: #4a4336">Turn on <code>insights</code> and each row gets a lane — the kind of transaction it belonged to — and the protocol that handled it. The same engine as Arc Radar, for any contract you index. A URL and a header is the whole configuration.</p>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<span class="chip hot">swap</span><span class="chip">bridge</span><span class="chip">liquidity</span><span class="chip">vault</span><span class="chip">lending</span><span class="chip">signed_payment</span><span class="chip">payment</span><span class="chip">no_transfer</span>
+</div>
+<p class="mono" style="margin: 0; font-size: 12px; color: #6b6252; letter-spacing: .04em">Ingest never waits for it · lanes run in their own loop</p>
+</div>
+<div style="flex: 2 1 560px; min-width: 0">
+<div class="card" style="background: rgba(255,255,255,.55)">
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(47,42,32,.12); flex-wrap: wrap">
+<span class="mono" style="font-size: 12px; color: #4a4336">idx_arc._insights</span>
+<span class="mono" style="font-size: 12px; color: #6b6252">sample output</span>
+</div>
+<div style="overflow-x: auto">
+<table class="mono" style="font-size: 13px; min-width: 560px">
+<thead><tr style="text-align: left; color: #6b6252"><th style="padding: 12px 18px; font-weight: 400">event</th><th style="padding: 12px 18px; font-weight: 400">lane</th><th style="padding: 12px 18px; font-weight: 400; text-align: right">lane_p</th><th style="padding: 12px 18px; font-weight: 400">protocol</th></tr></thead>
+<tbody>
+<tr style="border-top: 1px solid rgba(47,42,32,.08)"><td style="padding: 12px 18px">pool_manager.Swap</td><td style="padding: 12px 18px"><span class="chip hot">swap</span></td><td style="padding: 12px 18px; text-align: right">0.97</td><td style="padding: 12px 18px; color: #4a4336">Uniswap</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.08)"><td style="padding: 12px 18px">usdc.Transfer</td><td style="padding: 12px 18px"><span class="chip">bridge</span></td><td style="padding: 12px 18px; text-align: right">0.97</td><td style="padding: 12px 18px; color: #4a4336">Relay</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.08)"><td style="padding: 12px 18px">positions.IncreaseLiquidity</td><td style="padding: 12px 18px"><span class="chip">liquidity</span></td><td style="padding: 12px 18px; text-align: right">0.98</td><td style="padding: 12px 18px; color: #4a4336">Aerodrome</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.08)"><td style="padding: 12px 18px">usdc.Transfer</td><td style="padding: 12px 18px"><span class="chip">signed_payment</span></td><td style="padding: 12px 18px; text-align: right">0.99</td><td style="padding: 12px 18px; color: #4a4336">usdc</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.08)"><td style="padding: 12px 18px">permit2.Approval</td><td style="padding: 12px 18px"><span class="chip">no_transfer</span></td><td style="padding: 12px 18px; text-align: right; color: #6b6252">rule</td><td style="padding: 12px 18px; color: #4a4336">permit2</td></tr>
+</tbody>
+</table>
+</div>
+<pre style="padding: 16px 18px; border-top: 1px solid rgba(47,42,32,.12); font-size: 12.5px"><span class="k">SELECT</span> t.value, i.lane, i.protocol
+<span class="k">FROM</span> usdc_transfer t <span class="k">JOIN</span> _insights i <span class="k">USING</span> (block_number, tx_hash, log_index)
+<span class="k">WHERE</span> i.lane = <span class="s">'bridge'</span>;</pre>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ———————— RELIABILITY ———————— -->
+<section id="reliability" style="max-width: 1360px; margin: 0 auto; padding: clamp(88px, 10vw, 150px) clamp(20px, 3.4vw, 48px) 40px">
+<p class="label" style="margin: 0 0 18px">03 — Reliability</p>
+<h2 style="margin: 0 0 56px; font-weight: 400; font-size: clamp(42px, 5.4vw, 80px); line-height: 1; letter-spacing: -.01em; max-width: 960px">Even if the network blips, <em>no event is lost.</em></h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border-top: 1px solid rgba(47,42,32,.22)">
+<div style="padding: 28px 28px 28px 0; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 12px"><span class="mono" style="font-size: 12px; color: #9c3f14">/01</span><h3 style="margin: 0; font-weight: 400; font-size: 30px; line-height: 1.05">Cursor and checkpoint</h3><p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">The last processed block lives in Postgres. After any crash it resumes exactly there.</p></div>
+<div style="padding: 28px; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 12px"><span class="mono" style="font-size: 12px; color: #9c3f14">/02</span><h3 style="margin: 0; font-weight: 400; font-size: 30px; line-height: 1.05">One transaction</h3><p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">Event rows and the cursor advance commit together — everything, or nothing.</p></div>
+<div style="padding: 28px; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 12px"><span class="mono" style="font-size: 12px; color: #9c3f14">/03</span><h3 style="margin: 0; font-weight: 400; font-size: 30px; line-height: 1.05">Built on Arc's finality</h3><p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">Indexes to the <code>finalized</code> tag. Finalized blocks never roll back, so there is no rollback code at all.</p></div>
+<div style="padding: 28px; display: flex; flex-direction: column; gap: 12px"><span class="mono" style="font-size: 12px; color: #9c3f14">/04</span><h3 style="margin: 0; font-weight: 400; font-size: 30px; line-height: 1.05">RPC failover</h3><p style="margin: 0; font-size: 19px; line-height: 1.35; color: #4a4336">Endpoints are health-checked and kept in a fixed order. A blip never becomes a gap.</p></div>
+</div>
+</section>
+
+<!-- ———————— BENCHMARKS ———————— -->
+<section id="benchmarks" style="max-width: 1360px; margin: 0 auto; padding: clamp(88px, 10vw, 150px) clamp(20px, 3.4vw, 48px) 40px">
+<div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; flex-wrap: wrap; margin-bottom: 48px">
+<div><p class="label" style="margin: 0 0 18px">04 — Benchmarks</p>
+<h2 style="margin: 0; font-weight: 400; font-size: clamp(42px, 5.4vw, 80px); line-height: 1; letter-spacing: -.01em">Measured, <em>not promised.</em></h2></div>
+<p style="margin: 0; max-width: 420px; font-size: 20px; line-height: 1.35; color: #4a4336">Every number is read from the product's own output — Postgres rows and <code>/metrics</code>. Reproduce it with <code>pnpm bench</code>. <a href="https://arckive.org/benchmarks.html" style="border-bottom: 1px solid rgba(47,42,32,.45)">Full report</a></p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); border-top: 1px solid rgba(47,42,32,.22)">
+<div style="padding: 28px 24px 28px 0; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 14px"><span class="label">block → SQL, p50</span><p style="margin: 0; font-size: clamp(64px, 6.4vw, 96px); line-height: .95">395<span style="font-size: .4em"> ms</span></p><span style="font-size: 18px; line-height: 1.35; color: #4a4336">Arc testnet, live USDC traffic. p99 under one second.</span></div>
+<div style="padding: 28px 24px; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 14px"><span class="label">backfill</span><p style="margin: 0; font-size: clamp(64px, 6.4vw, 96px); line-height: .95">92.6<span style="font-size: .4em"> blocks/s</span></p><span style="font-size: 18px; line-height: 1.35; color: #4a4336">5,107 blocks of history in 55 s — about 48× faster than the chain.</span></div>
+<div style="padding: 28px 24px; border-right: 1px solid rgba(47,42,32,.12); display: flex; flex-direction: column; gap: 14px"><span class="label">burst ingest</span><p style="margin: 0; font-size: clamp(64px, 6.4vw, 96px); line-height: .95">2,628<span style="font-size: .4em"> ev/s</span></p><span style="font-size: 18px; line-height: 1.35; color: #4a4336">The decode and single-transaction write ceiling.</span></div>
+<div style="padding: 28px 24px; display: flex; flex-direction: column; gap: 14px"><span class="label" style="color: #9c3f14">insights · new</span><p style="margin: 0; font-size: clamp(64px, 6.4vw, 96px); line-height: .95">0.22<span style="font-size: .4em"> s</span></p><span style="font-size: 18px; line-height: 1.35; color: #4a4336">Median lane delay behind ingest — Arc mainnet, four contracts.</span></div>
+</div>
+</section>
+
+<!-- ———————— ARC RADAR ———————— -->
+<section id="radar" style="max-width: 1360px; margin: 0 auto; padding: clamp(88px, 10vw, 150px) clamp(20px, 3.4vw, 48px) 40px">
+<div style="position: relative; overflow: hidden; min-height: 420px; padding: clamp(28px, 4.4vw, 64px); display: flex; flex-direction: column; justify-content: flex-start; background: linear-gradient(180deg, #f7e3d4 0%, #f3c9b4 48%, #eba07a 100%)">
+<svg viewBox="0 0 1360 220" preserveAspectRatio="xMidYMax slice" style="position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 220px" aria-hidden="true">
+<polygon fill="url(#far)" points="0,110 130,40 240,80 380,10 500,60 640,0 760,55 900,20 1040,70 1180,25 1300,75 1360,50 1360,220 0,220"></polygon>
+<polygon fill="url(#near)" opacity=".9" points="0,150 110,100 220,125 360,80 480,130 600,95 740,140 880,100 1010,145 1150,105 1280,140 1360,120 1360,220 0,220"></polygon>
+<rect x="0" y="180" width="1360" height="40" fill="url(#field)"></rect>
+</svg>
+<svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)" opacity=".22"></rect></svg>
+<div style="position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; flex-wrap: wrap">
+<div style="max-width: 760px">
+<p class="label" style="margin: 0 0 18px; color: #4a4336">Live on Arc mainnet</p>
+<h2 style="margin: 0 0 16px; font-weight: 400; font-size: clamp(40px, 5vw, 72px); line-height: 1">Arc Radar — <em>every USDC transfer, sorted as it lands.</em></h2>
+<p style="margin: 0; font-size: 22px; line-height: 1.35; color: #4a4336">Swap, bridge, liquidity, payment. Ask the stream a yes/no question and watch it re-sort.</p>
+</div>
+<a href="https://radar.arckive.org" class="mono" style="background: #2f2a20; color: #fbf6ee; padding: 15px 24px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase">Open Arc Radar →</a>
+</div>
+</div>
+</section>
+
+<!-- ———————— COMPARE ———————— -->
+<section id="compare" style="max-width: 1360px; margin: 0 auto; padding: clamp(88px, 10vw, 150px) clamp(20px, 3.4vw, 48px) 40px">
+<p class="label" style="margin: 0 0 18px">05 — Compare</p>
+<h2 style="margin: 0 0 48px; font-weight: 400; font-size: clamp(42px, 5.4vw, 80px); line-height: 1; letter-spacing: -.01em">A combination <em>nobody else offers.</em></h2>
+<div style="overflow-x: auto">
+<table style="min-width: 760px; font-size: 20px">
+<thead><tr class="label" style="text-align: left"><th style="padding: 16px 0; font-weight: 400"></th><th style="padding: 16px; font-weight: 400">Dune</th><th style="padding: 16px; font-weight: 400">The Graph</th><th style="padding: 16px; font-weight: 400">Raw RPC</th><th style="padding: 16px; font-weight: 500; color: #9c3f14">Arckive</th></tr></thead>
+<tbody>
+<tr style="border-top: 1px solid rgba(47,42,32,.18)"><td style="padding: 18px 0">Data in your own database</td><td style="padding: 18px 16px; color: #6b6252">No</td><td style="padding: 18px 16px; color: #6b6252">Via graph-node</td><td style="padding: 18px 16px; color: #6b6252">If you build it</td><td style="padding: 18px 16px">Yes</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.18)"><td style="padding: 18px 0">Plain SQL access</td><td style="padding: 18px 16px; color: #6b6252">Dune SQL only</td><td style="padding: 18px 16px; color: #6b6252">GraphQL</td><td style="padding: 18px 16px; color: #6b6252">Raw JSON</td><td style="padding: 18px 16px">Yes</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.18)"><td style="padding: 18px 0">Reorgs and gaps</td><td style="padding: 18px 16px; color: #6b6252">Theirs</td><td style="padding: 18px 16px; color: #6b6252">Yes</td><td style="padding: 18px 16px; color: #6b6252">On you</td><td style="padding: 18px 16px">No reorgs on Arc · gap-free cursor</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.18)"><td style="padding: 18px 0">What each event was part of</td><td style="padding: 18px 16px; color: #6b6252">Write the SQL</td><td style="padding: 18px 16px; color: #6b6252">Write the mapping</td><td style="padding: 18px 16px; color: #6b6252">On you</td><td style="padding: 18px 16px">Built in · Insights</td></tr>
+<tr style="border-top: 1px solid rgba(47,42,32,.18); border-bottom: 1px solid rgba(47,42,32,.18)"><td style="padding: 18px 0">Setup</td><td style="padding: 18px 16px; color: #6b6252">Low</td><td style="padding: 18px 16px; color: #6b6252">Medium–high</td><td style="padding: 18px 16px; color: #6b6252">High</td><td style="padding: 18px 16px">One YAML</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ———————— GET STARTED ———————— -->
+<section id="start" style="max-width: 1360px; margin: 0 auto; padding: clamp(110px, 12vw, 190px) clamp(20px, 3.4vw, 48px) clamp(90px, 10vw, 150px); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 28px">
+<p class="label" style="margin: 0">Get started</p>
+<h2 style="margin: 0; font-weight: 400; font-size: clamp(52px, 7vw, 108px); line-height: .98; letter-spacing: -.01em">One YAML. <em>A running indexer.</em></h2>
+<div class="paper" style="display: flex; align-items: center; gap: 16px; padding: 10px 10px 10px 22px; max-width: 100%; flex-wrap: wrap; justify-content: center">
+<span class="mono" style="font-size: 15px; overflow-wrap: anywhere">kubectl apply -f https://arckive.org/install.yaml</span>
+<button type="button" class="mono" style="background: #2f2a20; color: #fbf6ee; border: 0; padding: 12px 20px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; cursor: pointer">Copy</button>
+</div>
+<p class="mono" style="margin: 0; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #6b6252">Runs in your cluster · your data never leaves it</p>
+</section>
+
+<!-- ———————— FOOTER (Daylight) ———————— -->
+<footer style="position: relative; overflow: hidden; min-height: 820px; background: linear-gradient(180deg, #dfeaf0 0%, #eef0ec 30%, #f7e3d4 52%, #f3c9b4 64%)">
+<svg viewBox="0 0 1440 820" preserveAspectRatio="xMidYMax slice" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<polygon fill="url(#far)" points="0,560 120,470 210,500 330,420 430,455 560,380 640,430 760,395 880,440 990,370 1120,430 1230,400 1340,450 1440,420 1440,640 0,640"></polygon>
+<polygon fill="url(#near)" opacity=".9" points="0,600 90,540 180,565 300,500 420,560 520,520 640,575 780,530 900,580 1030,520 1160,575 1290,540 1440,585 1440,660 0,660"></polygon>
+<rect x="0" y="640" width="1440" height="180" fill="url(#field)"></rect>
+<path d="M0 700 Q 360 690 720 705 T 1440 698" stroke="#6f8f6a" stroke-width="10" fill="none" opacity=".45"></path>
+<path d="M0 742 Q 420 730 760 748 T 1440 740" stroke="#6f8f6a" stroke-width="7" fill="none" opacity=".35"></path>
+<path d="M720 820 C 712 760 700 700 716 650" stroke="#f6d6b8" stroke-width="18" fill="none" opacity=".55"></path>
+<rect x="690" y="610" width="60" height="22" fill="url(#block)"></rect>
+<rect x="698" y="588" width="60" height="22" fill="url(#block)" opacity=".92"></rect>
+<rect x="684" y="566" width="60" height="22" fill="url(#block)" opacity=".84"></rect>
+<rect x="694" y="544" width="60" height="22" fill="url(#block)" opacity=".76"></rect>
+<rect x="702" y="522" width="60" height="22" fill="url(#block)" opacity=".66"></rect>
+</svg>
+<svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)" opacity=".22"></rect></svg>
+<div style="position: relative; display: flex; justify-content: space-between; gap: 48px; padding: clamp(64px, 7vw, 104px) clamp(20px, 5.8vw, 84px) 0; flex-wrap: wrap">
+<div style="display: flex; flex-direction: column; gap: 22px; max-width: 520px">
+<a href="#top" style="display: flex; align-items: center; gap: 14px"><svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22" fill="none" stroke="rgba(47,42,32,.25)" stroke-width="6"></circle><path d="M32 10 A22 22 0 0 1 51 21" fill="none" stroke="{{accent}}" stroke-width="6" stroke-linecap="round"></path><circle cx="51" cy="21" r="5" fill="#2f2a20"></circle></svg><span style="font-size: 40px; letter-spacing: .02em; text-transform: uppercase">Arckive</span></a>
+<p style="margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.1">Your chain events, in your own Postgres.<br>Built for Arc · runs in your cluster.</p>
+<p style="margin: 24px 0 0; font-size: 19px">© 2026 Arckive · Apache-2.0</p>
+</div>
+<div style="display: flex; gap: clamp(40px, 8vw, 120px); flex-wrap: wrap">
+<div style="display: flex; flex-direction: column; gap: 10px"><span style="font-size: 34px; text-transform: uppercase; margin-bottom: 8px">Product</span><a href="#how" style="font-size: 24px">How it works</a><a href="#insights" style="font-size: 24px">Insights</a><a href="#benchmarks" style="font-size: 24px">Benchmarks</a><a href="https://radar.arckive.org" style="font-size: 24px">Arc Radar</a></div>
+<div style="display: flex; flex-direction: column; gap: 10px"><span style="font-size: 34px; text-transform: uppercase; margin-bottom: 8px">Docs</span><a href="https://github.com/Goguzgungor/arckive#readme" style="font-size: 24px">Quickstart</a><a href="https://arckive.org/install.yaml" style="font-size: 24px">install.yaml</a><a href="https://arckive.org/demo.yaml" style="font-size: 24px">demo.yaml</a><a href="https://arckive.org/benchmarks.html" style="font-size: 24px">Report</a></div>
+<div style="display: flex; flex-direction: column; gap: 10px"><span style="font-size: 34px; text-transform: uppercase; margin-bottom: 8px">Project</span><a href="https://github.com/Goguzgungor/arckive" style="font-size: 24px">GitHub</a><a href="https://github.com/Goguzgungor/arckive/issues" style="font-size: 24px">Issues</a><a href="https://github.com/Goguzgungor/arckive/blob/main/LICENSE" style="font-size: 24px">License</a></div>
+</div>
+</div>
+</footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#d4451a","options":["#d4451a","#b33a12","#e8925e","#7a5fb0"]},"$preview":{"width":1440,"height":6000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#d4451a' };
+  }
+}
+</script>
+</body>
+</html>
