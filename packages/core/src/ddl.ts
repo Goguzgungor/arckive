@@ -103,3 +103,34 @@ export function buildControlTables(schema: string): string[] {
 )`,
   ];
 }
+
+// Insights live beside the event tables, never in them: event tables keep
+// their hot-path shape, and "not classified yet" is simply "no row". Keyed
+// like the event rows, so any event table joins on (block_number, tx_hash,
+// log_index).
+export function buildInsightsTables(schema: string): string[] {
+  return [
+    `CREATE TABLE IF NOT EXISTS ${q(schema)}.${q('_insights')} (
+  block_number bigint NOT NULL,
+  tx_hash text NOT NULL,
+  log_index integer NOT NULL,
+  table_name text NOT NULL,
+  lane text NOT NULL,
+  lane_p real,
+  ruled boolean NOT NULL,
+  protocol text NOT NULL,
+  facts jsonb NOT NULL,
+  probabilities jsonb,
+  sentence text NOT NULL,
+  model text,
+  classified_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (block_number, tx_hash, log_index)
+)`,
+    `CREATE INDEX IF NOT EXISTS ${q('_insights_lane_idx')} ON ${q(schema)}.${q('_insights')} (lane)`,
+    `CREATE TABLE IF NOT EXISTS ${q(schema)}.${q('_insights_cursor')} (
+  id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  last_block bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+)`,
+  ];
+}

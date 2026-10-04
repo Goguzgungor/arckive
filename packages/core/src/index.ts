@@ -1,10 +1,11 @@
 export { NamingError, eventTableName, schemaName, toSnakeCase } from './naming.js';
-export { AbiError, extractEventDefs, type EventDef } from './abi.js';
+export { AbiError, extractEventDefs, extractFunctionNames, type EventDef } from './abi.js';
 export {
   COMMON_COLUMNS,
   DdlError,
   buildControlTables,
   buildEventTable,
+  buildInsightsTables,
   eventColumns,
   pgTypeFor,
   type EventColumn,
@@ -54,3 +55,11 @@ export {
   type TokenInfo,
   type TransferFields,
 } from './insights/sentence.js';
+export {
+  LANES,
+  LANE_QUESTION,
+  UNCERTAIN_BELOW,
+  settleLane,
+  type LaneAnswer,
+  type SettledLane,
+} from './insights/lanes.js';

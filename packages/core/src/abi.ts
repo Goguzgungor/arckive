@@ -1,4 +1,4 @@
-import { toEventSelector, type AbiEvent } from 'viem';
+import { toEventSelector, toFunctionSelector, type AbiEvent, type AbiFunction } from 'viem';
 import { eventTableName } from './naming.js';
 
 export class AbiError extends Error {}
@@ -46,4 +46,17 @@ export function extractEventDefs(
       tableName: eventTableName(contractName, event.name, overloaded ? topic0 : undefined),
     };
   });
+}
+
+// selector -> function name, so an insight can say which function of an
+// indexed contract a transaction called.
+export function extractFunctionNames(abi: unknown): Map<string, string> {
+  if (!Array.isArray(abi)) throw new AbiError('ABI must be a JSON array');
+  const names = new Map<string, string>();
+  for (const entry of abi) {
+    if ((entry as { type?: string } | null)?.type !== 'function') continue;
+    const fn = entry as AbiFunction;
+    names.set(toFunctionSelector(fn), fn.name);
+  }
+  return names;
 }
