@@ -99,7 +99,7 @@ An MLX fp16 twin for Apple silicon (layad) is at [{_repo(info, '-mlx')}](https:/
 
 A fine-tune of [{BASE}](https://huggingface.co/{BASE}) (322M parameters), the base Laya decision model, at revision `{BASE_REVISION[:8]}`. It is tuned to read the sentences [Arc Radar]({RADAR}) writes about USDC transfers on Arc, Circle's stablecoin chain. Each transfer gets one of eight lanes and answers to yes/no questions that viewers ask about it.
 
-On a benchmark of {b['total']} English questions over {b['transfers']:,} live transfers, the fine-tune raises balanced accuracy from **{b['summary']['all']['base_bal']:.3f} to {b['summary']['all']['ft_bal']:.3f}**. It does better than the base on {b['better']} of {b['summary']['all']['n']} questions and worse on {b['worse']}. An independent on-chain audit of the transfers where the two models disagree found our labels right in **{a['label_ok']} of {a['n']}** cases, the fine-tune right in {a['ft_ok']} of {a['n']} and the base right in {a['base_ok']} of {a['n']}.
+On a benchmark of {b['total']} English questions over {b['transfers']:,} live transfers, the fine-tune raises balanced accuracy from **{b['summary']['all']['base_bal']:.3f} to {b['summary']['all']['ft_bal']:.3f}**. It does better than the base on {b['better']} of {b['summary']['all']['n']} questions and worse on {b['worse']}. An independent auditor checked {a['n']} transfers on chain, drawn from those where the base and an earlier fine-tune ({a.get('drawn_from', 'run 3')}) disagreed. It found our labels right in **{a['label_ok']} of {a['n']}**, this model right in {a['ft_ok']} of {a['n']} and the base right in {a['base_ok']} of {a['n']}.
 
 ## Usage
 
