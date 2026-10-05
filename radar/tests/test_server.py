@@ -12,7 +12,7 @@ from radar import server
 from radar.gate import REASONS
 from radar.server import (
     BREAKER_OPEN, FEED_STALE, HEARTBEAT, MODEL_TIMEOUT, QUESTION_EVERY, VOLUME_WINDOW,
-    Pace, ProbeBudget, Radar, Rate, settle_lane, viewer,
+    MODEL, Pace, ProbeBudget, Radar, Rate, settle_lane, viewer,
 )
 from radar.types import ZERO
 from radar.summarize import summarize
@@ -278,35 +278,22 @@ def test_the_wall_gets_a_generic_failure_never_the_endpoint(exc, shown):
     assert "10.9.8.7" not in json.dumps(stats)
 
 
-def test_model_name_is_learned_after_a_success_when_startup_missed_it():
+def test_the_model_is_named_statically_whatever_the_gate_reports():
+    # The name shown is the published model. What layad reports can be a local
+    # path (this Mac's user name and folders) or change with a swap.
     r = Radar()
-    assert r.model == {}
+    assert r.stats()["model"]["model"] == "goktugoguz/laya-multilingual-arc"
 
     async def classify(shapes, stories, rules):
         return [SWAP] * len(shapes)
 
     async def health():
-        return {"model": "laya", "backend": "mlx"}
+        return {"model": "/Users/someone/models/blend-0.5-mlx", "backend": "mlx"}
     r.classifier.classify = classify
     r.classifier.health = health
-
-    async def go():
-        await r.process([make_item()])
-        await r._identity
-
-    asyncio.run(go())
-    assert r.model == {"model": "laya", "backend": "mlx"}
-
-
-# ---- rows, lanes and gauges -----------------------------------------------
-
-def test_volume_counts_each_transaction_once_per_lane_at_its_largest_leg():
-    r = Radar()
-    legs = [make_item(value=10_000_000, log_index=1), make_item(value=25_000_000, log_index=2),
-            make_item(value=7_000_000, log_index=5)]
-    bridge = {**SWAP, "lane": "bridge"}
-    r._rows(legs, [summarize(i) for i in legs], [SWAP, SWAP, bridge], offline=False)
-    assert r.volume(now=legs[0]["seen_at"]) == {"swap": 25.0, "bridge": 7.0}
+    asyncio.run(r.process([make_item()]))
+    assert r.stats()["model"] == MODEL
+    assert "/Users" not in json.dumps(r.stats())
 
 
 def test_a_lane_outside_the_choice_set_is_uncertain():

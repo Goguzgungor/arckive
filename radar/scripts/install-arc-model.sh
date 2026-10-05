@@ -5,11 +5,19 @@
 # are left exactly as they are. Safe to run again: it refreshes the gate's
 # copy of the radar and reloads both agents.
 #
-#   ./scripts/install-arc-model.sh "$HOME/Library/Application Support/arc-radar/finetune/models/<run>/final-mlx"
+#   ./scripts/install-arc-model.sh goktugoguz/laya-multilingual-arc-mlx
 set -euo pipefail
 
-MODEL="${1:?usage: install-arc-model.sh /abs/path/to/model-dir}"
-[ -f "$MODEL/rl_agent_config.json" ] || { echo "no checkpoint at $MODEL" >&2; exit 1; }
+MODEL="${1:?usage: install-arc-model.sh <mlx-model-dir | hf-repo-id>}"
+# A Hugging Face repo id (goktugoguz/laya-multilingual-arc-mlx) is preferred:
+# layad reports it as the model's name, and the radar shows that name in
+# /api/stats -- a local path would publish this Mac's user name and folders.
+# A local directory still works, and must be an MLX conversion.
+if [ -d "$MODEL" ] || [ "${MODEL#/}" != "$MODEL" ] || [ "${MODEL#.}" != "$MODEL" ]; then
+  [ -f "$MODEL/rl_agent_config.json" ] || { echo "no checkpoint at $MODEL" >&2; exit 1; }
+  [ -f "$MODEL/mlx_config.json" ] || { echo "$MODEL is not an MLX checkpoint: convert it with laya_mlx convert" >&2; exit 1; }
+  MODEL="$(cd "$MODEL" && pwd -P)"
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HOME/arc-radar"
 ENV_FILE="$HOME/.config/arc-radar/env"

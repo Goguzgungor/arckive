@@ -181,7 +181,7 @@ model") on 8920 with the MLX cache capped at 1 GiB, and `com.arc-radar.gate`
 puts the same authenticating gate in front of it on 8921, run from its own
 installed copy of the radar in `~/arc-radar`, so checking out another branch
 never changes what is serving. Install or refresh both with
-`./scripts/install-arc-model.sh <model-dir>`. The gate is published as
+`./scripts/install-arc-model.sh goktugoguz/laya-multilingual-arc-mlx` (a Hub repo id, so the radar reports the model by name; a local MLX directory also works). The gate is published as
 `https://laya-arc.brages.uk` by an extra ingress rule on the existing
 Cloudflare tunnel, and reuses the shared gate's `RADAR_TOKEN`.
 

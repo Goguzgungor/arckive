@@ -6,7 +6,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import math
 import os
 import time
 from collections import Counter, deque
@@ -71,7 +70,11 @@ BREAKER_AFTER = 2
 BREAKER_OPEN = 15.0
 # If the model was down at startup, the footer cannot name it. Ask again after
 # a batch succeeds, at most this often while the answer keeps failing.
-IDENTITY_EVERY = 60.0
+# The model the footer and /api/stats name. Static: what layad reports is the
+# path or repo it loaded -- a local path would publish this Mac's user name and
+# folders, and a swap behind the gate would change it mid-run. This is the
+# published fine-tune the gate serves (radar/README.md, "The fine-tuned model").
+MODEL = {"model": "goktugoguz/laya-multilingual-arc", "backend": "mlx", "provenance": {"device": "gpu"}}
 
 # The feed is the one thing the wall cannot do without. If it ever stops it is
 # restarted after FEED_RESTART seconds, and if no transfer arrives for
@@ -251,9 +254,7 @@ class Radar:
         self.latencies: deque[float] = deque(maxlen=50)
         self.asked = 0      # lane sentences the model actually judged
         self.reused = 0     # transfers whose lane sentence was judged before
-        self.model: dict[str, Any] = {}
-        self._identity: asyncio.Task[None] | None = None
-        self._identity_at = -math.inf
+        self.model: dict[str, Any] = dict(MODEL)
         self._volume: deque[tuple[float, str, float]] = deque()
 
     # ---- fan-out -----------------------------------------------------------
@@ -496,28 +497,6 @@ class Radar:
         """Whether the breaker is keeping calls away from a model that just failed."""
         return self.clock() < self._model_rests_until
 
-    def _learn_model(self) -> None:
-        """Fetch the model's name if startup could not.
-
-        The footer names the model and the device it runs on. If the model was
-        down when the radar started, that read "connecting..." until the next
-        restart. A batch that just succeeded shows it is back, so ask then --
-        in the background, so rows never wait on it.
-        """
-        now = self.clock()
-        if self.model or now - self._identity_at < IDENTITY_EVERY:
-            return
-        self._identity_at = now
-        self._identity = asyncio.create_task(self._fetch_identity())
-
-    async def _fetch_identity(self) -> None:
-        try:
-            identity = await self.classifier.health()
-            if isinstance(identity, dict):
-                self.model = identity
-        except Exception as exc:  # noqa: BLE001 - the footer can wait for the next try
-            LOG.warning("model identity unavailable: %s", type(exc).__name__)
-
     async def process(self, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Judge one batch and turn it into rows, whatever state the model is in."""
         summaries = [summarize(item) for item in batch]
@@ -544,7 +523,6 @@ class Radar:
         self.asked += judged
         self.reused += reused
         self.rate_asked.add(judged, self.clock())
-        self._learn_model()
         return self._rows(batch, summaries, answers, offline=False)
 
     async def work(self) -> None:
@@ -635,8 +613,8 @@ radar = Radar()
 
 async def _lifespan(app: FastAPI):  # noqa: ANN202 - FastAPI lifespan signature
     try:
-        radar.model = await radar.classifier.health()
-        LOG.info("model ready: %s on %s", radar.model.get("model"), radar.model.get("backend"))
+        loaded = await radar.classifier.health()
+        LOG.info("model ready: %s (gate reports %s on %s)", MODEL["model"], loaded.get("model"), loaded.get("backend"))
     except Exception as exc:  # noqa: BLE001
         LOG.error(
             "decision model not reachable at %s (%s). Start it with `layad serve`, "
