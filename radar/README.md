@@ -113,6 +113,36 @@ one dollar?"), a second protocol in one transaction (a Relay deposit that
 swapped on Uniswap reads "Protocol: Relay"), and NFT mints through smart
 accounts, which no lane fits.
 
+### The fine-tuned model
+
+Since 2026-10-04 the radar runs its own fine-tune of `laya-multilingual`
+(see "Fine-tuning the model"): run `laya-multilingual-arc-20261004-3`,
+blended half way back toward the base (WiSE-FT, `finetune/blend.py`,
+alpha 0.5). Base against the shipped model, same code, same data:
+
+| | base | fine-tune |
+|---|---|---|
+| Fixture lanes (1,149 placed) | 99.8%, right lane at 0.83 | 100.0%, right lane at 0.99 |
+| Fixture, 30 questions: mean AUC / balanced accuracy (19 countable) | 0.925 / 0.824 | 0.988 / 0.968 |
+| Gate: answerable refused / nonsense turned away | 0 of 37 / 8 of 14 | 0 of 37 / 14 of 14 |
+| Test capture, held-out phrasings of taught topics (54) | 0.708 | 0.919 |
+| Test capture, topics never taught (36 phrasings) | 0.843 | 0.886 |
+| Test capture, Spanish / German / Russian (15) | 0.747 | 0.931 |
+
+The test capture is 3,000 live transfers taken after the training capture
+ended; "never taught" topics and phrasings reached training in no form. The
+fixture is `eval.py`'s benchmark and never reached training either.
+
+What it does worse than the base, measured: questions about fees and spam it
+was never taught keep their ranking ("was a fee charged?" AUC 1.00, "a
+worthless spam transfer" 0.93 against 0.99) but the gate's yes line, drawn
+from the probes, lands in the wrong place for them, so their highlighted sets
+are less accurate (balanced accuracy 0.96 -> 0.86 and 0.89 -> 0.51). "Is this
+spam?" is read backwards by both models (AUC 0.19 and 0.25). Turkish is out of
+scope for this radar and is not an acceptance criterion. Three full runs and
+the blend are recorded in the plan's ledger: the unblended runs taught the
+bank harder (balanced accuracy up to 0.990) but read untaught questions worse.
+
 ## Running it
 
 The decision model is served by [layad](https://github.com/rcwsr/layad), which
@@ -144,12 +174,16 @@ model call rather than sized for this app's own throughput alone: a large
 batch can hold the shared GPU for several seconds and starve the other app's
 work.
 
-The LaunchAgents in `scripts/` (`com.arc-radar.model.plist` for layad on
-8918, `com.arc-radar.gate.plist` for the gate on 8919, and the tunnel) are
-only for a Mac that does not already run them. On a Mac where another radar's
-layad and gate already hold 8918 and 8919, load none of them: point
-`LAYA_ENDPOINT` at the existing gate and reuse its `RADAR_TOKEN`, since a
-second copy would fail to bind those ports or, worse, load the model twice.
+Arc's model runs as its own pair of agents, beside the shared model and gate
+the Stellar radar uses on 8918 and 8919, which it never touches:
+`com.arc-radar.model` serves the fine-tuned checkpoint (see "Fine-tuning the
+model") on 8920 with the MLX cache capped at 1 GiB, and `com.arc-radar.gate`
+puts the same authenticating gate in front of it on 8921, run from its own
+installed copy of the radar in `~/arc-radar`, so checking out another branch
+never changes what is serving. Install or refresh both with
+`./scripts/install-arc-model.sh <model-dir>`. The gate is published as
+`https://laya-arc.brages.uk` by an extra ingress rule on the existing
+Cloudflare tunnel, and reuses the shared gate's `RADAR_TOKEN`.
 
 ### Staying reachable through outages
 
@@ -174,6 +208,10 @@ It cannot fix a router or ISP that is down; then it keeps waiting, and logs
 when the model is reachable again. `--dry-run` shows what it would do.
 Install or update it with `./scripts/install-netwatch.sh`; it logs to
 `~/Library/Logs/arc-radar-netwatch.log`, and only when something is wrong.
+Once Arc's own model is installed, the same script also installs a second copy
+(`com.arc-radar.netwatch-arc`) that watches `laya-arc.brages.uk` and may
+restart only Arc's model and gate; the network and the shared tunnel stay with
+the first copy, so two watchdogs never toggle the same Wi-Fi.
 
 ### Environment variables
 
@@ -201,6 +239,49 @@ AUC and balanced accuracy at the gate's lines, and whether the gate still
 tells real questions from nonsense. It keeps every call as small as the
 server's own, because the GPU is shared.
 
+### Fine-tuning the model
+
+The base model reads transfers well (lanes 99.8%) but answers viewers'
+questions less well (balanced accuracy 0.82 on the fixture; amounts, DeFi and
+bridges weakest). `finetune/` trains it on Arc's own sentences; the design and
+its acceptance bars are in
+`docs/superpowers/specs/2026-10-04-radar-laya-finetune-design.md`. Data and
+checkpoints live outside git, in `~/Library/Application Support/arc-radar/finetune/`.
+
+```bash
+DATA="$HOME/Library/Application Support/arc-radar/finetune/data"
+MODELS="$HOME/Library/Application Support/arc-radar/finetune/models"
+# 1. capture: training first, the test capture only after it ends
+.venv/bin/python scripts/capture.py 15000 --every 4 --out "$DATA/train.json"
+.venv/bin/python scripts/capture.py 3000 --every 4 --out "$DATA/test.json"
+# 2. the base's own answers to out-of-bank questions (learning without forgetting),
+#    then the rows; read audit.md by hand before training on them
+.venv/bin/python -m finetune.replay --capture "$DATA/train.json" --out "$DATA/replay.json"
+.venv/bin/python -m finetune.dataset --capture "$DATA/train.json" --out "$DATA/rows" --replay "$DATA/replay.json"
+# 3. the trainer's own environment (torch + laya PR #899), never the radar's venv
+uv venv --python 3.12 .venv-ft && uv pip install --python .venv-ft/bin/python -r finetune/requirements-ft.txt
+# 4. train, paused whenever the shared model slows down
+RUN="$MODELS/laya-multilingual-arc-$(date +%Y%m%d)-1"; mkdir -p "$RUN"
+PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.4 .venv/bin/python -m finetune.supervise --log "$RUN/train.log" -- \
+  .venv-ft/bin/python -m finetune.train --data "$DATA/rows" --out "$RUN"
+# 5. blend half way back to the base (WiSE-FT), convert to what layad serves,
+#    serve it on 8920, check it answers as trained
+.venv-ft/bin/python -m finetune.blend --ft "$RUN/final" --alpha 0.5 --out "$RUN/blend-0.5"
+~/.local/share/uv/tools/layad/bin/python -m laya_mlx convert --model "$RUN/blend-0.5" --dtype float16 --output "$RUN/blend-0.5-mlx"
+.venv-ft/bin/python -m finetune.parity --model "$RUN/blend-0.5" --endpoint http://127.0.0.1:8920 --rows "$DATA/rows/val.jsonl"
+# 6. accept: the fixture, then held-out phrasings, topics and languages on the test capture
+LAYA_ENDPOINT=http://127.0.0.1:8920 .venv/bin/python scripts/eval.py
+.venv/bin/python -m finetune.report --base http://127.0.0.1:8918 --ft http://127.0.0.1:8920 \
+  --capture "$DATA/test.json" --rows "$DATA/rows"
+```
+
+The question bank (`finetune/questions.py`) keeps a third of its topics, two
+English and one Turkish phrasing of every other topic, and every Spanish,
+German and Russian phrasing out of training, and none of `eval.py`'s questions
+is ever trained on; tests hold all of it. `finetune/synth.py` adds transfers
+the stream rarely carries (lending, bridges into Arc, marketplaces), rendered
+by the real `summarize()`; they are training data only.
+
 ## Deploying
 
 The web app and the model do not have to live on the same machine. The model
@@ -217,9 +298,12 @@ The container's healthcheck calls `/healthz`, which answers 503 once no
 transfer has arrived for two minutes, so a dead feed marks the container
 unhealthy instead of leaving a frozen wall up.
 
-The model gate on the Mac is published by a Cloudflare Tunnel (`cloudflared
-tunnel run laya-gate`) at `https://laya-gate.brages.uk`, which is the default
-`LAYA_ENDPOINT` in both the Dockerfile and `docker-compose.yml`. The gate
+Arc's model gate on the Mac is published by a Cloudflare Tunnel (`cloudflared
+tunnel run laya-gate`) at `https://laya-arc.brages.uk`, which is the default
+`LAYA_ENDPOINT` in both the Dockerfile and `docker-compose.yml`; the same
+tunnel publishes the shared base model's gate, which the Stellar radar uses,
+at `https://laya-gate.brages.uk` — pointing `LAYA_ENDPOINT` back there is the
+rollback to the base model. The gate
 answers 401 without the bearer `RADAR_TOKEN`. Override `LAYA_ENDPOINT` if the
 model is reached another way — `scripts/tunnel.sh` sets up the SSH
 reverse-tunnel alternative, which lands the gate on the server's Docker bridge

@@ -96,7 +96,11 @@ QUESTIONS: list[tuple[str, Truth]] = [
         and _wallet(it, it["transfer"]["frm"]) and _wallet(it, it["transfer"]["to"])),
     ("Did a wallet receive the USDC?", lambda it, s: _wallet(it, it["transfer"]["to"])),
     ("Did the USDC go into a contract?", lambda it, s: it["contracts"].get(it["transfer"]["to"]) is True),
-    ("Is this spam or dust?", lambda it, s: _amount(it) < 0.01 and not s["facts"]),
+    # Decided 2026-10-05: "spam or dust" is any transfer under one cent, zero
+    # included, whatever else the transaction did -- the question's plain words,
+    # and the sentence says "(dust)" for every such amount. It used to require
+    # that nothing else happened, which counted a dust leg of a swap as "no".
+    ("Is this spam or dust?", lambda it, s: _amount(it) < 0.01),
     ("Is liquidity being added or removed?", lambda it, s: "liquidity" in s["facts"]),
     ("Was USDC minted?", lambda it, s: it["transfer"]["frm"] == ZERO),
     ("Is this a gasless signed payment?", lambda it, s: "signed" in s["facts"]),

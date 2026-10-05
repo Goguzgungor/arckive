@@ -1,0 +1,1097 @@
+{
+ "capture": "~/Library/Application Support/arc-radar/finetune/data/bench.json",
+ "transfers": 20000,
+ "questions": [
+  {
+   "q": "Is this a swap?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9792560913586112,
+    "bal": 0.9610836739525275,
+    "pos": 15514,
+    "neg": 4486
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9998066262730436,
+    "pos": 15514,
+    "neg": 4486
+   }
+  },
+  {
+   "q": "Is this a bridge transfer?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9650370126453146,
+    "bal": 0.5777191300333485,
+    "pos": 395,
+    "neg": 19605
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 395,
+    "neg": 19605
+   }
+  },
+  {
+   "q": "Is USDC leaving Arc through a bridge?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9992385529847007,
+    "bal": 0.9848299735288129,
+    "pos": 356,
+    "neg": 19644
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9993636733862756,
+    "pos": 356,
+    "neg": 19644
+   }
+  },
+  {
+   "q": "Did these funds arrive from another chain?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.730344042678094,
+    "bal": 0.583101792084308,
+    "pos": 39,
+    "neg": 19961
+   },
+   "ft": {
+    "auc": 0.9989646477297397,
+    "bal": 0.9910826110916287,
+    "pos": 39,
+    "neg": 19961
+   }
+  },
+  {
+   "q": "Is this transfer over 10,000 USDC?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.6245864201570889,
+    "bal": 0.6662030209199756,
+    "pos": 79,
+    "neg": 19921
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 79,
+    "neg": 19921
+   }
+  },
+  {
+   "q": "Is this more than 100 USDC?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9113257203611504,
+    "bal": 0.7325261541204166,
+    "pos": 5636,
+    "neg": 14364
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 5636,
+    "neg": 14364
+   }
+  },
+  {
+   "q": "Is this less than one dollar?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.7966506069945455,
+    "bal": 0.7852680444337228,
+    "pos": 9594,
+    "neg": 10406
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9927926196425139,
+    "pos": 9594,
+    "neg": 10406
+   }
+  },
+  {
+   "q": "Was it sent by a smart account?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9898183142812049,
+    "bal": 0.821580762987013,
+    "pos": 288,
+    "neg": 19712
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9999239042207793,
+    "pos": 288,
+    "neg": 19712
+   }
+  },
+  {
+   "q": "Was a fee taken?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 1340,
+    "neg": 18660
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 1340,
+    "neg": 18660
+   }
+  },
+  {
+   "q": "Is this a direct payment between two wallets?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9998999630069314,
+    "bal": 0.863119922740442,
+    "pos": 2397,
+    "neg": 17603
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9915923422143953,
+    "pos": 2397,
+    "neg": 17603
+   }
+  },
+  {
+   "q": "Did a wallet receive the USDC?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.7054907423711176,
+    "bal": 0.7108249381422753,
+    "pos": 7599,
+    "neg": 12401
+   },
+   "ft": {
+    "auc": 0.9994720921637784,
+    "bal": 0.9948125859000945,
+    "pos": 7599,
+    "neg": 12401
+   }
+  },
+  {
+   "q": "Did the USDC go into a contract?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9765811850198963,
+    "bal": 0.834189564401716,
+    "pos": 12387,
+    "neg": 7613
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 12387,
+    "neg": 7613
+   }
+  },
+  {
+   "q": "Is this spam or dust?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9544025725648332,
+    "bal": 0.9226353304840113,
+    "pos": 6196,
+    "neg": 13804
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 6196,
+    "neg": 13804
+   }
+  },
+  {
+   "q": "Is liquidity being added or removed?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9988530157717278,
+    "bal": 0.6888331883983836,
+    "pos": 451,
+    "neg": 19549
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9369788735996727,
+    "pos": 451,
+    "neg": 19549
+   }
+  },
+  {
+   "q": "Was USDC minted?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9983566077714934,
+    "bal": 0.9708443866059362,
+    "pos": 21,
+    "neg": 19979
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 21,
+    "neg": 19979
+   }
+  },
+  {
+   "q": "Is this a gasless signed payment?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.9994999297654165,
+    "bal": 0.9888242730720607,
+    "pos": 225,
+    "neg": 19775
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 225,
+    "neg": 19775
+   }
+  },
+  {
+   "q": "Is this a Uniswap trade?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9403897716841612,
+    "bal": 0.9149984332038172,
+    "pos": 14984,
+    "neg": 5016
+   },
+   "ft": {
+    "auc": 0.963426784689421,
+    "bal": 0.9386465712283427,
+    "pos": 14984,
+    "neg": 5016
+   }
+  },
+  {
+   "q": "Did this go through CCTP?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 1.0,
+    "bal": 0.985080988917306,
+    "pos": 59,
+    "neg": 19941
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 59,
+    "neg": 19941
+   }
+  },
+  {
+   "q": "Is this a large swap?",
+   "origin": "eval",
+   "taught": true,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Is this a DeFi transaction?",
+   "origin": "eval",
+   "taught": true,
+   "base": {
+    "auc": 0.709457649512027,
+    "bal": 0.643539524659126,
+    "pos": 15878,
+    "neg": 4122
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 15878,
+    "neg": 4122
+   }
+  },
+  {
+   "q": "Is this a batch payout to many wallets?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9998397997496871,
+    "bal": 0.9274342928660826,
+    "pos": 25,
+    "neg": 19975
+   },
+   "ft": {
+    "auc": 0.9997436795994994,
+    "bal": 0.9915644555694618,
+    "pos": 25,
+    "neg": 19975
+   }
+  },
+  {
+   "q": "Is this a vault deposit or withdrawal?",
+   "origin": "eval",
+   "taught": true,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Were rewards claimed or paid out?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9996901685547779,
+    "bal": 0.9894673487812218,
+    "pos": 62,
+    "neg": 19938
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 62,
+    "neg": 19938
+   }
+  },
+  {
+   "q": "Was something bought on a marketplace?",
+   "origin": "eval",
+   "taught": false,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Is this a KyberSwap trade?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.9994994493943338,
+    "bal": 0.9847832615877465,
+    "pos": 22,
+    "neg": 19978
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9991740915006507,
+    "pos": 22,
+    "neg": 19978
+   }
+  },
+  {
+   "q": "Did this go through 1inch?",
+   "origin": "eval",
+   "taught": false,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Was this routed through LI.FI?",
+   "origin": "eval",
+   "taught": false,
+   "base": {
+    "auc": 0.8944133169563486,
+    "bal": 0.9227701781838373,
+    "pos": 189,
+    "neg": 19811
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9458886477209631,
+    "pos": 189,
+    "neg": 19811
+   }
+  },
+  {
+   "q": "Was a token swap part of this transaction?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9974009352632811,
+    "bal": 0.9944338023596939,
+    "pos": 15514,
+    "neg": 4486
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 15514,
+    "neg": 4486
+   }
+  },
+  {
+   "q": "Did this transfer happen inside a swap?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9734638384233624,
+    "bal": 0.9458783176066189,
+    "pos": 15514,
+    "neg": 4486
+   },
+   "ft": {
+    "auc": 0.9996436566779227,
+    "bal": 0.9739764627189307,
+    "pos": 15514,
+    "neg": 4486
+   }
+  },
+  {
+   "q": "Did money cross from Arc to another network?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.8487847019646334,
+    "bal": 0.5942844428581561,
+    "pos": 356,
+    "neg": 19644
+   },
+   "ft": {
+    "auc": 0.9999985700525534,
+    "bal": 0.9989818774180411,
+    "pos": 356,
+    "neg": 19644
+   }
+  },
+  {
+   "q": "Was this USDC brought over from a different network?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.7510035595051375,
+    "bal": 0.5868989401127069,
+    "pos": 39,
+    "neg": 19961
+   },
+   "ft": {
+    "auc": 0.9951829143753396,
+    "bal": 0.9682881619157357,
+    "pos": 39,
+    "neg": 19961
+   }
+  },
+  {
+   "q": "Did this move through a cross-chain bridge?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9631475437356138,
+    "bal": 0.6351331196188004,
+    "pos": 395,
+    "neg": 19605
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 395,
+    "neg": 19605
+   }
+  },
+  {
+   "q": "Is the amount ten thousand USDC or more?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.5131230385338543,
+    "bal": 0.619468419243353,
+    "pos": 79,
+    "neg": 19921
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9995984137342503,
+    "pos": 79,
+    "neg": 19921
+   }
+  },
+  {
+   "q": "Is this a transfer of a hundred USDC or more?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.8774380368257605,
+    "bal": 0.6093886834426971,
+    "pos": 5636,
+    "neg": 14364
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 5636,
+    "neg": 14364
+   }
+  },
+  {
+   "q": "Is the value below one USDC?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.6051254545943351,
+    "bal": 0.5462201774917703,
+    "pos": 9594,
+    "neg": 10406
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 9594,
+    "neg": 10406
+   }
+  },
+  {
+   "q": "Is this smaller than a cent?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9909543912216882,
+    "bal": 0.8185043474562306,
+    "pos": 6186,
+    "neg": 13804
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.992538394668212,
+    "pos": 6186,
+    "neg": 13804
+   }
+  },
+  {
+   "q": "Did zero USDC change hands?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9025512756378189,
+    "bal": 0.6675087543771886,
+    "pos": 10,
+    "neg": 19990
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 10,
+    "neg": 19990
+   }
+  },
+  {
+   "q": "Was a contract on the receiving end?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9572489223505222,
+    "bal": 0.7657867129357735,
+    "pos": 12387,
+    "neg": 7613
+   },
+   "ft": {
+    "auc": 0.9999992364973846,
+    "bal": 0.9996770808105271,
+    "pos": 12387,
+    "neg": 7613
+   }
+  },
+  {
+   "q": "Did a regular wallet get these funds?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.5573671627732224,
+    "bal": 0.49995797748567394,
+    "pos": 7599,
+    "neg": 12401
+   },
+   "ft": {
+    "auc": 0.929753642266941,
+    "bal": 0.7866154344301857,
+    "pos": 7599,
+    "neg": 12401
+   }
+  },
+  {
+   "q": "Did a contract send these funds?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9708962620001272,
+    "bal": 0.9655424411096871,
+    "pos": 12719,
+    "neg": 7281
+   },
+   "ft": {
+    "auc": 0.9999957778587435,
+    "bal": 0.99993132811427,
+    "pos": 12719,
+    "neg": 7281
+   }
+  },
+  {
+   "q": "Was this a simple payment between two wallets with nothing else going on?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9241973891743099,
+    "bal": 0.8936046618139364,
+    "pos": 2397,
+    "neg": 17603
+   },
+   "ft": {
+    "auc": 0.9401805325262308,
+    "bal": 0.9574832707029709,
+    "pos": 2397,
+    "neg": 17603
+   }
+  },
+  {
+   "q": "Was this paid by signed authorization rather than by the sender's own transaction?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.982968394437421,
+    "bal": 0.8743868520859671,
+    "pos": 225,
+    "neg": 19775
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9999747155499368,
+    "pos": 225,
+    "neg": 19775
+   }
+  },
+  {
+   "q": "Was this part of decentralized finance?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.8333945641068704,
+    "bal": 0.6399468099767764,
+    "pos": 15878,
+    "neg": 4122
+   },
+   "ft": {
+    "auc": 0.9999405950723612,
+    "bal": 0.9926628038795818,
+    "pos": 15878,
+    "neg": 4122
+   }
+  },
+  {
+   "q": "Was Circle's cross-chain protocol used?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9613074671977249,
+    "bal": 0.9119903715962088,
+    "pos": 59,
+    "neg": 19941
+   },
+   "ft": {
+    "auc": 0.9964080478088326,
+    "bal": 0.9893184895441552,
+    "pos": 59,
+    "neg": 19941
+   }
+  },
+  {
+   "q": "Did the Relay bridge carry this?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9995839775378127,
+    "bal": 0.7543584025947699,
+    "pos": 268,
+    "neg": 19732
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9999746604500304,
+    "pos": 268,
+    "neg": 19732
+   }
+  },
+  {
+   "q": "Was USDC created in this transaction?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.7163307186831888,
+    "bal": 0.6258726424650645,
+    "pos": 21,
+    "neg": 19979
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 21,
+    "neg": 19979
+   }
+  },
+  {
+   "q": "Did wrapping or unwrapping of USDC happen here?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.2990201818339488,
+    "bal": 0.6337548885164305,
+    "pos": 311,
+    "neg": 19689
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9978668291939662,
+    "pos": 311,
+    "neg": 19689
+   }
+  },
+  {
+   "q": "Did a vault take in or pay out these funds?",
+   "origin": "new",
+   "taught": true,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Was more than 100 USDC bridged out of Arc?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.7205902638443018,
+    "bal": 0.7784159309791332,
+    "pos": 64,
+    "neg": 19936
+   },
+   "ft": {
+    "auc": 0.8543189769763242,
+    "bal": 0.860252808988764,
+    "pos": 64,
+    "neg": 19936
+   }
+  },
+  {
+   "q": "Did a wallet send USDC into a swap?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.9590771395428755,
+    "bal": 0.6474015478787449,
+    "pos": 4338,
+    "neg": 15662
+   },
+   "ft": {
+    "auc": 0.9999945541590064,
+    "bal": 0.9987868726854807,
+    "pos": 4338,
+    "neg": 15662
+   }
+  },
+  {
+   "q": "Was less than a dollar moved in a swap?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.7334990743798995,
+    "bal": 0.620774602338124,
+    "pos": 6924,
+    "neg": 13076
+   },
+   "ft": {
+    "auc": 0.999980527561486,
+    "bal": 0.8985546038543897,
+    "pos": 6924,
+    "neg": 13076
+   }
+  },
+  {
+   "q": "Did a contract pay a wallet as part of a swap?",
+   "origin": "new",
+   "taught": true,
+   "base": {
+    "auc": 0.7195264167726313,
+    "bal": 0.6010149359743713,
+    "pos": 3558,
+    "neg": 16442
+   },
+   "ft": {
+    "auc": 0.9914094865566931,
+    "bal": 0.8669869845517577,
+    "pos": 3558,
+    "neg": 16442
+   }
+  },
+  {
+   "q": "Is this a big swap over 10,000 USDC?",
+   "origin": "new",
+   "taught": true,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Did someone pay a fee in this transaction?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9958312736958296,
+    "bal": 0.9802518756698821,
+    "pos": 1340,
+    "neg": 18660
+   },
+   "ft": {
+    "auc": 0.9999851226184192,
+    "bal": 0.8805970149253731,
+    "pos": 1340,
+    "neg": 18660
+   }
+  },
+  {
+   "q": "Was the sender a smart contract account like ERC-4337?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.8495758188751353,
+    "bal": 0.5576242334054834,
+    "pos": 288,
+    "neg": 19712
+   },
+   "ft": {
+    "auc": 0.5400206550719246,
+    "bal": 0.6323643804112553,
+    "pos": 288,
+    "neg": 19712
+   }
+  },
+  {
+   "q": "Did a liquidity pool change size?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.10211709753386765,
+    "bal": 0.18449591503481103,
+    "pos": 451,
+    "neg": 19549
+   },
+   "ft": {
+    "auc": 0.7164439485112116,
+    "bal": 0.6056607542205333,
+    "pos": 451,
+    "neg": 19549
+   }
+  },
+  {
+   "q": "Did one transaction pay out to a lot of recipients?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9987964956195244,
+    "bal": 0.8462327909887359,
+    "pos": 25,
+    "neg": 19975
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9992991239048812,
+    "pos": 25,
+    "neg": 19975
+   }
+  },
+  {
+   "q": "Were rewards handed out or claimed?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9989831380505373,
+    "bal": 0.9892165713712509,
+    "pos": 62,
+    "neg": 19938
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9992727455110844,
+    "pos": 62,
+    "neg": 19938
+   }
+  },
+  {
+   "q": "Was this an NFT or marketplace purchase?",
+   "origin": "new",
+   "taught": false,
+   "base": null,
+   "ft": null
+  },
+  {
+   "q": "Is this junk with no real value?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9996360206779447,
+    "bal": 0.9942361230238183,
+    "pos": 6196,
+    "neg": 13804
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 6196,
+    "neg": 13804
+   }
+  },
+  {
+   "q": "Was this swap done on Uniswap?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9991669645915227,
+    "bal": 0.9760441292356186,
+    "pos": 13655,
+    "neg": 6345
+   },
+   "ft": {
+    "auc": 0.9998898673520237,
+    "bal": 0.9903861308116627,
+    "pos": 13655,
+    "neg": 6345
+   }
+  },
+  {
+   "q": "Was this routed by OKX's DEX router?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.8897207358158343,
+    "bal": 0.5866894197952218,
+    "pos": 955,
+    "neg": 19045
+   },
+   "ft": {
+    "auc": 0.9999863096358995,
+    "bal": 0.8287739564190076,
+    "pos": 955,
+    "neg": 19045
+   }
+  },
+  {
+   "q": "Did KyberSwap route this trade?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9993424585225567,
+    "bal": 0.725422965261788,
+    "pos": 22,
+    "neg": 19978
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9894634097507258,
+    "pos": 22,
+    "neg": 19978
+   }
+  },
+  {
+   "q": "Was this bridged using LI.FI?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.9994952299227702,
+    "bal": 0.905027509969209,
+    "pos": 189,
+    "neg": 19811
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 0.9979809196910807,
+    "pos": 189,
+    "neg": 19811
+   }
+  },
+  {
+   "q": "Was the trade on Aerodrome?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 0.999936566521469,
+    "bal": 0.9713524651957581,
+    "pos": 103,
+    "neg": 19897
+   },
+   "ft": {
+    "auc": 0.9999946325518166,
+    "bal": 0.9979142584309193,
+    "pos": 103,
+    "neg": 19897
+   }
+  },
+  {
+   "q": "Was a fee taken on a swap?",
+   "origin": "new",
+   "taught": false,
+   "base": {
+    "auc": 1.0,
+    "bal": 0.9933011789924973,
+    "pos": 1340,
+    "neg": 18660
+   },
+   "ft": {
+    "auc": 1.0,
+    "bal": 1.0,
+    "pos": 1340,
+    "neg": 18660
+   }
+  }
+ ],
+ "stuck_base": 0,
+ "stuck_ft": 0,
+ "summary": {
+  "all": {
+   "n": 59,
+   "base_bal": 0.786,
+   "ft_bal": 0.966,
+   "base_auc": 0.877,
+   "ft_auc": 0.982
+  },
+  "eval": {
+   "n": 23,
+   "base_bal": 0.846,
+   "ft_bal": 0.991,
+   "base_auc": 0.921,
+   "ft_auc": 0.998
+  },
+  "new": {
+   "n": 36,
+   "base_bal": 0.748,
+   "ft_bal": 0.95,
+   "base_auc": 0.85,
+   "ft_auc": 0.971
+  },
+  "taught": {
+   "n": 38,
+   "base_bal": 0.75,
+   "ft_bal": 0.98,
+   "base_auc": 0.846,
+   "ft_auc": 0.992
+  },
+  "untaught": {
+   "n": 21,
+   "base_bal": 0.852,
+   "ft_bal": 0.94,
+   "base_auc": 0.934,
+   "ft_auc": 0.963
+  }
+ }
+}

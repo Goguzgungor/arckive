@@ -1,0 +1,7 @@
+# The trainer environment (radar/.venv-ft). Never installed into the radar's own venv.
+# laya PR #899 (laya.train), pinned to the commit that was read: GuilhermeFusari/laya@deb477dc.
+laya @ git+https://github.com/GuilhermeFusari/laya@deb477dc85467c4198009271ebd7a5f07001131d
+torch
+safetensors
+huggingface_hub
+numpy

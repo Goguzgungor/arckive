@@ -80,3 +80,15 @@ def test_finds_the_wifi_device():
              "Hardware Port: Wi-Fi\nDevice: en1\nEthernet Address: d0:12\n")
     assert netwatch.wifi_in(ports) == "en1"
     assert netwatch.wifi_in("Hardware Port: Ethernet\nDevice: en0\n") == ""
+
+
+def test_agent_labels_can_come_from_the_environment():
+    assert netwatch.agents("model=com.arc-radar.model, gate=com.arc-radar.gate,tunnel=com.stellar-radar.tunnel") == {
+        "model": ["com.arc-radar.model"], "gate": ["com.arc-radar.gate"], "tunnel": ["com.stellar-radar.tunnel"]}
+    assert netwatch.agents("") == {}
+
+
+def test_only_allowed_layers_are_repaired(monkeypatch):
+    monkeypatch.setattr(netwatch, "REPAIRS", {"model", "gate"})
+    assert netwatch.repair("network", dry_run=True).startswith("network is down; left to")
+    assert netwatch.repair("tunnel", dry_run=True).startswith("tunnel is down; left to")

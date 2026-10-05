@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.arc-radar.netwatch-arc</string>
+  <!-- The same watchdog, watching Arc's own model through laya-arc.brages.uk.
+       It may restart only Arc's model and gate; the network and the tunnel
+       are shared and stay with com.arc-radar.netwatch. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NETWATCH_TUNNEL_URL</key>
+    <string>https://laya-arc.brages.uk/health</string>
+    <key>NETWATCH_GATE_URL</key>
+    <string>http://127.0.0.1:8921/health</string>
+    <key>NETWATCH_MODEL_URL</key>
+    <string>http://127.0.0.1:8920/health</string>
+    <key>NETWATCH_STATE</key>
+    <string>~/Library/Application Support/arc-radar/netwatch-arc.json</string>
+    <key>NETWATCH_AGENTS</key>
+    <string>model=com.arc-radar.model,gate=com.arc-radar.gate,tunnel=com.stellar-radar.tunnel</string>
+    <key>NETWATCH_REPAIRS</key>
+    <string>model,gate</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/gokbot/Library/Application Support/arc-radar/netwatch.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/gokbot/Library/Logs/arc-radar-netwatch-arc.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gokbot/Library/Logs/arc-radar-netwatch-arc.log</string>
+</dict>
+</plist>

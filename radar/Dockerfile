@@ -18,7 +18,7 @@ USER radar
 # reached over LAYA_ENDPOINT, so this container is small and stateless. The
 # default is the model gate's public hostname, which a Cloudflare Tunnel on the
 # Mac serves; every call still needs RADAR_TOKEN.
-ENV LAYA_ENDPOINT=https://laya-gate.brages.uk
+ENV LAYA_ENDPOINT=https://laya-arc.brages.uk
 EXPOSE 8777
 
 # /healthz turns 503 once no transfer has arrived for two minutes; /api/stats

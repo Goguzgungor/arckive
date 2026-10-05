@@ -8,12 +8,19 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/Library/Application Support/arc-radar"
-AGENT="$HOME/Library/LaunchAgents/com.arc-radar.netwatch.plist"
 
 mkdir -p "$DEST"
 cp "$HERE/netwatch.py" "$DEST/netwatch.py"
-sed "s#/Users/gokbot#$HOME#g" "$HERE/com.arc-radar.netwatch.plist" > "$AGENT"
-
-launchctl bootout "gui/$(id -u)/com.arc-radar.netwatch" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$AGENT"
-echo "netwatch installed; it logs to ~/Library/Logs/arc-radar-netwatch.log only when something is wrong"
+# Two copies of the same script: one for the shared model the Stellar radar
+# also uses, one for Arc's own (installed only once install-arc-model.sh has
+# put Arc's model in place).
+labels=(com.arc-radar.netwatch)
+[ -f "$HOME/Library/LaunchAgents/com.arc-radar.model.plist" ] && labels+=(com.arc-radar.netwatch-arc)
+for label in "${labels[@]}"; do
+  sed "s#/Users/gokbot#$HOME#g" "$HERE/$label.plist" > "$HOME/Library/LaunchAgents/$label.plist"
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  # bootout returns before the old job is gone; wait, or bootstrap fails.
+  for _ in $(seq 1 40); do launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break; sleep 0.25; done
+  launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$label.plist"
+done
+echo "netwatch installed (${labels[*]}); it logs to ~/Library/Logs/arc-radar-netwatch*.log only when something is wrong"
