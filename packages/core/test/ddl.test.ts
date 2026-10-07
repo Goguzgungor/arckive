@@ -40,13 +40,7 @@ describe('pgTypeFor', () => {
 });
 
 describe('buildEventTable (layout 2)', () => {
-  const transfer = extractEventDefs('usdc', `0x${'ab'.repeat(20)}`, [{
-    type: 'event', name: 'Transfer', inputs: [
-      { name: 'from', type: 'address', indexed: true },
-      { name: 'to', type: 'address', indexed: true },
-      { name: 'value', type: 'uint256', indexed: false },
-    ],
-  }])[0]!;
+  const transfer = extractEventDefs('usdc', ADDR, TRANSFER_ABI)[0]!;
   const spec = buildEventTable('idx_x', transfer);
 
   it('lists the columns a row supplies, in insert order', () => {
