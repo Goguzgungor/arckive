@@ -208,7 +208,9 @@ async function labelIds(
 export async function commitInsights(
   pool: pg.Pool, schema: string, partitions: Partitions, rows: InsightRow[], newCursor: bigint,
 ): Promise<string[]> {
-  const planned = partitions.plan(rows.length ? ['_insights'] : [], rows.map((r) => r.blockNumber));
+  const written = rows.length ? ['_insights'] : [];
+  const blockNumbers = rows.map((r) => r.blockNumber);
+  const planned = partitions.plan(written, blockNumbers);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -236,7 +238,7 @@ export async function commitInsights(
       [newCursor.toString()],
     );
     await client.query('COMMIT');
-    partitions.remember(planned);
+    partitions.committed(written, blockNumbers, planned);
     return inserted;
   } catch (err) {
     await client.query('ROLLBACK');

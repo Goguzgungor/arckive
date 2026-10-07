@@ -1,6 +1,6 @@
 import pg from 'pg';
 import {
-  BLOCK_COLUMNS, STORAGE_LAYOUT, buildEventTable, partitionDdl, partitionOf,
+  BLOCK_COLUMNS, STORAGE_LAYOUT, buildEventTable, partitionDdl, partitionName, partitionOf,
   type ColumnSpec, type DecodedRow, type EventDef, type TableSpec,
 } from '@arckive/core';
 
@@ -100,10 +100,13 @@ export interface PlannedPartition {
 // and the steady state sends no DDL at all.
 export class Partitions {
   private readonly made = new Set<string>();
+  // the highest partition this process has committed into, per table
+  private readonly lastSeen = new Map<string, bigint>();
 
   constructor(
     readonly schema: string,
     readonly size: bigint,
+    private readonly onFinished?: (table: string, n: bigint) => void,
   ) {}
 
   plan(tables: readonly string[], blocks: Iterable<bigint>): PlannedPartition[] {
@@ -121,8 +124,60 @@ export class Partitions {
     return out.sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
   }
 
-  remember(planned: readonly PlannedPartition[]): void {
+  // Call after COMMIT only. Remembers the partitions the batch created, and
+  // reports every partition the batch moved past as finished. Only a table
+  // this process has already written to can finish: the first batch after a
+  // restart just records where it is, so partitions finished before the
+  // restart are never revisited. An empty batch records and finishes nothing.
+  committed(tables: readonly string[], blocks: Iterable<bigint>, planned: readonly PlannedPartition[]): void {
     for (const p of planned) this.made.add(p.key);
+    let m: bigint | undefined;
+    for (const b of blocks) {
+      const n = partitionOf(b, this.size);
+      if (m === undefined || n > m) m = n;
+    }
+    if (m === undefined) return;
+    for (const table of tables) {
+      const last = this.lastSeen.get(table);
+      if (last === undefined) {
+        this.lastSeen.set(table, m);
+        continue;
+      }
+      if (m <= last) continue;
+      this.lastSeen.set(table, m);
+      for (let k = last; k < m; k++) this.onFinished?.(table, k);
+    }
+  }
+}
+
+// Rebuilds a finished partition's indexes once. Indexes grown row by row are
+// looser than freshly built ones (measured on mainnet: from/to 26 → 20 B per
+// row, tx_hash 36 → 32 rebuilt). REINDEX … CONCURRENTLY cannot run inside a
+// transaction and must not hold up ingest, so it runs here, one at a time, in
+// the background; a failure leaves a correct but looser index and is logged.
+export class Compactor {
+  private tail: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly log: { info(o: object, msg?: string): void; warn(o: object, msg?: string): void },
+  ) {}
+
+  enqueue(schema: string, partition: string): void {
+    this.tail = this.tail.then(async () => {
+      const started = Date.now();
+      try {
+        // pool.query: autocommit, outside any transaction
+        await this.pool.query(`REINDEX TABLE CONCURRENTLY ${q(schema)}.${q(partition)}`);
+        this.log.info({ schema, partition, ms: Date.now() - started }, 'partition indexes rebuilt');
+      } catch (err) {
+        this.log.warn({ schema, partition, err }, 'partition index rebuild failed');
+      }
+    });
+  }
+
+  idle(): Promise<void> {
+    return this.tail;
   }
 }
 
@@ -132,12 +187,18 @@ export interface Store {
   partitions: Partitions;
 }
 
-export function createStore(schema: string, defs: EventDef[], partitionBlocks: number): Store {
+export function createStore(
+  schema: string, defs: EventDef[], partitionBlocks: number, compactor?: Pick<Compactor, 'enqueue'>,
+): Store {
   const specs = defs.map((d) => buildEventTable(schema, d));
   return {
     schema,
     tables: new Map(specs.map((s) => [s.table, s])),
-    partitions: new Partitions(schema, BigInt(partitionBlocks)),
+    partitions: new Partitions(
+      schema,
+      BigInt(partitionBlocks),
+      compactor ? (table, n) => compactor.enqueue(schema, partitionName(table, n)) : undefined,
+    ),
   };
 }
 
@@ -221,10 +282,9 @@ export async function commitBatch(
       time: r.blockTime,
     });
   }
-  const planned = store.partitions.plan(
-    byTable.size ? ['_blocks', ...byTable.keys()] : [],
-    [...blocks.keys()].map(BigInt),
-  );
+  const written = byTable.size ? ['_blocks', ...byTable.keys()] : [];
+  const blockNumbers = [...blocks.keys()].map(BigInt);
+  const planned = store.partitions.plan(written, blockNumbers);
 
   const client = await pool.connect();
   let inserted = 0;
@@ -270,7 +330,7 @@ export async function commitBatch(
       [newCursor.toString()],
     );
     await client.query('COMMIT');
-    store.partitions.remember(planned);
+    store.partitions.committed(written, blockNumbers, planned);
     return inserted;
   } catch (err) {
     await client.query('ROLLBACK');

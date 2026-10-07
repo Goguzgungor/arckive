@@ -1,10 +1,10 @@
 import type pg from 'pg';
 import type { Logger } from 'pino';
 import {
-  describeEvent, eventColumns, extractFunctionNames, isTransferEvent, planRange, settleLane,
+  describeEvent, eventColumns, extractFunctionNames, isTransferEvent, partitionName, planRange, settleLane,
   type CallInfo, type Description, type EventDef, type LaneAnswer, type TokenInfo, type TxContext, type WorkerConfig,
 } from '@arckive/core';
-import { Partitions, getCursor } from './db.js';
+import { Partitions, getCursor, type Compactor } from './db.js';
 import {
   bootstrapInsights, capRange, commitInsights, getInsightsCursor, readEventRows,
   type EventRow, type EventSource, type InsightRow,
@@ -252,6 +252,7 @@ export interface PrepareInsightsInput {
   headerLine: string | undefined; // INSIGHTS_HEADER
   ingestPhase: () => Phase;
   rpcPacer: Pick<Pacer, 'backOff'>;
+  compactor?: Pick<Compactor, 'enqueue'>; // absent: finished partitions are not rebuilt
   fetch?: typeof fetch;
 }
 
@@ -299,7 +300,11 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     metrics,
     log: input.log,
     batchBlocks: cfg.polling.batchBlocks,
-    partitions: new Partitions(input.schema, BigInt(cfg.storage.partitionBlocks)),
+    partitions: new Partitions(
+      input.schema,
+      BigInt(cfg.storage.partitionBlocks),
+      input.compactor ? (t, n) => input.compactor!.enqueue(input.schema, partitionName(t, n)) : undefined,
+    ),
     intervalMs: cfg.polling.intervalMs,
     wake: input.wake,
     ingestPhase: input.ingestPhase,

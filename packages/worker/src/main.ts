@@ -4,7 +4,7 @@ import { pino } from 'pino';
 import {
   extractEventDefs, knownToken, parseWorkerConfig, schemaName, type EventDef,
 } from '@arckive/core';
-import { LayoutError, createStore } from './db.js';
+import { Compactor, LayoutError, createStore } from './db.js';
 import { createMetrics } from './metrics.js';
 import { bootstrapIndexer, runLoop, type PipelineDeps } from './pipeline.js';
 import { RangeSizer } from './rangesizer.js';
@@ -61,6 +61,7 @@ async function main(): Promise<void> {
     extractEventDefs(c.name, c.address, abis[i], c.events.length ? c.events : undefined),
   );
 
+  const compactor = new Compactor(pool, log); // one per process, shared by ingest and insights
   const headSignal = new HeadSignal();
   const deps: PipelineDeps = {
     client,
@@ -68,7 +69,7 @@ async function main(): Promise<void> {
     cfg,
     defs,
     schema: schemaName(cfg.indexerName),
-    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks),
+    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor),
     metrics,
     phase,
     headSignal,
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
         headerLine: process.env['INSIGHTS_HEADER'],
         ingestPhase: () => phase.phase,
         rpcPacer: insightsPacer,
+        compactor,
       })
     : null;
   if (insights) deps.onCommitted = () => insightsWake.notify();

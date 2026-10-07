@@ -3,7 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildControlTables, extractEventDefs, type DecodedRow } from '@arckive/core';
 import {
-  LayoutError, Partitions, bootstrap, commitBatch, contractMeta, createStore, getCursor, initCursor, type Store,
+  Compactor, LayoutError, Partitions, bootstrap, commitBatch, contractMeta, createStore, getCursor, initCursor, type Store,
 } from '../src/db.js';
 
 const ADDR = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -272,5 +272,38 @@ describe('db (storage layout 2)', () => {
     const r = await pool.query(`SELECT error, topics FROM ${SCHEMA}._dead_letter`);
     expect(r.rows[0]).toEqual({ error: 'decode error', topics: ['0xdead'] });
     expect(await getCursor(pool, SCHEMA)).toBe(11n);
+  });
+
+  it('rebuilds a finished partition once, when ingest moves past it', async () => {
+    const enqueued: string[] = [];
+    const s = createStore(SCHEMA, defs, 1000, { enqueue: (_schema: string, p: string) => enqueued.push(p) } as never);
+    await commitBatch(pool, s, [row(10, 0)], [], 10n);
+    await commitBatch(pool, s, [row(20, 0)], [], 20n);
+    expect(enqueued).toEqual([]);
+    await commitBatch(pool, s, [row(1000, 0)], [], 1000n);
+    expect(enqueued.sort()).toEqual(['_blocks_p0', 'usdc_transfer_p0']);
+    await commitBatch(pool, s, [row(1001, 0)], [], 1001n);
+    expect(enqueued).toHaveLength(2);
+  });
+
+  it('a restart in the middle of a partition does not revisit the one before it', async () => {
+    const enqueued: string[] = [];
+    await commitBatch(pool, store, [row(10, 0)], [], 10n);
+    await commitBatch(pool, store, [row(1000, 0)], [], 1000n); // first process moved into p1
+    const restarted = createStore(SCHEMA, defs, 1000, { enqueue: (_s: string, p: string) => enqueued.push(p) } as never);
+    await commitBatch(pool, restarted, [row(1500, 0)], [], 1500n);
+    expect(enqueued).toEqual([]);
+    await commitBatch(pool, restarted, [row(2000, 0)], [], 2000n);
+    expect(enqueued.sort()).toEqual(['_blocks_p1', 'usdc_transfer_p1']);
+  });
+
+  it('Compactor rebuilds the partition indexes concurrently and survives a missing partition', async () => {
+    await commitBatch(pool, store, [row(10, 0)], [], 10n);
+    const warned: unknown[] = [];
+    const c = new Compactor(pool, { info: () => {}, warn: (o: unknown) => warned.push(o) });
+    c.enqueue(SCHEMA, 'usdc_transfer_p0');
+    c.enqueue(SCHEMA, 'usdc_transfer_p999');
+    await c.idle();
+    expect(warned).toHaveLength(1);
   });
 });
