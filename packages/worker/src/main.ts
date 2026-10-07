@@ -69,7 +69,9 @@ async function main(): Promise<void> {
     cfg,
     defs,
     schema: schemaName(cfg.indexerName),
-    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor),
+    store: createStore(
+      schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor, cfg.storage.addressIndexes ?? false,
+    ),
     metrics,
     phase,
     headSignal,

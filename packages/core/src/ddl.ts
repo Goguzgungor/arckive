@@ -135,7 +135,12 @@ function hexView(schema: string, table: string, params: EventColumn[]): string {
   );
 }
 
-export function buildEventTable(schema: string, def: EventDef): TableSpec {
+export interface EventTableOptions {
+  // storage.addressIndexes: see the index comment below
+  addressIndexes?: boolean;
+}
+
+export function buildEventTable(schema: string, def: EventDef, opts: EventTableOptions = {}): TableSpec {
   assertPgIdentifier(`${def.tableName}_p${WIDEST_PARTITION}`);
   const params = eventColumns(def.event);
   const columns: ColumnSpec[] = [
@@ -159,8 +164,19 @@ export function buildEventTable(schema: string, def: EventDef): TableSpec {
     // 170,045 mainnet rows — the btree deduplicates a transaction's ~2.6 rows
     `CREATE INDEX IF NOT EXISTS ${q(`${def.tableName}_tx_hash_idx`)} ON ${t} (tx_hash)`,
     ...params
-      .filter((c) => c.indexed)
-      .map((c) => `CREATE INDEX IF NOT EXISTS ${q(`${def.tableName}_${c.name}_idx`)} ON ${t} (${q(c.name)})`),
+      .filter((c) => c.indexed || (opts.addressIndexes === true && c.abiType === 'address'))
+      .map((c) => {
+        const name = `${def.tableName}_${c.name}_idx`;
+        // An address is looked up as "its latest rows". With block_number and
+        // log_index after the id, each partition's index is read backwards and
+        // pages by keyset; a single-column index finds every row of a busy
+        // address and sorts them. Same name as the single-column index it
+        // replaces, so a schema has one or the other (_meta address_indexes).
+        if (opts.addressIndexes === true && c.abiType === 'address') {
+          return `CREATE INDEX IF NOT EXISTS ${q(assertPgIdentifier(name))} ON ${t} (${q(c.name)}, block_number, log_index)`;
+        }
+        return `CREATE INDEX IF NOT EXISTS ${q(name)} ON ${t} (${q(c.name)})`;
+      }),
     hexView(schema, def.tableName, params),
   ];
   return { schema, table: def.tableName, columns, statements };

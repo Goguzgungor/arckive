@@ -196,3 +196,49 @@ describe('buildInsightsTables (labels)', () => {
     expect(view).not.toContain('classified_at');
   });
 });
+
+describe('buildEventTable addressIndexes', () => {
+  const transfer = extractEventDefs('usdc', ADDR, TRANSFER_ABI)[0]!;
+
+  it('off: one single-column index per indexed param, as before', () => {
+    const s = buildEventTable('idx_x', transfer).statements;
+    expect(s).toContain('CREATE INDEX IF NOT EXISTS "usdc_transfer_from_id_idx" ON "idx_x"."usdc_transfer" ("from_id")');
+    expect(s).toContain('CREATE INDEX IF NOT EXISTS "usdc_transfer_to_id_idx" ON "idx_x"."usdc_transfer" ("to_id")');
+  });
+
+  it('on: every address param by (id, block_number, log_index), under the same name', () => {
+    const s = buildEventTable('idx_x', transfer, { addressIndexes: true }).statements;
+    expect(s).toContain(
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_from_id_idx" ON "idx_x"."usdc_transfer" ("from_id", block_number, log_index)',
+    );
+    expect(s).toContain(
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_to_id_idx" ON "idx_x"."usdc_transfer" ("to_id", block_number, log_index)',
+    );
+    expect(s.some((x) => x.endsWith('("from_id")'))).toBe(false);
+  });
+
+  it('on: a non-indexed address param gets one too; an indexed non-address param keeps its own', () => {
+    const init = extractEventDefs('pm', ADDR, [{
+      type: 'event', name: 'Initialize',
+      inputs: [
+        { name: 'id', type: 'bytes32', indexed: true },
+        { name: 'hooks', type: 'address', indexed: false },
+      ],
+    }])[0]!;
+    const s = buildEventTable('idx_x', init, { addressIndexes: true }).statements;
+    expect(s).toContain(
+      'CREATE INDEX IF NOT EXISTS "pm_initialize_hooks_id_idx" ON "idx_x"."pm_initialize" ("hooks_id", block_number, log_index)',
+    );
+    expect(s).toContain('CREATE INDEX IF NOT EXISTS "pm_initialize_id_idx" ON "idx_x"."pm_initialize" ("id")');
+  });
+
+  it('on: an index name over 63 bytes raises NamingError', () => {
+    // table name 49 bytes passes the partition check (+ "_p999999"); the index name is 66
+    const long = extractEventDefs('c'.repeat(40), ADDR, [{
+      type: 'event', name: 'Transfer',
+      inputs: [{ name: 'recipient', type: 'address', indexed: false }],
+    }])[0]!;
+    expect(() => buildEventTable('idx_x', long)).not.toThrow();
+    expect(() => buildEventTable('idx_x', long, { addressIndexes: true })).toThrow(NamingError);
+  });
+});

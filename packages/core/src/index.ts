@@ -12,6 +12,7 @@ export {
   pgTypeFor,
   type ColumnSpec,
   type EventColumn,
+  type EventTableOptions,
   type TableSpec,
 } from './ddl.js';
 export { partitionDdl, partitionName, partitionOf } from './partitions.js';
