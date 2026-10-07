@@ -106,6 +106,22 @@ export async function readEventRows(
   );
 }
 
+// A dictionary id that the select after the insert did not return. Without
+// this, undefined would travel on as NULL and surface as an opaque NOT NULL
+// violation far from the cause; the message names the key's parts instead.
+export class DictionaryMissError extends Error {
+  constructor(what: string, parts: Record<string, unknown>) {
+    super(`${what} id missing after insert: ${JSON.stringify(parts)}`);
+    this.name = 'DictionaryMissError';
+  }
+}
+
+export function needId(ids: ReadonlyMap<string, number>, k: string, what: string, parts: Record<string, unknown>): number {
+  const id = ids.get(k);
+  if (id === undefined) throw new DictionaryMissError(what, parts);
+  return id;
+}
+
 // Sentence ids for a round: one insert of the new (sentence, model) pairs and
 // one select of all of them. Sentences are few — Radar caches answers per
 // exact sentence for the same reason — so this stays two small statements.
@@ -163,7 +179,8 @@ async function labelIds(
     JSON.stringify([lane, p, ruled, protocol, f, sid]);
   const unique = new Map<string, { lane: string; p: number | null; ruled: boolean; protocol: string | null; f: string; sid: number }>();
   for (const r of rows) {
-    const sid = sentenceIdOf.get(`${r.model ?? ''}\u0000${r.sentence}`)!;
+    const sid = needId(sentenceIdOf, `${r.model ?? ''}\u0000${r.sentence}`, 'sentence',
+      { model: r.model ?? '', sentence: r.sentence });
     const p = r.laneP === null ? null : Math.fround(r.laneP);
     const protocol = r.protocol || null;
     const f = r.facts.join(',');
@@ -197,9 +214,14 @@ async function labelIds(
   );
   const ids = new Map(r.rows.map((x) => [key(x.lane, x.lane_p === null ? null : Math.fround(x.lane_p), x.ruled, x.protocol, x.f, x.sentence_id), Number(x.id)]));
   return new Map(rows.map((row) => {
-    const sid = sentenceIdOf.get(`${row.model ?? ''}\u0000${row.sentence}`)!;
+    const sid = needId(sentenceIdOf, `${row.model ?? ''}\u0000${row.sentence}`, 'sentence',
+      { model: row.model ?? '', sentence: row.sentence });
     const k = key(row.lane, row.laneP === null ? null : Math.fround(row.laneP), row.ruled, row.protocol || null, row.facts.join(','), sid);
-    return [`${row.blockNumber}:${row.logIndex}`, ids.get(k)!] as const;
+    const id = needId(ids, k, 'label', {
+      lane: row.lane, lane_p: row.laneP, ruled: row.ruled, protocol: row.protocol || null,
+      facts: row.facts.join(','), sentence_id: sid,
+    });
+    return [`${row.blockNumber}:${row.logIndex}`, id] as const;
   }));
 }
 
@@ -228,7 +250,8 @@ export async function commitInsights(
           rows.map((r) => r.blockNumber.toString()),
           rows.map((r) => r.logIndex),
           rows.map((r) => r.lane),
-          rows.map((r) => labels.get(`${r.blockNumber}:${r.logIndex}`)!),
+          rows.map((r) => needId(labels, `${r.blockNumber}:${r.logIndex}`, 'label',
+            { block_number: r.blockNumber.toString(), log_index: r.logIndex })),
         ],
       );
       inserted = res.rows.map((x) => x.lane as string);
