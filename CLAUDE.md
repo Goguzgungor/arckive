@@ -93,7 +93,7 @@ and **Foundry/anvil** (worker RPC/WS/pipeline tests and `demo:seed` spawn
   `fetchJson` overrides in `worker/src/abi.ts`). Follow that pattern instead of
   mocking modules.
 - **Named error subclasses** for domain failures: `AbiError`, `DdlError`,
-  `DecodeError`, `NamingError`, `ChainIdMismatchError`.
+  `DecodeError`, `NamingError`, `ChainIdMismatchError`, `LayoutError`.
 - **Logging** is `pino`, structured-object-first: `log.info({ indexer, ns }, 'msg')`.
 - **Comments explain the *why*** — especially non-obvious operational choices
   (reconcile-storm guard, `rank: false`, the WS `settled` latch). Keep that
@@ -143,11 +143,23 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
 
 - Schema per indexer: `idx_<snake_case(indexerName)>`; table per event:
   `<contract>_<event>` (plus a 4-hex-char topic0 suffix for overloads).
-- Every event table gets `COMMON_COLUMNS` (block/tx/log identity) plus
-  `_ingested_at` (DB default `now()`, used for freshness measurement) and
-  `UNIQUE (block_number, tx_hash, log_index)`; inserts are
-  `ON CONFLICT DO NOTHING`, making re-processing idempotent.
-- Control tables per schema: `_cursor` (single row), `_meta`, `_dead_letter`.
+- Storage layout 2 (`STORAGE_LAYOUT`, `_meta.layout = '2'`): every event table
+  gets `COMMON_COLUMNS` (`block_number`, `block_time`, `tx_hash` bytea,
+  `tx_index`, `log_index`) plus `_ingested_at` (DB default `now()`, used for
+  freshness measurement) and `PRIMARY KEY (block_number, log_index)`; inserts
+  are `ON CONFLICT DO NOTHING`, making re-processing idempotent. Addresses and
+  hashes are bytea; `<table>_hex` views print them as `0x…`.
+- Every row table (event tables, `_blocks`, `_insights`) is
+  `PARTITION BY RANGE (block_number)` in `storage.partitionBlocks` spans;
+  partitions are created by the worker inside the commit that first needs them
+  (`Partitions` in `worker/src/db.ts`, remembered only after COMMIT).
+- Control tables per schema: `_cursor` (single row), `_meta` (layout +
+  `contract:<table>` + `partition_blocks`), `_dead_letter`, `_blocks`
+  (hash/time once per block). Every `_meta` key is fixed for the schema's life:
+  a different value (a contract's address or `partitionBlocks` changed under
+  the same Indexer) raises `LayoutError`; drop the schema or rename the
+  Indexer. A layout-1 schema is refused the same way; there is no in-place
+  migration.
 - Column names are snake_cased; collisions with reserved names get a `param_`
   prefix; identifiers over 63 bytes raise `NamingError`.
 - All identifiers are double-quoted; all values go through parameterized
@@ -162,6 +174,13 @@ decodes them, and writes rows + dead letters + the new cursor **in a single
 transaction** (`commitBatch`). Undecodable logs go to `_dead_letter` rather than
 crashing the loop. `runLoop` retries on error with exponential backoff (1s → 30s)
 and sets phase `Degraded`.
+
+`commitBatch` sends one `unnest` INSERT per table (plus `_blocks` and the
+cursor), whatever the row count — a remote database pays one round trip per
+table, not per row. Block times come from the logs' `blockTimestamp` when every
+log has one (Arc does), else from `getBlockTimes`. A getLogs error that reads
+as a provider range/result cap (`isRangeCapError`) halves the working span
+(`RangeSizer`) and retries at once instead of going `Degraded`.
 
 In `finalityTag: latest` mode the target head can come from the WS `newHeads`
 signal (`HeadSignal.latestPrimaryHead()`), which removes a `getBlock` round-trip.
@@ -225,7 +244,8 @@ Phases: `Provisioning` → `Backfilling` → `Live`, or `Degraded` on error.
 
 Optional (`spec.insights.laya.{url, headerSecretRef}`): every indexed event's
 transaction is classified into a lane by a Laya model gate and written to
-`_insights` (+ `_insights_cursor`) in the indexer's schema.
+`_insights` (+ `_insights_cursor`) in the indexer's schema; each sentence is
+stored once in `_sentences`.
 
 - Pure logic in `core/src/insights/`: `signatures.ts` is a port of
   `radar/radar/signatures.py`, `sentence.ts` of Radar's `shape` sentence and

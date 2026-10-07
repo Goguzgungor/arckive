@@ -1,0 +1,81 @@
+# Arc mainnet explorer data plane: every USDC movement and the Uniswap v4
+# PoolManager, whole history (startBlock 0 backfills from genesis).
+#
+# Every USDC movement is logged once by 0xff…fe — a plain value send, value
+# passed into a call, and the twin of every ERC-20 transfer through 0x3600…0000
+# (same parties, 18 decimals) — so indexing that one log covers USDC without
+# double counting. Needs a Secret pg-dsn (see ../../arc-testnet/k8s/pg-dsn-secret.example.yaml).
+apiVersion: arckive.org/v1alpha1
+kind: Indexer
+metadata:
+  name: arc-explorer
+spec:
+  network:
+    chainId: 5042
+    # the public endpoint serves full history and 2,000-block getLogs ranges
+    rpc: ["https://rpc.mainnet.arc.io"]
+    finalityTag: latest
+  storage:
+    mode: External
+    external:
+      dsnSecretRef: { name: pg-dsn, key: url }
+  polling:
+    batchBlocks: 2000
+    intervalMs: 1000
+  contracts:
+    - name: usdc
+      address: "0xfffffffffffffffffffffffffffffffffffffffe"
+      startBlock: 0
+      events: [Transfer]
+      abi:
+        inline:
+          - type: event
+            name: Transfer
+            inputs:
+              - { name: from, type: address, indexed: true }
+              - { name: to, type: address, indexed: true }
+              - { name: value, type: uint256, indexed: false }
+    - name: poolmanager
+      address: "0x8366a39cc670b4001a1121b8f6a443a643e40951"
+      startBlock: 0
+      events: [Initialize, ModifyLiquidity, Swap, Donate]
+      abi:
+        inline:
+          - type: event
+            name: Initialize
+            inputs:
+              - { name: id, type: bytes32, indexed: true }
+              - { name: currency0, type: address, indexed: true }
+              - { name: currency1, type: address, indexed: true }
+              - { name: fee, type: uint24, indexed: false }
+              - { name: tickSpacing, type: int24, indexed: false }
+              - { name: hooks, type: address, indexed: false }
+              - { name: sqrtPriceX96, type: uint160, indexed: false }
+              - { name: tick, type: int24, indexed: false }
+          - type: event
+            name: ModifyLiquidity
+            inputs:
+              - { name: id, type: bytes32, indexed: true }
+              - { name: sender, type: address, indexed: true }
+              - { name: tickLower, type: int24, indexed: false }
+              - { name: tickUpper, type: int24, indexed: false }
+              - { name: liquidityDelta, type: int256, indexed: false }
+              - { name: salt, type: bytes32, indexed: false }
+          - type: event
+            name: Swap
+            inputs:
+              - { name: id, type: bytes32, indexed: true }
+              - { name: sender, type: address, indexed: true }
+              - { name: amount0, type: int128, indexed: false }
+              - { name: amount1, type: int128, indexed: false }
+              - { name: sqrtPriceX96, type: uint160, indexed: false }
+              - { name: liquidity, type: uint128, indexed: false }
+              - { name: tick, type: int24, indexed: false }
+              - { name: fee, type: uint24, indexed: false }
+          - type: event
+            name: Donate
+            inputs:
+              - { name: id, type: bytes32, indexed: true }
+              - { name: sender, type: address, indexed: true }
+              - { name: amount0, type: uint256, indexed: false }
+              - { name: amount1, type: uint256, indexed: false }

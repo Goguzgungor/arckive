@@ -53,8 +53,8 @@ that announce fast but rate-limit queries can go into `announceRpc` — they are
 listened to only and never queried.
 
 Data: `<contract>_<event>` tables in an `idx_<indexer>` schema
-(e.g. `idx_usdc_arc.usdc_transfer`) plus `_cursor`, `_meta`, `_dead_letter`
-control tables. Deleting the CR cleans up the worker resources and **never
+(e.g. `idx_usdc_arc.usdc_transfer`) plus `_cursor`, `_meta`, `_dead_letter`,
+`_blocks` control tables (see Storage layout below). Deleting the CR cleans up the worker resources and **never
 touches the DB**.
 
 ## Insights (optional)
@@ -94,14 +94,15 @@ Results land in `idx_<indexer>._insights`, keyed like the event rows:
 ```sql
 SELECT t.block_time, t.value, i.lane, i.lane_p, i.protocol
 FROM idx_usdc_arc.usdc_transfer t
-JOIN idx_usdc_arc._insights i USING (block_number, tx_hash, log_index)
+JOIN idx_usdc_arc._insights i USING (block_number, log_index)
 WHERE i.lane = 'bridge'
 ORDER BY t.block_number DESC LIMIT 20;
 ```
 
 `lane_p` is the model's confidence (NULL when the transaction itself decides
 the lane — mint/burn, zero-value spam, no transfer, unreadable); `probabilities` keeps the
-whole distribution, and `sentence` is exactly what the model read.
+whole distribution, and `sentence` is exactly what the model read (both live
+in `_sentences`; query `_insights_full` to see them beside each row).
 
 Insights run in their own loop behind the ingest cursor. Ingest never waits for
 the model: if the gate is slow, rate-limited or down, insights fall behind
@@ -132,9 +133,42 @@ and function names from your ABI stand in for Radar's protocol tables — and
 its accuracy is **unmeasured**. Read a sample before trusting it:
 
 ```sql
-SELECT lane, lane_p, protocol, sentence, tx_hash
-FROM idx_<indexer>._insights ORDER BY random() LIMIT 50;
+SELECT lane, lane_p, protocol, sentence, block_number, log_index
+FROM idx_<indexer>._insights_full ORDER BY random() LIMIT 50;
 ```
+
+## Storage layout
+
+Arckive writes **storage layout 2** (recorded in `_meta` as `layout = 2`):
+
+- Hashes and addresses are `bytea`. psql prints them as `\x…`; filter with a
+  `'\x…'` literal so the index is used:
+
+  ```sql
+  SELECT block_time, "from", "to", value
+  FROM idx_usdc.usdc_transfer
+  WHERE "to" = '\x8366a39cc670b4001a1121b8f6a443a643e40951'
+  ORDER BY block_number DESC LIMIT 20;
+  ```
+
+  Every event table has a `<table>_hex` view with `0x…` text for dashboards
+  and exports; filter on the base table, not on the view.
+- Rows are keyed by `(block_number, log_index)`. The block hash is stored once
+  per block in `_blocks`; the contract address once per table in `_meta`
+  (`contract:<table>`).
+- Every row table is range-partitioned by `block_number`,
+  `spec.storage.partitionBlocks` blocks per partition (default 2,000,000).
+- Insights keep one narrow row per event in `_insights` and each sentence
+  once in `_sentences`; `_insights_full` joins them.
+- Every `_meta` key bootstrap writes (`layout`, `contract:<table>`,
+  `partition_blocks`) is fixed for the schema's life: a different value (a
+  contract's address or `partitionBlocks` changed under the same Indexer)
+  raises `LayoutError`; drop the schema or rename the Indexer.
+
+Upgrading from layout 1: a worker refuses a schema written by layout 1
+(`LayoutError` in its log). Drop the schema (`DROP SCHEMA idx_<name> CASCADE`)
+or rename the Indexer, and it re-indexes from `startBlock`. Apply the CRD
+change by hand: `kubectl apply -f charts/arckive/crds/indexer.yaml`.
 
 ## Benchmarks
 
