@@ -1,7 +1,7 @@
 // Scenario 2 — Backfill: how fast real USDC history is caught up on Arc testnet.
 // The worker starts head-N blocks behind; /metrics is sampled every 2 s and the
 // run ends when healthz reports Live. The chain-time speedup is read from the
-// block_time span of the rows.
+// block_time span of _blocks.
 import pg from 'pg';
 import { rpcHead, usdcAbi } from './freshness.ts';
 import { rate } from './stats.ts';
@@ -82,7 +82,7 @@ export async function run(databaseUrl: string): Promise<BackfillResult> {
     const rpcErrors = (await metricValue(PORT, 'arckive_rpc_errors_total')) ?? 0;
     const span = await db.query(
       `SELECT EXTRACT(EPOCH FROM (max(block_time) - min(block_time))) AS sec
-         FROM idx_bench_backfill.usdc_transfer`,
+         FROM idx_bench_backfill._blocks`,
     );
     return {
       kind: 'backfill',

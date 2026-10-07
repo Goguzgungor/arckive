@@ -159,6 +159,42 @@ function columnArrays(columns: readonly ColumnSpec[], rows: ReadonlyArray<Record
   return columns.map((c) => rows.map((r) => r[c.name] ?? null));
 }
 
+// Each address once: the batch's distinct addresses are inserted if new and
+// read back as ids in the same transaction, so a rolled-back batch leaves no
+// id pointing at an address that does not exist.
+async function resolveAddresses(
+  client: pg.PoolClient, schema: string, store: Store, byTable: ReadonlyMap<string, Array<Record<string, unknown>>>,
+): Promise<void> {
+  const wanted = new Map<string, Buffer>();
+  for (const [table, group] of byTable) {
+    for (const c of store.tables.get(table)!.columns) {
+      if (!c.address) continue;
+      for (const r of group) {
+        const v = r[c.name];
+        if (Buffer.isBuffer(v)) wanted.set(v.toString('hex'), v);
+      }
+    }
+  }
+  if (!wanted.size) return;
+  const all = [...wanted.values()];
+  await client.query(
+    `INSERT INTO ${q(schema)}._addresses (address) SELECT unnest($1::bytea[]) ON CONFLICT (address) DO NOTHING`,
+    [all],
+  );
+  const ids = new Map<string, number>();
+  const res = await client.query(`SELECT id, address FROM ${q(schema)}._addresses WHERE address = ANY($1::bytea[])`, [all]);
+  for (const x of res.rows) ids.set((x.address as Buffer).toString('hex'), Number(x.id));
+  for (const [table, group] of byTable) {
+    for (const c of store.tables.get(table)!.columns) {
+      if (!c.address) continue;
+      for (const r of group) {
+        const v = r[c.name];
+        if (Buffer.isBuffer(v)) r[c.name] = ids.get(v.toString('hex'))!;
+      }
+    }
+  }
+}
+
 export async function commitBatch(
   pool: pg.Pool,
   store: Store,
@@ -167,15 +203,17 @@ export async function commitBatch(
   newCursor: bigint,
 ): Promise<number> {
   const { schema } = store;
+  // Shallow copies: address resolution rewrites Buffers into ids in place, and
+  // a retried batch must still carry the caller's Buffers.
   const byTable = new Map<string, Array<Record<string, unknown>>>();
-  const blocks = new Map<string, { hash: Buffer; time: unknown }>();
+  const blocks = new Map<string, { hash: Buffer; time: Date }>();
   for (const r of rows) {
     const group = byTable.get(r.tableName) ?? [];
-    group.push(r.columns);
+    group.push({ ...r.columns });
     byTable.set(r.tableName, group);
     blocks.set(String(r.columns['block_number']), {
       hash: Buffer.from(r.blockHash.slice(2), 'hex'),
-      time: r.columns['block_time'],
+      time: r.blockTime,
     });
   }
   const planned = store.partitions.plan(
@@ -188,6 +226,10 @@ export async function commitBatch(
   try {
     await client.query('BEGIN');
     for (const p of planned) await client.query(p.sql);
+    for (const table of byTable.keys()) {
+      if (!store.tables.has(table)) throw new Error(`no table spec for ${table}`);
+    }
+    await resolveAddresses(client, schema, store, byTable);
     if (blocks.size) {
       await client.query(unnestInsert(`${q(schema)}._blocks`, BLOCK_COLUMNS, '(block_number)'), [
         [...blocks.keys()],
@@ -196,8 +238,7 @@ export async function commitBatch(
       ]);
     }
     for (const [table, group] of byTable) {
-      const spec = store.tables.get(table);
-      if (!spec) throw new Error(`no table spec for ${table}`);
+      const spec = store.tables.get(table)!;
       const res = await client.query(
         unnestInsert(`${q(schema)}.${q(table)}`, spec.columns, '(block_number, log_index)'),
         columnArrays(spec.columns, group),

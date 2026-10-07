@@ -90,7 +90,7 @@ describe('pipeline', () => {
 
   it('with batchBlocks=2, processes range by range until caught up, writes 5 events', async () => {
     while (await runOnce(deps)) { /* until caught up */ }
-    const r = await pool.query(`SELECT n, who FROM idx_demo.emitter_ping ORDER BY n`);
+    const r = await pool.query(`SELECT n, who FROM idx_demo.emitter_ping_hex ORDER BY n`);
     expect(r.rows).toHaveLength(5);
     expect(r.rows.map((x) => x.n)).toEqual(['1', '2', '3', '4', '5']);
     expect(deps.phase.phase).toBe('Live');

@@ -26,14 +26,13 @@ function row(blockNumber: number, logIndex: number): DecodedRow {
   return {
     tableName: 'usdc_transfer',
     blockHash: `0x${'a'.repeat(64)}`,
+    blockTime: new Date('2026-07-03T00:00:00Z'),
     columns: {
       block_number: String(blockNumber),
-      block_time: new Date('2026-07-03T00:00:00Z'),
       tx_hash: hex('0x' + 'b'.repeat(64)),
-      tx_index: 0,
       log_index: logIndex,
-      from: hex('0x' + '1'.repeat(40)),
-      to: hex('0x' + '2'.repeat(40)),
+      from_id: hex('0x' + '1'.repeat(40)),
+      to_id: hex('0x' + '2'.repeat(40)),
       value: '100',
     },
   };
@@ -122,8 +121,8 @@ describe('db (storage layout 2)', () => {
     expect(await commitBatch(pool, store, [row(10, 0), row(10, 1)], [], 10n)).toBe(2);
     expect(await commitBatch(pool, store, [row(10, 0), row(10, 1)], [], 10n)).toBe(0);
     expect(await getCursor(pool, SCHEMA)).toBe(10n);
-    const r = await pool.query(`SELECT "from", tx_hash FROM ${SCHEMA}.usdc_transfer ORDER BY log_index`);
-    expect(r.rows[0].from).toEqual(hex('0x' + '1'.repeat(40)));
+    const r = await pool.query(`SELECT tx_hash FROM ${SCHEMA}.usdc_transfer ORDER BY log_index`);
+    expect(r.rows[0].tx_hash).toEqual(hex('0x' + 'b'.repeat(64)));
     const blocks = await pool.query(`SELECT block_number, block_hash FROM ${SCHEMA}._blocks`);
     expect(blocks.rows).toEqual([{ block_number: '10', block_hash: hex('0x' + 'a'.repeat(64)) }]);
   });
@@ -145,7 +144,7 @@ describe('db (storage layout 2)', () => {
       sent.n = 0;
       await commitBatch(counted, store, Array.from({ length: 200 }, (_, i) => row(22, i)), [], 22n);
       expect(sent.n).toBe(small);
-      expect(small).toBe(5); // BEGIN, _blocks, usdc_transfer, cursor, COMMIT
+      expect(small).toBe(7); // BEGIN, address INSERT, address SELECT, _blocks, usdc_transfer, cursor, COMMIT
     } finally {
       await counted.end();
     }
@@ -176,10 +175,56 @@ describe('db (storage layout 2)', () => {
     expect(await commitBatch(pool, store, [row(5000, 0)], [], 5000n)).toBe(1);
   });
 
-  it('the _hex view prints 0x text', async () => {
+  it('stores each address once and points rows at it', async () => {
+    await commitBatch(pool, store, [row(10, 0), row(10, 1)], [], 10n);
+    const a = await pool.query(`SELECT id, address FROM ${SCHEMA}._addresses ORDER BY id`);
+    expect(a.rows.map((r) => r.address)).toEqual([hex('0x' + '1'.repeat(40)), hex('0x' + '2'.repeat(40))]);
+    const t = await pool.query(`SELECT from_id, to_id FROM ${SCHEMA}.usdc_transfer ORDER BY log_index`);
+    expect(t.rows).toEqual([{ from_id: a.rows[0].id, to_id: a.rows[1].id }, { from_id: a.rows[0].id, to_id: a.rows[1].id }]);
+  });
+
+  it('keeps an address id across commits', async () => {
     await commitBatch(pool, store, [row(10, 0)], [], 10n);
-    const r = await pool.query(`SELECT "from", tx_hash FROM ${SCHEMA}.usdc_transfer_hex`);
-    expect(r.rows[0]).toEqual({ from: '0x' + '1'.repeat(40), tx_hash: '0x' + 'b'.repeat(64) });
+    await commitBatch(pool, store, [row(11, 0)], [], 11n);
+    const n = await pool.query(`SELECT count(*)::int AS n FROM ${SCHEMA}._addresses`);
+    expect(n.rows[0].n).toBe(2);
+  });
+
+  it('a rolled-back commit leaves no address behind and the next commit re-inserts it', async () => {
+    const bad = row(5000, 0);
+    bad.columns['value'] = 'not a number';
+    bad.columns['to_id'] = hex('0x' + '3'.repeat(40));
+    await expect(commitBatch(pool, store, [bad], [], 5000n)).rejects.toThrow();
+    const left = await pool.query(`SELECT count(*)::int AS n FROM ${SCHEMA}._addresses`);
+    expect(left.rows[0].n).toBe(0);
+    const ok = row(5000, 0);
+    ok.columns['to_id'] = hex('0x' + '3'.repeat(40));
+    expect(await commitBatch(pool, store, [ok], [], 5000n)).toBe(1);
+    const r = await pool.query(`SELECT "to" FROM ${SCHEMA}.usdc_transfer_hex WHERE block_number = 5000`);
+    expect(r.rows[0].to).toBe('0x' + '3'.repeat(40));
+  });
+
+  it('does not mutate the caller rows, so a retried batch still carries Buffers', async () => {
+    const r = row(13, 0);
+    await commitBatch(pool, store, [r], [], 13n);
+    expect(Buffer.isBuffer(r.columns['from_id'])).toBe(true);
+  });
+
+  it('keeps a NULL address column NULL', async () => {
+    const r = row(12, 0);
+    r.columns['to_id'] = null;
+    await commitBatch(pool, store, [r], [], 12n);
+    const t = await pool.query(`SELECT to_id FROM ${SCHEMA}.usdc_transfer WHERE block_number = 12`);
+    expect(t.rows[0].to_id).toBeNull();
+  });
+
+  it('writes block time once per block and the readable view joins it', async () => {
+    await commitBatch(pool, store, [row(10, 0)], [], 10n);
+    const b = await pool.query(`SELECT block_time, _ingested_at FROM ${SCHEMA}._blocks`);
+    expect(b.rows[0].block_time).toEqual(new Date('2026-07-03T00:00:00Z'));
+    expect(b.rows[0]._ingested_at).toBeInstanceOf(Date);
+    const v = await pool.query(`SELECT block_time, "from", tx_hash FROM ${SCHEMA}.usdc_transfer_hex`);
+    expect(v.rows[0]).toEqual({ block_time: new Date('2026-07-03T00:00:00Z'), from: '0x' + '1'.repeat(40), tx_hash: '0x' + 'b'.repeat(64) });
   });
 
   it('dead letters are written in the same transaction', async () => {

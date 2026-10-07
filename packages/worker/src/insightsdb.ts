@@ -79,11 +79,16 @@ export async function readEventRows(
   const rows: EventRow[] = [];
   for (const t of tables) {
     const c = t.transferColumns;
-    const hexOf = (col: string) => `'0x' || encode(${q(col)}, 'hex')`;
-    const extra = c ? `, ${hexOf(c[0])} AS t_from, ${hexOf(c[1])} AS t_to, ${q(c[2])}::text AS t_value` : '';
+    const hexOf = (expr: string) => `'0x' || encode(${expr}, 'hex')`;
+    // transfer parties are stored as ids; readers resolve them through _addresses
+    const joins = c
+      ? ` LEFT JOIN ${q(schema)}._addresses af ON af.id = e.${q(c[0])} LEFT JOIN ${q(schema)}._addresses at ON at.id = e.${q(c[1])}`
+      : '';
+    const extra = c ? `, ${hexOf('af.address')} AS t_from, ${hexOf('at.address')} AS t_to, e.${q(c[2])}::text AS t_value` : '';
     const r = await pool.query(
-      `SELECT block_number, ${hexOf('tx_hash')} AS tx_hash, log_index${extra} FROM ${q(schema)}.${q(t.tableName)}
-       WHERE block_number BETWEEN $1 AND $2`,
+      `SELECT e.block_number, ${hexOf('e.tx_hash')} AS tx_hash, e.log_index${extra}
+       FROM ${q(schema)}.${q(t.tableName)} e${joins}
+       WHERE e.block_number BETWEEN $1 AND $2`,
       [from.toString(), to.toString()],
     );
     for (const x of r.rows) {

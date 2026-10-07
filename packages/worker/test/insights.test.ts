@@ -44,15 +44,15 @@ const defs = [
 
 const b = (h: string) => Buffer.from(h.slice(2), 'hex');
 const common = (block: number, n: number) => ({
-  block_number: String(block), block_time: new Date(0), tx_hash: b(tx(n)), tx_index: 0, log_index: n,
+  block_number: String(block), tx_hash: b(tx(n)), log_index: n,
 });
 const transferRow = (block: number, n: number, value: bigint): DecodedRow => ({
-  tableName: 'tok_transfer', blockHash: `0x${'bb'.repeat(32)}`,
-  columns: { ...common(block, n), from: b(WALLET), to: b(WALLET2), value: value.toString() },
+  tableName: 'tok_transfer', blockHash: `0x${'bb'.repeat(32)}`, blockTime: new Date(0),
+  columns: { ...common(block, n), from_id: b(WALLET), to_id: b(WALLET2), value: value.toString() },
 });
 const depositRow = (block: number, n: number): DecodedRow => ({
-  tableName: 'vault_deposited', blockHash: `0x${'bb'.repeat(32)}`,
-  columns: { ...common(block, n), user: b(WALLET), amount: '5' },
+  tableName: 'vault_deposited', blockHash: `0x${'bb'.repeat(32)}`, blockTime: new Date(0),
+  columns: { ...common(block, n), user_id: b(WALLET), amount: '5' },
 });
 
 const ctx = (over: Partial<TxContext>): TxContext => ({

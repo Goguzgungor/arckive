@@ -1,7 +1,7 @@
 // Scenario 1 — Freshness: block close → SQL row on a live network.
 // The worker tails real USDC traffic in WS newHeads LISTENING mode (polling is
 // only a safety net) and latency is read from the product's own meta columns:
-// _ingested_at - block_time. No emitter: third-party traffic is measured.
+// _blocks._ingested_at - _blocks.block_time, per block. No emitter: third-party traffic is measured.
 // Network selection: BENCH_FRESH_NETWORK (default arc-testnet; arc-mainnet will be added once it launches)
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -122,8 +122,9 @@ export async function run(databaseUrl: string): Promise<FreshnessResult> {
     const rpcErrors = (await metricValue(PORT, 'arckive_rpc_errors_total')) ?? 0;
 
     const rows = await db.query(
+      // one sample per block: every row of a block shares both times
       `SELECT EXTRACT(EPOCH FROM (_ingested_at - block_time)) * 1000 AS ms, block_number
-         FROM idx_bench_fresh.usdc_transfer ORDER BY block_number`,
+         FROM idx_bench_fresh._blocks ORDER BY block_number`,
     );
     const samplesMs = rows.rows.map((r) => Math.round(Number(r.ms)));
     const blocks = rows.rows.map((r) => Number(r.block_number));
