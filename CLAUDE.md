@@ -159,6 +159,12 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
   for rows `ON CONFLICT` skips. `<table>_hex` views are the readable form
   (`block_time`/`_ingested_at` from `_blocks`, addresses under the original
   param names, hashes and addresses as `0x…`); filters belong on the base table.
+- With `storage.addressIndexes`, every `address` param gets
+  `"<table>_<p>_id_idx" (<p>_id, block_number, log_index)` in place of the
+  single-column index — "latest rows of this address" by keyset. The
+  `_meta` key `address_indexes` fixes it for the schema's life; a schema
+  from before the key counts as `'false'` (`LEGACY_META`), and `_meta` is
+  checked before any table DDL runs.
 - Compaction: when ingest moves into partition n+1, the worker rebuilds
   partition n's indexes once in the background (`REINDEX TABLE CONCURRENTLY`,
   `Compactor` in `worker/src/db.ts`); a restart does not revisit earlier
@@ -169,7 +175,7 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
   partitions are created by the worker inside the commit that first needs them
   (`Partitions` in `worker/src/db.ts`, remembered only after COMMIT).
 - Control tables per schema: `_cursor` (single row), `_meta` (layout +
-  `contract:<table>` + `partition_blocks`), `_dead_letter`, `_blocks`
+  `contract:<table>` + `partition_blocks` + `address_indexes`), `_dead_letter`, `_blocks`
   (hash/time/`_ingested_at` once per block), `_addresses`. Every `_meta` key is fixed for the schema's life:
   a different value (a contract's address or `partitionBlocks` changed under
   the same Indexer) raises `LayoutError`; drop the schema or rename the
@@ -188,7 +194,10 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
 decodes them, and writes rows + dead letters + the new cursor **in a single
 transaction** (`commitBatch`). Undecodable logs go to `_dead_letter` rather than
 crashing the loop. `runLoop` retries on error with exponential backoff (1s → 30s)
-and sets phase `Degraded`.
+and sets phase `Degraded`. A `Live` worker whose range reaches the head stays
+`Live`; `Backfilling` means one round cannot reach the head (or the worker is
+starting or recovering). Do not set `Backfilling` on every round again: it
+pauses insights.
 
 `commitBatch` sends one `unnest` INSERT per table (plus `_blocks` and the
 cursor), whatever the row count — a remote database pays one round trip per
@@ -221,7 +230,19 @@ runs `getFinalizedBlockNumber` in parallel with `getLogs` and commits only up to
 ### Operator reconciliation
 
 - `reconcile` is watch-driven plus a periodic resync (`RESYNC_INTERVAL_MS`,
-  default 300000). Deleted CRs are ignored — `ownerReferences` handle cleanup.
+  default 300000), through `ReconcileGate` (`operator/src/gate.ts`): a
+  `MODIFIED` event reconciles only when `metadata.generation` changed —
+  worker status patches every 10 s do not — and an Indexer has at most one
+  reconcile running plus one queued rerun. An object with a lower generation
+  than one already seen for that Indexer is ignored (a resync list can be
+  older than a watch event). A failed (or throwing) reconcile is retried on
+  the next event. Deleted CRs are ignored — `ownerReferences` handle cleanup.
+- Gets, applies and status patches go through `operator/src/kubehttp.ts`,
+  one keep-alive agent per process. kubernetes-fluent-client opens a new
+  connection with a 10-minute keep-alive per request (the v3 OOM); it is
+  used for the watch only. Do not route other calls back through it.
+  Applies keep fluent-client's field manager name `pepr` on purpose (with
+  `fieldValidation=Strict&force=true`) — do not rename it (see spec §6).
 - **Status is only patched when it actually changed.** Every patch produces a
   watch event; unconditional patching self-feeds into a reconcile storm (OOM).
   Preserve the `unchanged` check in `setCondition`.
@@ -250,7 +271,8 @@ Worker endpoints: `:9090/metrics` (Prometheus) and `:9090/healthz` (503 when
 `dead_letter_total`, `write_latency_seconds`, `ws_connected`,
 `head_notifications_total`, plus `insights_blocks_behind`,
 `insights_classified_total{lane}`, `insights_model_calls_total`,
-`insights_cache_hits_total`, `insights_errors_total{stage}` — with an
+`insights_cache_hits_total`, `insights_errors_total{stage}`,
+`insights_rpc_requests_total{endpoint,outcome}` — with an
 `indexer` default label.
 
 Phases: `Provisioning` → `Backfilling` → `Live`, or `Degraded` on error.
@@ -273,22 +295,35 @@ for `UNIQUE NULLS NOT DISTINCT`).
   question — do not reword them.
 - Worker: `laya.ts` (gate client: ≤64 states/call, ≤1 call/s, per-sentence
   cache), `txcontext.ts` (per block: `getBlock(full)` + `getBlockReceipts`;
-  `factory()` per pool, `getCode` per party, `symbol()`/`decimals()`),
-  `pacer.ts`, `insights.ts` + `insightsdb.ts` (the loop).
+  `factory()` per pool, `getCode` per party, all through `rpcpool.ts`;
+  `symbol()`/`decimals()` at start-up on ingest's client), `pacer.ts` (per
+  pool endpoint), `insights.ts` + `insightsdb.ts` (the loop).
 - The loop runs **behind** `_cursor` and never inside ingest: the only ingest
   change is the `PipelineDeps.onCommitted` wake-up hook. Insight failures never
   touch `PhaseTracker`. Rows + cursor are one transaction, like `commitBatch`.
-- Insights share the RPC budget with ingest and must stay second: every insight
-  RPC call goes through one adaptive `Pacer` (sequential; starts at 4/s, halves
-  on -32005/429 or while ingest is `Degraded`, relaxes 3% per success up to
-  20/s), rounds run only while the ingest phase is `Live` (read, never set), a
-  tx sender is taken for a wallet without `getCode`, and insights use one
-  endpoint alone — the last http entry of `network.rpc` (`createInsightsRpc`:
-  no `fallback`, `retryCount: 0`, so a rate limit reaches the Pacer instead of
-  spilling onto ingest's endpoint). A round whose model call fails is kept and
-  only the model call is retried (`prepareRound` / `finishRound`): a gate
-  outage must cost no RPC. Arc mainnet's public RPC has a per-minute quota that
-  ingest alone (1 s polling) already hits. Do not add concurrency on this path.
+- Insight reads go through `RpcPool` (`worker/src/rpcpool.ts`, Radar's
+  `rpc.py` model): JSON-RPC batches of up to 20 calls, **one request in
+  flight** across the pool, endpoints tried in config order. A rate-limited
+  or failed endpoint rests (5 s doubling to 60 s, cleared on the next
+  answer) and its pacer backs off; a call one endpoint refuses (beamrpc's
+  "Archive requests require a personal token", a node that has not seen the
+  block) moves to the next endpoint without resting the first; a response
+  over viem's size limit is halved on the same endpoint. Every http batch
+  reply is checked before viem maps it (viem maps replies by position): 429
+  is a rate limit; any other non-2xx status, a non-array reply or ids that
+  differ from the request's make the endpoint rest and every call of that
+  request move on. Endpoints: `spec.insights.rpc`, else the last http entry
+  of `network.rpc` (`insightsRpc`); a ws endpoint is asked one call per
+  request. Rounds still run only while ingest is `Live`, and while ingest is
+  `Degraded` the endpoints it shares are slowed (`backOffShared`). A round
+  whose model call fails is kept and only the model call is retried
+  (`prepareRound` / `finishRound`): a gate outage must cost no RPC. Arc
+  mainnet's public RPC has a per-minute quota that ingest alone (1 s
+  polling) already hits. Do not add a second request in flight on this path.
+- `spec.insights.startBlock`: omitted = the indexer's start; >= 0 = that
+  block; negative = that many blocks before the head **when the insight
+  loop first runs** (written by the first round, `initInsightsCursor`). The
+  insights cursor is written once per schema; later edits change nothing.
 - Ruled lanes (no model call): `issuance`, `spam`, `uncertain` (Radar's) and
   `no_transfer` — a non-transfer event whose tx logged no Transfer /
   TransferSingle / TransferBatch and sent no value. Added after a 5-contract

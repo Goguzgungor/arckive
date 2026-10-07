@@ -21,6 +21,9 @@ spec:
     mode: External
     external:
       dsnSecretRef: { name: pg-dsn, key: url }
+    # "latest movements of this address" for the explorer's address pages;
+    # fixed when the schema is created
+    addressIndexes: true
   polling:
     batchBlocks: 2000
     intervalMs: 1000

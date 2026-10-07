@@ -255,10 +255,12 @@ process, TLS and the server from `@kubernetes/client-node`'s `KubeConfig`
 a kubeconfig), the auth header fetched per request so a rotated
 service-account token is picked up. kubernetes-fluent-client stays for the
 watch only — one long-lived connection. Server-side apply keeps
-`force=true` and its field manager becomes `arckive-operator`
-(fluent-client used `pepr`); the first apply after the upgrade moves field
-ownership over, and since the operator applies the same objects no field is
-dropped. Goal 5 in the real test is the proof.
+`force=true`, `fieldValidation=Strict` and fluent-client's field manager name
+`pepr`. A different name would leave both managers co-owning every field of
+the objects applied before the upgrade, and a field later dropped from the
+desired state would never be deleted (the other manager still owns it).
+Server-side apply shares ownership between managers that apply equal values;
+`force` only resolves conflicts. Goal 5 in the real test is the proof.
 
 ### 7. `storage.addressIndexes`
 
