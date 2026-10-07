@@ -32,7 +32,7 @@ measured on 2026-10-07:
 ## Goals
 
 1. An indexed event with its lane costs at most ~450 bytes (v1: ~1.1–1.4 KB),
-   measured on mainnet.
+   measured on mainnet; after the revision in §2/§8/§11, about 310 bytes.
 2. A commit sends a fixed number of statements, independent of its row count.
 3. Backfill makes no per-block call when the node returns `blockTimestamp`,
    and survives provider range caps without manual tuning.
@@ -63,24 +63,35 @@ than re-indexing it, and the API is still `v1alpha1`.
 |---|---|---|
 | `block_number` | bigint | bigint |
 | `block_hash` | text | moved to `_blocks` |
-| `block_time` | timestamptz | timestamptz |
+| `block_time` | timestamptz | moved to `_blocks` |
 | `tx_hash` | text | **bytea** |
-| `tx_index` | integer | integer |
+| `tx_index` | integer | dropped — `log_index` already orders a block's logs |
 | `log_index` | integer | integer |
 | `contract_address` | text | dropped — one contract per table, kept in `_meta` |
-| `_ingested_at` | timestamptz default now() | unchanged (benchmarks read it) |
-| `address` params | text | **bytea** |
+| `_ingested_at` | timestamptz default now() | moved to `_blocks` (benchmarks read it there) |
+| `address` params | text | **`<param>_id integer`** → `_addresses.id` (§11) |
+
+Revised after the first mainnet measurement (2026-10-07): `block_time`,
+`_ingested_at` and `tx_index` are the same for every row of a block (or
+redundant), so they cost 28 bytes per row in the event table for nothing a
+join to `_blocks` cannot give back; addresses repeat heavily (14,819 distinct
+addresses in 170,045 transfers), so they are stored once (§11).
 
 - Key: `PRIMARY KEY (block_number, log_index)`. `logIndex` is block-scoped in
   the JSON-RPC spec, so the pair identifies a log chain-wide; inserts use
   `ON CONFLICT (block_number, log_index) DO NOTHING`. Verified on mainnet as
   part of the real test.
-- Indexes: indexed event parameters keep their btree; `tx_hash` gets a
-  **hash** index (equality only, a 4-byte code per row instead of 33 bytes).
+- Indexes: indexed event parameters keep their btree (on the id column for
+  addresses); `tx_hash` gets a **btree**. A hash index was the first choice,
+  but measured on 170,045 mainnet rows it cost 31.8 bytes per row freshly
+  built and 36.2 after incremental inserts, against 29.1 for a btree (which
+  deduplicates the ~2.6 rows each transaction has).
 - `_meta` records `contract:<table> = <address>` for every event table.
 - `_blocks (block_number bigint PRIMARY KEY, block_hash bytea NOT NULL,
-  block_time timestamptz NOT NULL)` holds one row per block that produced at
-  least one indexed row, written in the same transaction.
+  block_time timestamptz NOT NULL, _ingested_at timestamptz NOT NULL DEFAULT
+  now())` holds one row per block that produced at least one indexed row,
+  written in the same transaction. Freshness is `_ingested_at − block_time`
+  per block.
 
 ### 3. Partitioning
 
@@ -94,22 +105,36 @@ inside the same transaction, remembering which ones exist so the steady state
 sends nothing extra. Partitions make vacuum and index builds per-range, and a
 retention window, if one is ever wanted, a `DROP TABLE`.
 
+Indexes built row by row are looser than freshly built ones (measured: the
+`from`/`to` indexes 26 → 20 bytes per row, `tx_hash` 36 → 32 when rebuilt).
+When ingest commits its first row into partition `n + 1`, partition `n` of
+every row table is finished, so the worker rebuilds that partition's indexes
+once with `REINDEX TABLE CONCURRENTLY` — outside any transaction, in the
+background, one at a time, never blocking ingest; a failure is logged at warn
+and not retried (the partition stays correct, only looser). A restart does not
+revisit partitions finished before it.
+
 ### 4. Plain SQL
 
 bytea prints as `\x…` (Postgres' default `bytea_output = hex`) and compares
 against a `'\x…'` literal through the index:
 
+Each event table gets a view `<table>_hex` — the readable form of the table:
+`block_time` and `_ingested_at` from `_blocks`, every address resolved from
+`_addresses` under its parameter name, hashes and addresses as `0x…` text. It
+is what dashboards and exports read. Filters belong on the base table, where
+an address is matched through its id:
+
 ```sql
-SELECT block_time, "from", "to", value
-FROM idx_usdc.native_transfer
-WHERE "to" = '\x8366a39cc670b4001a1121b8f6a443a643e40951'
-ORDER BY block_number DESC LIMIT 20;
+SELECT b.block_time, t.*
+FROM idx_usdc.usdc_transfer t JOIN idx_usdc._blocks b USING (block_number)
+WHERE t.to_id = (SELECT id FROM idx_usdc._addresses
+                 WHERE address = '\x8366a39cc670b4001a1121b8f6a443a643e40951')
+ORDER BY t.block_number DESC LIMIT 20;
 ```
 
-Each event table also gets a view `<table>_hex` exposing the same columns with
-`0x…` text, for dashboards and exports. Filters belong on the base table: a
-predicate on the view's text columns cannot use the bytea indexes. The README
-says so.
+A predicate on the view's text columns cannot use the indexes. The README says
+so.
 
 ### 5. One statement per table per commit
 
@@ -123,7 +148,10 @@ ON CONFLICT (block_number, log_index) DO NOTHING
 
 The array cast of each column comes from the DDL type, so the statement has
 one parameter per column whatever the row count. `_blocks`, `_dead_letter`
-and the cursor update follow the same rule. The transaction stays one per
+and the cursor update follow the same rule, and so do the batch's addresses
+(§11): one insert of the new ones, one select of all their ids, before the
+event rows. A commit to one table is therefore BEGIN, two address
+statements, `_blocks`, the table, the cursor, COMMIT. The transaction stays one per
 range, as today. The insight loop writes `_sentences` and `_insights` the same
 way.
 
@@ -153,12 +181,25 @@ finds the cap in a few calls.
 _sentences (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             sentence text NOT NULL, model text NOT NULL DEFAULT '',
             probabilities jsonb, UNIQUE (sentence, model))
+_labels    (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            lane text NOT NULL, lane_p real, ruled boolean NOT NULL,
+            protocol text, facts text[] NOT NULL, sentence_id integer NOT NULL,
+            UNIQUE NULLS NOT DISTINCT (lane, lane_p, ruled, protocol, facts, sentence_id))
 _insights  (block_number bigint, log_index integer, lane text NOT NULL,
-            lane_p real, ruled boolean NOT NULL, protocol text,
-            facts text[] NOT NULL, sentence_id integer NOT NULL,
-            classified_at timestamptz NOT NULL DEFAULT now(),
+            label_id integer NOT NULL,
             PRIMARY KEY (block_number, log_index)) PARTITION BY RANGE (block_number)
 ```
+
+- Revised after the first mainnet measurement: 108,981 lane rows carried only
+  517 distinct (lane, lane_p, ruled, protocol, facts, sentence) tuples, and
+  `facts text[]` alone cost 33 bytes per row. Each tuple is stored once in
+  `_labels`; a row keeps its key, its lane (so `(lane, block_number)` still
+  serves "latest swaps" from the index) and a label id. `classified_at` is
+  dropped: lane lag is `_cursor − _insights_cursor` and the
+  `insights_blocks_behind` metric. `UNIQUE NULLS NOT DISTINCT` needs
+  PostgreSQL 15 or later.
+- Label ids are resolved per round like sentence ids: one `INSERT … ON
+  CONFLICT DO NOTHING` plus one `SELECT`.
 
 - The model's answer is a function of the sentence and the model, so the
   probabilities live once per `(sentence, model)`; ruled rows use model `''`
@@ -169,8 +210,9 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
 - The lane index becomes `(lane, block_number)`, which serves "latest swaps".
 - Sentence ids are resolved per round with one `INSERT … ON CONFLICT DO
   UPDATE` (keeping any probabilities already stored) plus one `SELECT`.
-- A view `_insights_full` joins each row with its sentence, model (`NULL`
-  for `''`) and probabilities, for plain SQL.
+- A view `_insights_full` joins each row with its label and sentence —
+  lane, lane_p, ruled, protocol, facts, sentence, model (`NULL` for `''`) and
+  probabilities — for plain SQL.
 - `facts` cannot travel through `unnest` as an array of arrays (unnest
   flattens them), so each row's facts are sent as one comma-joined string
   and split in SQL; fact names never contain commas.
@@ -199,6 +241,23 @@ added through the usual chain: CRD → `IndexerSpecSchema` →
 `renderWorkerConfig` → `WorkerConfigSchema`, parity test, `install.yaml`. Nothing
 else in the operator changes.
 
+### 11. Addresses
+
+```
+_addresses (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            address bytea NOT NULL UNIQUE)
+```
+
+Every `address` event parameter is stored as `<param>_id integer` (a column
+named `from` becomes `from_id`; a parameter whose `_id` name collides with
+another column raises `DdlError` at bootstrap like any collision). The writer
+collects the batch's distinct addresses, inserts the new ones (`ON CONFLICT
+DO NOTHING`), selects all their ids, and substitutes them before the event
+insert — inside the same transaction, so an id never points at an address
+that was rolled back. `_addresses` is not partitioned: it grows with distinct
+addresses, not with rows (14,819 for 170,045 transfers). Readers of addresses
+(the insight loop's `readEventRows`, the `_hex` views) join it.
+
 ## Errors
 
 - `LayoutError` (new, named like the others): v1 schema found.
@@ -207,25 +266,29 @@ else in the operator changes.
 
 ## Testing
 
-- **core:** layout 2 DDL (types, primary key, partition clause, hash index,
-  view, `_blocks`), partition naming and limits, bytea values from
-  `toSqlValue`, `KNOWN_TOKENS`, the range-cap classifier, CRD rendering of
-  `partitionBlocks`.
+- **core:** layout 2 DDL (types, primary key, partition clause, btree on
+  `tx_hash`, `<param>_id` columns for addresses, the `_hex` view's joins,
+  `_blocks` with `block_time`/`_ingested_at`, `_addresses`, `_labels`),
+  partition naming and limits, bytea values from `toSqlValue`, `KNOWN_TOKENS`,
+  the range-cap classifier, CRD rendering of `partitionBlocks`.
 - **worker (testcontainers + anvil):** an unnest commit is idempotent (a
-  replay inserts 0); a batch across a partition boundary creates the
-  partition; a v1 schema raises `LayoutError`; `blockTimestamp` is used when
-  present and `getBlockTimes` otherwise; a fake client capped at N blocks
-  drives the working batch down and back up; insights rows and `_sentences`
-  dedupe.
+  replay inserts 0); a commit sends a fixed number of statements whatever its
+  row count (BEGIN, two address statements, `_blocks`, the table, cursor,
+  COMMIT); addresses are stored once and the same address keeps its id
+  across commits; a rolled-back batch leaves no address or partition believed
+  to exist; a batch across a partition boundary creates the partition and the
+  finished partition's indexes are rebuilt once; a v1 schema raises
+  `LayoutError`; `blockTimestamp` is used when present and `getBlockTimes`
+  otherwise; a fake client capped at N blocks drives the working batch down
+  and back up; insights rows, `_labels` and `_sentences` dedupe.
 - **operator:** CRD↔zod parity with the new field.
 - **e2e (kind):** assertions follow the new columns.
 - **Real, on k3d against Arc mainnet:** an Indexer on native USDC and the
   PoolManager, backfilling a historical window and then tailing, writing to
   in-cluster Postgres. Measure bytes per event including the lane, backfill
-  blocks/s, live lag and statements per commit; confirm every ERC-20 log in a
-  sample has its native twin and that no `(block_number, log_index)` repeats.
-  Lanes come from the Mac's Laya model when it is reachable from the cluster.
-
+  blocks/s, live lag and statements per commit; measure how many ERC-20 logs
+  in a sample have a native twin; compare row counts and values with layout 1
+  on the same block window.
 ## Measured (2026-10-07, Arc mainnet, k3d)
 
 - Same block window (24,745,323–24,752,500) indexed by v1 and v2: 81,725 USDC
