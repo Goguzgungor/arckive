@@ -136,6 +136,7 @@ async function main(): Promise<void> {
   subscription?.close();
   stopCrStatus();
   server.close();
+  compactor.close(); // no new REINDEX once the pool is going away
   await pool.end();
 }
 

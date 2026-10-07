@@ -145,7 +145,9 @@ export class Partitions {
       }
       if (m <= last) continue;
       this.lastSeen.set(table, m);
-      for (let k = last; k < m; k++) this.onFinished?.(table, k);
+      // A sparse table only has the partitions it had rows in; rebuilding one
+      // that was never created would just fail with 42P01.
+      for (let k = last; k < m; k++) if (this.made.has(`${table}:${k}`)) this.onFinished?.(table, k);
     }
   }
 }
@@ -157,23 +159,83 @@ export class Partitions {
 // the background; a failure leaves a correct but looser index and is logged.
 export class Compactor {
   private tail: Promise<void> = Promise.resolve();
+  private closed = false;
 
   constructor(
     private readonly pool: pg.Pool,
-    private readonly log: { info(o: object, msg?: string): void; warn(o: object, msg?: string): void },
+    private readonly log: {
+      info(o: object, msg?: string): void;
+      warn(o: object, msg?: string): void;
+      debug?(o: object, msg?: string): void;
+    },
   ) {}
 
   enqueue(schema: string, partition: string): void {
+    if (this.closed) return;
     this.tail = this.tail.then(async () => {
+      if (this.closed) return; // queued before close(): dropped
       const started = Date.now();
+      let client: pg.PoolClient | undefined;
       try {
-        // pool.query: autocommit, outside any transaction
-        await this.pool.query(`REINDEX TABLE CONCURRENTLY ${q(schema)}.${q(partition)}`);
+        // A dedicated client: statement_timeout is session state, and a
+        // rebuild of a big partition legitimately outlasts any default.
+        client = await this.pool.connect();
+        await client.query('SET statement_timeout = 0');
+        // autocommit, outside any transaction
+        await client.query(`REINDEX TABLE CONCURRENTLY ${q(schema)}.${q(partition)}`);
+        await client.query('RESET statement_timeout');
         this.log.info({ schema, partition, ms: Date.now() - started }, 'partition indexes rebuilt');
       } catch (err) {
-        this.log.warn({ schema, partition, err }, 'partition index rebuild failed');
+        if ((err as { code?: string }).code === '42P01') {
+          this.log.debug?.({ schema, partition }, 'partition does not exist, nothing to rebuild');
+          return;
+        }
+        // A failed REINDEX CONCURRENTLY leaves an INVALID "_ccnew" index that
+        // is still maintained on every write; drop it so it costs nothing.
+        const dropped = await this.dropInvalid(client, schema, partition);
+        this.log.warn(
+          { schema, partition, err, invalidIndexesDropped: dropped },
+          dropped
+            ? 'partition index rebuild failed; leftover invalid indexes were dropped'
+            : 'partition index rebuild failed; leftover invalid indexes could not be dropped',
+        );
+      } finally {
+        // never hand a no-timeout session back to the pool, whatever failed
+        await client?.query('RESET statement_timeout').catch(() => {});
+        client?.release();
       }
     });
+  }
+
+  private async dropInvalid(client: pg.PoolClient | undefined, schema: string, partition: string): Promise<boolean> {
+    try {
+      const c = client ?? (await this.pool.connect());
+      try {
+        const r = await c.query(
+          `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+           JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE n.nspname = $1 AND t.relname = $2 AND NOT i.indisvalid`,
+          [schema, partition],
+        );
+        for (const x of r.rows) {
+          await c.query(`DROP INDEX CONCURRENTLY ${q(schema)}.${q(x.relname as string)}`);
+        }
+        await c.query('RESET statement_timeout').catch(() => {});
+        return true;
+      } finally {
+        if (!client) c.release();
+      }
+    } catch (err) {
+      this.log.warn({ schema, partition, err }, 'could not drop invalid indexes');
+      return false;
+    }
+  }
+
+  // Drops queued jobs and ignores later ones. A REINDEX already running
+  // finishes, or is cancelled when the pool ends; either leaves a correct
+  // (at worst looser, or invalid-and-droppable) index.
+  close(): void {
+    this.closed = true;
   }
 
   idle(): Promise<void> {

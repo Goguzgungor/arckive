@@ -300,10 +300,68 @@ describe('db (storage layout 2)', () => {
   it('Compactor rebuilds the partition indexes concurrently and survives a missing partition', async () => {
     await commitBatch(pool, store, [row(10, 0)], [], 10n);
     const warned: unknown[] = [];
-    const c = new Compactor(pool, { info: () => {}, warn: (o: unknown) => warned.push(o) });
+    const debugged: unknown[] = [];
+    const c = new Compactor(pool, { info: () => {}, warn: (o: unknown) => warned.push(o), debug: (o: unknown) => debugged.push(o) });
     c.enqueue(SCHEMA, 'usdc_transfer_p0');
     c.enqueue(SCHEMA, 'usdc_transfer_p999');
     await c.idle();
-    expect(warned).toHaveLength(1);
+    expect(warned).toHaveLength(0); // a missing partition is debug, not warn
+    expect(debugged).toHaveLength(1);
+    const bad = await pool.query(
+      `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = $1 AND t.relname = 'usdc_transfer_p0' AND NOT i.indisvalid`,
+      [SCHEMA],
+    );
+    expect(bad.rows).toEqual([]);
+    const total = await pool.query(
+      `SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname = $1 AND tablename = 'usdc_transfer_p0'`, [SCHEMA],
+    );
+    expect(total.rows[0].n).toBeGreaterThan(0);
+  });
+
+  it('Compactor drops invalid leftovers of a failed rebuild', async () => {
+    await commitBatch(pool, store, [row(10, 0)], [], 10n);
+    // simulate what a failed REINDEX CONCURRENTLY leaves behind
+    await pool.query(`CREATE INDEX usdc_transfer_p0_ccnew ON ${SCHEMA}.usdc_transfer_p0 (log_index)`);
+    await pool.query(
+      `UPDATE pg_index SET indisvalid = false WHERE indexrelid = '${SCHEMA}.usdc_transfer_p0_ccnew'::regclass`,
+    );
+    const c = new Compactor(pool, { info: () => {}, warn: () => {} });
+    // a real REINDEX failure is hard to provoke; exercise the cleanup it runs
+    await (c as unknown as { dropInvalid(cl: undefined, s: string, p: string): Promise<boolean> })
+      .dropInvalid(undefined, SCHEMA, 'usdc_transfer_p0');
+    const left = await pool.query(`SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND indexname = 'usdc_transfer_p0_ccnew'`, [SCHEMA]);
+    expect(left.rows).toEqual([]);
+  });
+
+  it('Compactor.close drops queued work and later enqueues', async () => {
+    await commitBatch(pool, store, [row(10, 0)], [], 10n);
+    const infos: unknown[] = [];
+    const c = new Compactor(pool, { info: (o: unknown) => infos.push(o), warn: () => {} });
+    c.enqueue(SCHEMA, 'usdc_transfer_p0');
+    c.close();
+    c.enqueue(SCHEMA, 'usdc_transfer_p0');
+    await c.idle();
+    expect(infos).toEqual([]);
+  });
+
+  it('only rebuilds partitions that exist for a sparse table', async () => {
+    const enqueued: string[] = [];
+    const s = createStore(SCHEMA, defs, 1000, { enqueue: (_s: string, p: string) => enqueued.push(p) } as never);
+    await commitBatch(pool, s, [row(10, 0)], [], 10n);
+    await commitBatch(pool, s, [row(5010, 0)], [], 5010n);
+    expect(enqueued.filter((p) => p.startsWith('usdc_transfer')).sort()).toEqual(['usdc_transfer_p0']);
+  });
+
+  it('a dense table enqueues each finished partition once, even across a jump', async () => {
+    const enqueued: string[] = [];
+    const s = createStore(SCHEMA, defs, 1000, { enqueue: (_s: string, p: string) => enqueued.push(p) } as never);
+    await commitBatch(pool, s, [row(10, 0)], [], 10n);
+    // one batch with rows in p1..p3 finishes p0, p1 and p2 at once
+    await commitBatch(pool, s, [row(1010, 0), row(2010, 0), row(3010, 0)], [], 3010n);
+    await commitBatch(pool, s, [row(4010, 0)], [], 4010n);
+    await commitBatch(pool, s, [row(4011, 0)], [], 4011n);
+    expect(enqueued.filter((p) => p.startsWith('usdc_transfer')).sort())
+      .toEqual(['usdc_transfer_p0', 'usdc_transfer_p1', 'usdc_transfer_p2', 'usdc_transfer_p3']);
   });
 });
