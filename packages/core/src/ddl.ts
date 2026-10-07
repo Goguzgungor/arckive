@@ -157,31 +157,43 @@ export function buildControlTables(schema: string): string[] {
 
 // Insights live beside the event tables, never in them: event tables keep
 // their hot-path shape, and "not classified yet" is simply "no row". Keyed
-// like the event rows, so any event table joins on (block_number, tx_hash,
-// log_index).
+// like the event rows, so any event table joins on (block_number, log_index).
+// The model's answer is a function of the sentence and the model, so it is
+// stored once per (sentence, model) — model '' for ruled rows — and every row
+// points at it.
 export function buildInsightsTables(schema: string): string[] {
+  const s = q(schema);
   return [
-    `CREATE TABLE IF NOT EXISTS ${q(schema)}.${q('_insights')} (
+    `CREATE TABLE IF NOT EXISTS ${s}._sentences (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  sentence text NOT NULL,
+  model text NOT NULL DEFAULT '',
+  probabilities jsonb,
+  UNIQUE (sentence, model)
+)`,
+    `CREATE TABLE IF NOT EXISTS ${s}.${q('_insights')} (
   block_number bigint NOT NULL,
-  tx_hash text NOT NULL,
   log_index integer NOT NULL,
-  table_name text NOT NULL,
   lane text NOT NULL,
   lane_p real,
   ruled boolean NOT NULL,
-  protocol text NOT NULL,
-  facts jsonb NOT NULL,
-  probabilities jsonb,
-  sentence text NOT NULL,
-  model text,
+  protocol text,
+  facts text[] NOT NULL,
+  sentence_id integer NOT NULL,
   classified_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (block_number, tx_hash, log_index)
-)`,
-    `CREATE INDEX IF NOT EXISTS ${q('_insights_lane_idx')} ON ${q(schema)}.${q('_insights')} (lane)`,
-    `CREATE TABLE IF NOT EXISTS ${q(schema)}.${q('_insights_cursor')} (
+  PRIMARY KEY (block_number, log_index)
+) PARTITION BY RANGE (block_number)`,
+    // serves "the latest rows of a lane"
+    `CREATE INDEX IF NOT EXISTS ${q('_insights_lane_idx')} ON ${s}.${q('_insights')} (lane, block_number)`,
+    `CREATE TABLE IF NOT EXISTS ${s}.${q('_insights_cursor')} (
   id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   last_block bigint NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )`,
+    // for plain SQL: each row with its sentence and the answer behind its lane
+    `CREATE OR REPLACE VIEW ${s}.${q('_insights_full')} AS
+SELECT i.block_number, i.log_index, i.lane, i.lane_p, i.ruled, i.protocol, i.facts, i.sentence_id,
+       s.sentence, NULLIF(s.model, '') AS model, s.probabilities, i.classified_at
+FROM ${s}.${q('_insights')} i JOIN ${s}._sentences s ON s.id = i.sentence_id`,
   ];
 }

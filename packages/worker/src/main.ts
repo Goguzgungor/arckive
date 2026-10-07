@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { pino } from 'pino';
 import {
-  extractEventDefs, parseWorkerConfig, schemaName, type EventDef,
+  extractEventDefs, knownToken, parseWorkerConfig, schemaName, type EventDef,
 } from '@arckive/core';
 import { createStore } from './db.js';
 import { createMetrics } from './metrics.js';
@@ -84,7 +84,9 @@ async function main(): Promise<void> {
     ? await prepareInsights({
         cfg, pool, schema: deps.schema, defs, abis, metrics, log, wake: insightsWake,
         context: createContextSource(createInsightsRpc(rpcs), { pacer: insightsPacer }),
-        readToken: (address, fallback) => readTokenInfo(client, address, fallback),
+        // native USDC has no symbol()/decimals() to read (core insights/tokens.ts)
+        readToken: async (address, fallback) =>
+          knownToken(cfg.network.chainId, address) ?? readTokenInfo(client, address, fallback),
         headerLine: process.env['INSIGHTS_HEADER'],
         ingestPhase: () => phase.phase,
         rpcPacer: insightsPacer,

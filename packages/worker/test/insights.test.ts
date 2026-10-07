@@ -7,7 +7,7 @@ import {
   TRANSFER_TOPIC, buildControlTables, extractEventDefs, parseWorkerConfig,
   type DecodedRow, type LaneAnswer, type TxContext,
 } from '@arckive/core';
-import { bootstrap, commitBatch, contractMeta, createStore, initCursor, type Store } from '../src/db.js';
+import { Partitions, bootstrap, commitBatch, contractMeta, createStore, initCursor, type Store } from '../src/db.js';
 import {
   InsightsError, insightTargets, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
 } from '../src/insights.js';
@@ -133,19 +133,20 @@ describe('insights', () => {
       wake: new HeadSignal(),
       ingestPhase: () => 'Live',
       rpcPacer: fakePacer(),
+      partitions: new Partitions(SCHEMA, 1_000_000n),
     };
     askedParties.length = 0;
   });
 
   const insights = async () =>
-    (await pool.query(`SELECT * FROM ${SCHEMA}._insights ORDER BY block_number, log_index`)).rows;
+    (await pool.query(`SELECT * FROM ${SCHEMA}._insights_full ORDER BY block_number, log_index`)).rows;
 
   it('classifies committed rows up to the ingest cursor and no further', async () => {
     await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), depositRow(102, 3)], [], 102n);
     await commitBatch(pool, store, [transferRow(103, 4, 1n)], [], 102n); // written, not yet committed past
     while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
     const rows = await insights();
-    expect(rows.map((r) => r.tx_hash)).toEqual([tx(1), tx(2), tx(3)]);
+    expect(rows.map((r) => [r.block_number, r.log_index])).toEqual([['100', 1], ['101', 2], ['102', 3]]);
     expect(await getInsightsCursor(pool, SCHEMA)).toBe(102n);
   });
 
@@ -158,8 +159,22 @@ describe('insights', () => {
     expect(swap.sentence).toBe('TKN moved from a wallet to a wallet, amount 1 to 100 TKN. In the same transaction: tokens were swapped on an exchange.');
     expect(spam).toMatchObject({ lane: 'spam', lane_p: null, ruled: true, probabilities: null, model: null });
     expect(deposit.sentence).toBe('The vault contract logged Deposited. It was called with depositFor. In the same transaction: nothing else recognisable happened.');
-    expect(deposit).toMatchObject({ protocol: 'vault', table_name: 'vault_deposited' });
+    expect(deposit).toMatchObject({ protocol: 'vault' });
     expect(classifier.asked.flat()).not.toContain(spam.sentence);
+  });
+
+  it('stores each sentence once and a ruled row with no protocol as NULL', async () => {
+    // tx(2) and tx(4) share the same plain context, so their ruled sentences are equal
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), transferRow(103, 4, 0n)], [], 103n);
+    await runInsightsOnce(deps, 'laya-test');
+    const sentences = await pool.query(`SELECT sentence, model FROM ${SCHEMA}._sentences ORDER BY id`);
+    expect(new Set(sentences.rows.map((r) => `${r.model}|${r.sentence}`)).size).toBe(sentences.rows.length);
+    const ruled = (await insights()).filter((r) => r.ruled);
+    expect(ruled).toHaveLength(2);
+    expect(ruled[0].sentence_id).toBe(ruled[1].sentence_id);
+    for (const r of ruled) expect(r).toMatchObject({ model: null, probabilities: null });
+    const raw = await pool.query(`SELECT protocol FROM ${SCHEMA}._insights WHERE ruled`);
+    expect(raw.rows.some((r) => r.protocol === '')).toBe(false);
   });
 
   it('a failed model call writes nothing and leaves the cursor', async () => {
@@ -234,6 +249,7 @@ describe('insights', () => {
     await expect(prepareInsights({ ...base, headerLine: 'nonsense secret' })).rejects.toThrow(/INSIGHTS_HEADER/);
     const prepared = await prepareInsights({ ...base, headerLine: 'Authorization: Bearer x' });
     expect(await getInsightsCursor(pool, SCHEMA)).toBe(49n);
+    expect(prepared.partitions.size).toBe(2_000_000n);
     expect(prepared.targets.find((t) => t.tableName === 'tok_transfer')?.token).toEqual({ label: 'TKN', decimals: 6 });
     expect(prepared.called.get(VAULT)?.functions.get(toFunctionSelector('depositFor()'))).toBe('depositFor');
   });

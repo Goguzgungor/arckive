@@ -1,13 +1,12 @@
 import type pg from 'pg';
 import { buildInsightsTables } from '@arckive/core';
+import type { Partitions } from './db.js';
 
 const q = (id: string) => `"${id}"`;
 
 export interface InsightRow {
   blockNumber: bigint;
-  txHash: string;
   logIndex: number;
-  tableName: string;
   lane: string;
   laneP: number | null;
   ruled: boolean;
@@ -102,34 +101,76 @@ export async function readEventRows(
   );
 }
 
+// Sentence ids for a round: one insert of the new (sentence, model) pairs and
+// one select of all of them. Sentences are few — Radar caches answers per
+// exact sentence for the same reason — so this stays two small statements.
+async function sentenceIds(client: pg.PoolClient, schema: string, rows: InsightRow[]): Promise<Map<string, number>> {
+  const key = (sentence: string, model: string) => `${model}\u0000${sentence}`;
+  const unique = new Map<string, { sentence: string; model: string; probabilities: string | null }>();
+  for (const r of rows) {
+    const model = r.model ?? '';
+    unique.set(key(r.sentence, model), {
+      sentence: r.sentence, model, probabilities: r.probabilities ? JSON.stringify(r.probabilities) : null,
+    });
+  }
+  const all = [...unique.values()];
+  await client.query(
+    `INSERT INTO ${q(schema)}._sentences (sentence, model, probabilities)
+     SELECT * FROM unnest($1::text[], $2::text[], $3::jsonb[]) ON CONFLICT (sentence, model) DO NOTHING`,
+    [all.map((x) => x.sentence), all.map((x) => x.model), all.map((x) => x.probabilities)],
+  );
+  const r = await client.query(
+    `SELECT s.id, s.sentence, s.model FROM ${q(schema)}._sentences s
+     JOIN unnest($1::text[], $2::text[]) AS u(sentence, model) USING (sentence, model)`,
+    [all.map((x) => x.sentence), all.map((x) => x.model)],
+  );
+  return new Map(r.rows.map((x) => [key(x.sentence, x.model), Number(x.id)]));
+}
+
 // Rows and cursor in one transaction, like commitBatch: a round is either all
 // written or not at all. Returns the lanes of the rows actually inserted.
 export async function commitInsights(
-  pool: pg.Pool, schema: string, rows: InsightRow[], newCursor: bigint,
+  pool: pg.Pool, schema: string, partitions: Partitions, rows: InsightRow[], newCursor: bigint,
 ): Promise<string[]> {
+  const planned = partitions.plan(rows.length ? ['_insights'] : [], rows.map((r) => r.blockNumber));
   const client = await pool.connect();
-  const inserted: string[] = [];
   try {
     await client.query('BEGIN');
-    for (const r of rows) {
+    for (const p of planned) await client.query(p.sql);
+    let inserted: string[] = [];
+    if (rows.length) {
+      const ids = await sentenceIds(client, schema, rows);
+      // facts cannot travel through unnest as an array of arrays (unnest
+      // flattens them): each row's facts go as one comma-joined string, split
+      // here. Fact names are identifiers and never contain commas.
       const res = await client.query(
         `INSERT INTO ${q(schema)}._insights
-           (block_number, tx_hash, log_index, table_name, lane, lane_p, ruled, protocol,
-            facts, probabilities, sentence, model)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (block_number, tx_hash, log_index) DO NOTHING`,
+           (block_number, log_index, lane, lane_p, ruled, protocol, facts, sentence_id)
+         SELECT b, l, lane, p, ruled, protocol,
+                CASE WHEN f = '' THEN '{}'::text[] ELSE string_to_array(f, ',') END, sid
+         FROM unnest($1::bigint[], $2::integer[], $3::text[], $4::real[], $5::boolean[], $6::text[], $7::text[], $8::integer[])
+              AS u(b, l, lane, p, ruled, protocol, f, sid)
+         ON CONFLICT (block_number, log_index) DO NOTHING
+         RETURNING lane`,
         [
-          r.blockNumber.toString(), r.txHash, r.logIndex, r.tableName, r.lane, r.laneP, r.ruled, r.protocol,
-          JSON.stringify(r.facts), r.probabilities ? JSON.stringify(r.probabilities) : null, r.sentence, r.model,
+          rows.map((r) => r.blockNumber.toString()),
+          rows.map((r) => r.logIndex),
+          rows.map((r) => r.lane),
+          rows.map((r) => r.laneP),
+          rows.map((r) => r.ruled),
+          rows.map((r) => r.protocol || null),
+          rows.map((r) => r.facts.join(',')),
+          rows.map((r) => ids.get(`${r.model ?? ''}\u0000${r.sentence}`)!),
         ],
       );
-      if (res.rowCount) inserted.push(r.lane);
+      inserted = res.rows.map((x) => x.lane as string);
     }
     await client.query(
       `UPDATE ${q(schema)}._insights_cursor SET last_block = $1, updated_at = now() WHERE id = 1`,
       [newCursor.toString()],
     );
     await client.query('COMMIT');
+    partitions.remember(planned);
     return inserted;
   } catch (err) {
     await client.query('ROLLBACK');

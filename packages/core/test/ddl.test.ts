@@ -4,6 +4,7 @@ import {
   NamingError,
   buildControlTables,
   buildEventTable,
+  buildInsightsTables,
   eventColumns,
   extractEventDefs,
   pgTypeFor,
@@ -139,5 +140,24 @@ describe('buildEventTable (event parameter names)', () => {
     // toSnakeCase strips the leading _; the result differs from the DB meta column "_ingested_at"
     expect(eventColumns(def!.event).map((c) => c.name)).toEqual(['ingested_at']);
     expect(buildEventTable('idx_x', def!).columns.map((c) => c.name)).toContain('ingested_at');
+  });
+});
+
+describe('buildInsightsTables (layout 2)', () => {
+  const s = buildInsightsTables('idx_x');
+  it('keeps one row per event, keyed like the events, and sentences once', () => {
+    const sentences = s.find((x) => x.includes('"idx_x"._sentences'))!;
+    expect(sentences).toContain('UNIQUE (sentence, model)');
+    const insights = s.find((x) => x.includes('"idx_x"."_insights" ('))!;
+    expect(insights).toContain('PRIMARY KEY (block_number, log_index)');
+    expect(insights).toContain('facts text[] NOT NULL');
+    expect(insights).toContain('sentence_id integer NOT NULL');
+    expect(insights).toMatch(/PARTITION BY RANGE \(block_number\)$/);
+    expect(insights).not.toContain('tx_hash');
+    expect(insights).not.toContain('table_name');
+  });
+  it('indexes lanes for "latest of a lane" and offers a joined view', () => {
+    expect(s).toContain('CREATE INDEX IF NOT EXISTS "_insights_lane_idx" ON "idx_x"."_insights" (lane, block_number)');
+    expect(s.some((x) => x.startsWith('CREATE OR REPLACE VIEW "idx_x"."_insights_full"'))).toBe(true);
   });
 });
