@@ -204,7 +204,7 @@ Unit (vitest, no network):
   requests, never two in flight), per-call fall-through with each endpoint
   tried at most once per chunk, rest windows (start, doubling, cap, reset),
   resting endpoints skipped and the soonest-ending one used when all rest,
-  `ResponseBodyTooLargeError` halving down to one call, `backOff('ingest')`
+  `ResponseBodyTooLargeError` halving down to one call, `backOffShared()`
   touching only shared endpoints, chain-id drop vs. keep.
 - `createContextSource` on a pool: a round of 7 blocks makes one request for
   blocks, one for factories, one for parties; a block failing everywhere
