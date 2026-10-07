@@ -210,9 +210,9 @@ Freshness is read from the product's own `_blocks` columns
 not stay up for the whole window. When Arc mainnet launches, the same suite
 runs there with a single `NETWORKS` entry. Raw results and the HTML report
 live in `docs/benchmarks/` · reproduce with `pnpm bench`
+(prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`).
 
 The table above was measured with storage layout 1 (one `getBlock` per block for block times); layout 2 reads block times from the logs themselves, and the suite has not been re-run for it here.
-(prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`).
 
 ## Observability
 

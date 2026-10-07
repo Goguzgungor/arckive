@@ -32,7 +32,7 @@ measured on 2026-10-07:
 ## Goals
 
 1. An indexed event with its lane costs at most ~450 bytes (v1: ~1.1–1.4 KB),
-   measured on mainnet; after the revision in §2/§8/§11, about 310 bytes.
+   measured on mainnet; after the revision in §2/§8/§11, about 325 bytes measured (toward ~315 as dictionaries amortise).
 2. A commit sends a fixed number of statements, independent of its row count.
 3. Backfill makes no per-block call when the node returns `blockTimestamp`,
    and survives provider range caps without manual tuning.
@@ -107,8 +107,9 @@ retention window, if one is ever wanted, a `DROP TABLE`.
 
 Indexes built row by row are looser than freshly built ones (measured: the
 `from`/`to` indexes 26 → 20 bytes per row, `tx_hash` 36 → 32 when rebuilt).
-When ingest commits its first row into partition `n + 1`, partition `n` of
-every row table is finished, so the worker rebuilds that partition's indexes
+A partition is rebuilt when ingest moves past it for that table (a table
+with no rows in a partition has nothing to rebuild, and the partition does not
+exist), so the worker rebuilds that partition's indexes
 once with `REINDEX TABLE CONCURRENTLY` — outside any transaction, in the
 background, one at a time, never blocking ingest; a failure is logged at warn
 and not retried (the partition stays correct, only looser). A restart does not
@@ -198,8 +199,10 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
   dropped: lane lag is `_cursor − _insights_cursor` and the
   `insights_blocks_behind` metric. `UNIQUE NULLS NOT DISTINCT` needs
   PostgreSQL 15 or later.
-- Label ids are resolved per round like sentence ids: one `INSERT … ON
-  CONFLICT DO NOTHING` plus one `SELECT`.
+- Label ids are resolved per round like sentence ids: an insert of only the
+  tuples that do not exist yet (`INSERT … SELECT … WHERE NOT EXISTS … ON
+  CONFLICT DO NOTHING`) plus one `SELECT`, with no probabilities update.
+  Dictionary inserts send only rows that do not exist yet (§11).
 
 - The model's answer is a function of the sentence and the model, so the
   probabilities live once per `(sentence, model)`; ruled rows use model `''`
@@ -208,8 +211,9 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
 - `table_name` and `tx_hash` leave the row: `(block_number, log_index)` joins
   any event table. `protocol` is `NULL` instead of `''`.
 - The lane index becomes `(lane, block_number)`, which serves "latest swaps".
-- Sentence ids are resolved per round with one `INSERT … ON CONFLICT DO
-  UPDATE` (keeping any probabilities already stored) plus one `SELECT`.
+- Sentence ids are resolved per round by inserting only new (sentence, model)
+  pairs (`INSERT … SELECT … WHERE NOT EXISTS … ON CONFLICT DO NOTHING`), a
+  separate `UPDATE` that fills probabilities still NULL, then one `SELECT`.
 - A view `_insights_full` joins each row with its label and sentence —
   lane, lane_p, ruled, protocol, facts, sentence, model (`NULL` for `''`) and
   probabilities — for plain SQL.
@@ -255,7 +259,12 @@ collects the batch's distinct addresses, inserts the new ones (`ON CONFLICT
 DO NOTHING`), selects all their ids, and substitutes them before the event
 insert — inside the same transaction, so an id never points at an address
 that was rolled back. `_addresses` is not partitioned: it grows with distinct
-addresses, not with rows (14,819 for 170,045 transfers). Readers of addresses
+addresses, not with rows (14,819 for 170,045 transfers).
+
+Dictionary inserts (`_addresses`, `_sentences`, `_labels`) send only rows that
+do not exist yet, because PostgreSQL consumes an identity value for every row
+an INSERT tries even when `ON CONFLICT` skips it (measured: before the fix, 5
+commits of the same 2 addresses gave the next address id 12 instead of 3). Readers of addresses
 (the insight loop's `readEventRows`, the `_hex` views) join it.
 
 ## Errors
@@ -289,7 +298,11 @@ addresses, not with rows (14,819 for 170,045 transfers). Readers of addresses
   blocks/s, live lag and statements per commit; measure how many ERC-20 logs
   in a sample have a native twin; compare row counts and values with layout 1
   on the same block window.
-## Measured (2026-10-07, Arc mainnet, k3d)
+## Measured
+
+### First layout 2 (before the revision)
+
+Arc mainnet, k3d, 2026-10-07.
 
 - Same block window (24,745,323–24,752,500) indexed by v1 and v2: 81,725 USDC
   rows and 12,936 swaps in both, equal value sums, 0 row-by-row mismatches
@@ -310,3 +323,25 @@ addresses, not with rows (14,819 for 170,045 transfers). Readers of addresses
   keeps lanes near ingest's row rate (~1,035 vs ~1,027 rows/min) but behind
   the chain in blocks (105 vs 119 blocks/min); a backfilled backlog does not
   shrink.
+
+### Dense layout 2 (after the revision), Arc mainnet, k3d, 2026-10-07
+
+- Same block window (24,745,323–24,752,500) as layout 1: 81,725 USDC rows with
+  equal value sums and 12,936 swaps; row-by-row comparison through
+  `usdc_transfer_hex` / `poolmanager_swap_hex` (tx_hash, from, to, value,
+  block_time; swaps: sender, amount0, id, block_time): 0 mismatches.
+- Bytes per row including indexes: usdc_transfer 189 (heap 96, indexes 93,
+  tuple 88); poolmanager_swap 316; _blocks 118 per block (~12 per transfer);
+  _insights 124 (heap 67, indexes 57, tuple 52); _addresses 21,735 rows in
+  2.95 MB for 212,063 transfers; _labels 182 and _sentences 126 rows (280 kB
+  together) for 3,312 lane rows. Every dictionary's max(id) equals its row
+  count — no burned identity values.
+- A USDC event with its lane: ~1,170 B (layout 1) → ~445 B (first layout 2) →
+  ~325 B (dense), falling toward ~315 B as the dictionaries amortise.
+- Provider limits met on the way: viem rejected a 500-block getLogs answer over
+  10 MiB (ResponseBodyTooLargeError) — now a span cap (500 → 250 → 125 and
+  back); rpc.beamrpc.com (Allnodes publicnode) refuses blocks older than about
+  two hours without a personal token ("Archive requests require a personal
+  token"), and viem's fallback stops on that -32602; the public RPC's
+  per-minute quota (LimitExceeded "rate limit exceeded") keeps insights from
+  completing a round when ingest shares the endpoint.

@@ -79,7 +79,7 @@ times so rows scroll in with a sub-second **freshness** column:
 ```sql
 SELECT block_number, block_time, (_ingested_at - block_time) AS freshness,
        "from", "to", value
-FROM idx_usdc_arc.usdc_transfer
+FROM idx_usdc_arc.usdc_transfer_hex
 ORDER BY block_number DESC
 LIMIT 15;
 ```
@@ -89,7 +89,7 @@ For the DEX (USDC↔EURC swaps):
 ```sql
 SELECT block_number, (_ingested_at - block_time) AS freshness,
        token_in, token_out, amount_in, amount_out
-FROM idx_flowswap.flowswap_swap
+FROM idx_flowswap.flowswap_swap_hex
 ORDER BY block_number DESC
 LIMIT 15;
 ```
