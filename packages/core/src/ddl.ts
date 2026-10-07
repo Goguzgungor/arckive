@@ -83,6 +83,10 @@ export function eventColumns(event: AbiEvent): EventColumn[] {
   });
   const dup = cols.map((c) => c.name).find((n, i, a) => a.indexOf(n) !== i);
   if (dup) throw new DdlError(`${event.name}: column name collision: ${dup}`);
+  // an address `foo` is stored as foo_id but viewed as foo, so it can collide
+  // with another parameter only in the view, where CREATE VIEW would fail
+  const dupView = cols.map((c) => c.viewName).find((n, i, a) => a.indexOf(n) !== i);
+  if (dupView) throw new DdlError(`${event.name}: view column name collision: ${dupView}`);
   return cols;
 }
 

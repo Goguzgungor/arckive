@@ -59,6 +59,7 @@ describe('buildEventTable (dense layout 2)', () => {
     }
     expect(create).toContain('"from_id" integer');
     expect(create).toContain('PRIMARY KEY (block_number, log_index)');
+    expect(create).toMatch(/PARTITION BY RANGE \(block_number\)$/);
   });
 
   it('indexes tx_hash with a btree and indexed addresses by id', () => {
@@ -68,6 +69,7 @@ describe('buildEventTable (dense layout 2)', () => {
     expect(spec.statements).toContain(
       'CREATE INDEX IF NOT EXISTS "usdc_transfer_from_id_idx" ON "idx_x"."usdc_transfer" ("from_id")',
     );
+    expect(spec.statements.some((x) => x.includes('"value"') && x.startsWith('CREATE INDEX'))).toBe(false);
   });
 
   it('the _hex view reads like the old rows: block time, ingest time and 0x addresses', () => {
@@ -131,6 +133,18 @@ describe('eventColumns', () => {
 });
 
 describe('buildEventTable (event parameter names)', () => {
+  it('two parameters that would name the same view column are refused', () => {
+    const abi = [{
+      type: 'event', name: 'Dup',
+      inputs: [
+        { name: 'foo', type: 'address', indexed: false },
+        { name: 'Foo', type: 'uint256', indexed: false },
+      ],
+    }];
+    const [def] = extractEventDefs('x', ADDR, abi);
+    expect(() => eventColumns(def!.event)).toThrow(DdlError);
+  });
+
   it('an address named like another parameter plus Id collides on the stored name', () => {
     const abi = [{
       type: 'event', name: 'Dup',
