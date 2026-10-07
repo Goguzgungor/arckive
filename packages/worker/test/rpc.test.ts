@@ -1,3 +1,4 @@
+import { ResponseBodyTooLargeError } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   blockTimesFromLogs, createRpc, fetchLogs, filterHealthyRpcs, getBlockTimes, getFinalizedBlockNumber, isRangeCapError, splitRpcUrls,
@@ -94,6 +95,15 @@ describe('isRangeCapError', () => {
     expect(isRangeCapError(Object.assign(new Error('Invalid parameters were provided to the RPC method.'), { details: 'query exceeds max results 20000, retry with the range 24747323-24748307' }))).toBe(true);
     expect(isRangeCapError(new Error('query exceeds max results 10000'))).toBe(true);
     expect(isRangeCapError(new Error('outer', { cause: new Error('ranges over 100 blocks') }))).toBe(true);
+  });
+
+  it('a client-side body-size limit is a result cap too', () => {
+    const real = new ResponseBodyTooLargeError({ maxSize: 10485760, size: 10502144 });
+    expect(isRangeCapError(real)).toBe(true);
+    expect(isRangeCapError(new Error('outer', { cause: real }))).toBe(true);
+    const named = Object.assign(new Error('x'), { name: 'ResponseBodyTooLargeError' });
+    expect(isRangeCapError(new Error('outer', { cause: named }))).toBe(true);
+    expect(isRangeCapError(new Error('HTTP response body exceeded the size limit.  Max: 10485760 bytes Received: 10502144 bytes'))).toBe(true);
   });
 
   it('recognises the other common provider wordings', () => {
