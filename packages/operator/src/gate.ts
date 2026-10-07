@@ -24,6 +24,7 @@ export class ReconcileGate {
     if (!key) return Promise.resolve();
     if (phase === 'DELETED') {
       this.#generation.delete(key);
+      this.#pending.delete(key);
       return Promise.resolve();
     }
     if (phase === 'MODIFIED' && this.#generation.has(key) && this.#generation.get(key) === cr.metadata?.generation) {
@@ -41,28 +42,57 @@ export class ReconcileGate {
   }
 
   #schedule(key: string, cr: Indexer): Promise<void> {
-    this.#generation.set(key, cr.metadata?.generation);
+    const incomingGen = cr.metadata?.generation;
+    const recordedGen = this.#generation.get(key);
+
+    // Never reconcile a stale generation: resync may list an old object,
+    // and watch events for the spec can arrive out of order. A stale
+    // generation would overwrite newer desired state. Undefined generations
+    // are not comparable, so allow them through (watch events on CRs without
+    // metadata.generation, or resync objects that might be cached).
+    if (
+      incomingGen !== undefined &&
+      recordedGen !== undefined &&
+      incomingGen < recordedGen
+    ) {
+      const running = this.#running.get(key);
+      return running ? running : Promise.resolve();
+    }
+
+    // Update recorded generation to allow higher generations (or equal on
+    // resync to notice Secrets/ConfigMaps created after the Indexer).
+    this.#generation.set(key, incomingGen);
     const running = this.#running.get(key);
     if (running) {
-      // one rerun after the current reconcile, with the latest object
-      this.#pending.set(key, cr);
+      // one rerun after the current reconcile, with the latest object;
+      // replace only if the new object's generation is >= the pending one
+      const pendingGen = this.#pending.get(key)?.metadata?.generation;
+      if (pendingGen === undefined || incomingGen === undefined || incomingGen >= pendingGen) {
+        this.#pending.set(key, cr);
+      }
       return running;
     }
     const run = (async () => {
       let next: Indexer | undefined = cr;
       while (next) {
         const generation = next.metadata?.generation;
-        const ok = await this.reconcile(next);
+        let ok = false;
+        try {
+          ok = await this.reconcile(next);
+        } catch {
+          // A throw is treated as reconcile failure, and exception safety
+          // requires we clear #running in the finally.
+          ok = false;
+        }
         // A failed reconcile forgets its generation, so the next event for
         // this Indexer tries again instead of waiting for the resync.
         if (!ok && this.#generation.get(key) === generation) this.#generation.delete(key);
         next = this.#pending.get(key);
         this.#pending.delete(key);
       }
-      this.#running.delete(key);
     })();
-    this.#running.set(key, run);
-    return run;
+    this.#running.set(key, run.finally(() => this.#running.delete(key)));
+    return this.#running.get(key)!;
   }
 }
 
