@@ -1,8 +1,8 @@
 import { createServer, type Server } from 'node:http';
-import { HttpRequestError, type PublicClient } from 'viem';
+import { HttpRequestError, SocketClosedError, type PublicClient } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  CHUNK, RpcPool, checkPoolChain, createRpcPool, endpointLabel, type Call, type PoolEndpoint, type RequestOutcome,
+  CHUNK, RpcPool, checkPoolChain, createRpcPool, endpointLabel, isTransportFailure, type Call, type PoolEndpoint, type RequestOutcome,
 } from '../src/rpcpool.js';
 
 const NO_PACE = { startMs: 0, minMs: 0, maxMs: 0 };
@@ -40,15 +40,24 @@ describe('RpcPool', () => {
   });
 
   it('never has two requests in flight, even when callers overlap', async () => {
-    const { pool } = harness([ep('a')]);
+    // Two endpoints, so the endpoints' own pacers cannot order the callers:
+    // A's call is refused on a and falls through to b (slow) while B waits.
+    const { pool } = harness([ep('a'), ep('b')]);
     const log: string[] = [];
-    const slow = (tag: string): Call<void> => async () => {
-      log.push(`${tag}+`);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const call = (tag: string, refuseOnA: boolean): Call<void> => async (c) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      log.push(`${tag}@${nameOf(c)}+`);
       await new Promise((r) => setTimeout(r, 20));
-      log.push(`${tag}-`);
+      log.push(`${tag}@${nameOf(c)}-`);
+      inFlight--;
+      if (refuseOnA && nameOf(c) === 'a') throw refused();
     };
-    await Promise.all([pool.all([slow('A')]), pool.all([slow('B')])]);
-    expect(log).toEqual(['A+', 'A-', 'B+', 'B-']);
+    await Promise.all([pool.all([call('A', true)]), pool.all([call('B', false)])]);
+    expect(maxInFlight).toBe(1);
+    expect(log).toEqual(['A@a+', 'A@a-', 'A@b+', 'A@b-', 'B@a+', 'B@a-']);
   });
 
   it('a rate-limited request rests its endpoint and its calls go to the next one', async () => {
@@ -156,13 +165,39 @@ describe('RpcPool', () => {
   });
 
   it('backOffShared slows only the endpoints ingest also uses', async () => {
-    const waits: number[] = [];
-    const pool = new RpcPool([ep('a', true), ep('b', false)], {
-      pace: { startMs: 100, minMs: 100, maxMs: 1000 }, now: () => 0, sleep: async (ms) => { waits.push(ms); },
+    const waits: Array<[number]> = [];
+    const clock = { t: 0 };
+    // priority order: the non-shared endpoint a first, the shared b second
+    const pool = new RpcPool([ep('a', false), ep('b', true)], {
+      pace: { startMs: 100, minMs: 100, maxMs: 1000 }, now: () => clock.t,
+      sleep: async (ms) => { waits.push([ms]); },
     });
     pool.backOffShared();
-    await pool.all([async (c) => nameOf(c)]); // a (shared) waits its doubled interval
-    expect(waits).toEqual([200]);
+    // a is asked first: not shared, so it does not wait
+    await pool.all([async (c) => nameOf(c)]);
+    expect(waits).toEqual([]);
+    clock.t += 150; // a's own 100 ms spacing is over; b's backed-off 200 ms is not
+    // a refuses, the call falls through to b: shared, so it still waits out its doubled interval
+    await pool.all([async (c) => { if (nameOf(c) === 'a') throw refused(); return nameOf(c); }]);
+    expect(waits.map(([ms]) => ms)).toEqual([50]);
+  });
+});
+
+describe('Call that throws synchronously', () => {
+  it('settles as a rejection instead of rejecting all()', async () => {
+    const { pool } = harness([ep('a')]);
+    const out = await pool.all<number>([
+      () => { throw new Error('sync boom'); },
+      async () => 7,
+    ]);
+    expect(out.map((r) => r.status)).toEqual(['rejected', 'fulfilled']);
+  });
+});
+
+describe('isTransportFailure', () => {
+  it('counts a dead websocket as a transport failure, an answer error as none', () => {
+    expect(isTransportFailure(new SocketClosedError({ url: 'wss://x' }))).toBe(true);
+    expect(isTransportFailure(refused())).toBe(false);
   });
 });
 
@@ -252,13 +287,56 @@ describe('RpcPool over HTTP (viem batching)', () => {
     expect(a.bodies).toHaveLength(1);
   });
 
-  it('a batch answered with an empty array moves every call on, without resting the endpoint', async () => {
+  // Server B answers each call with its own address as the result, so a call
+  // that received another call's result is visible.
+  const echo = (body: Array<{ id: number; params?: unknown[] }>) => ({
+    status: 200,
+    json: body.map((r) => ({ jsonrpc: '2.0', id: r.id, result: `0x${r.id.toString(16)}` })),
+  });
+  const bal = (i: number): Call<unknown> => (c) =>
+    c.request({ method: 'eth_getBalance', params: [`0x${i.toString(16).padStart(40, '0')}`, 'latest'] });
+
+  async function restsAndFallsThrough(bad: () => { status: number; json?: unknown }, outcome?: RequestOutcome) {
+    const a = await rpcServer(bad);
+    const b = await rpcServer(echo);
+    const seen: RequestOutcome[] = [];
+    const pool = createRpcPool([a.url, b.url], [], { pace: NO_PACE, onRequest: (e, o) => { if (e === 0) seen.push(o); } });
+    const out = await pool.all([bal(1), bal(2), bal(3)]);
+    const ids = (b.bodies[0] as Array<{ id: number }>).map((r) => r.id);
+    expect(out.map((r) => r.status === 'fulfilled' && r.value)).toEqual(ids.map((id) => `0x${id.toString(16)}`));
+    expect(new Set(out.map((r) => r.status === 'fulfilled' && r.value)).size).toBe(3);
+    await pool.all([bal(4)]); // a rests
+    expect(a.bodies).toHaveLength(1);
+    if (outcome) expect(seen).toEqual([outcome]);
+  }
+  const rpcError = { jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'rate limit exceeded' } };
+
+  it('an HTTP 429 with a JSON-RPC error body rests the endpoint and moves the calls on', async () => {
+    await restsAndFallsThrough(() => ({ status: 429, json: rpcError }), 'rate_limited');
+  });
+
+  it('a single error object answering a batch rests the endpoint', async () => {
+    await restsAndFallsThrough(() => ({ status: 200, json: rpcError }));
+  });
+
+  it('an HTTP 503 with a JSON-RPC error body rests the endpoint', async () => {
+    await restsAndFallsThrough(() => ({ status: 503, json: rpcError }), 'failed');
+  });
+
+  it('an array missing an id never hands a call another call\'s result', async () => {
+    await restsAndFallsThrough((body) => ({
+      status: 200,
+      json: body.filter((_, k) => k !== 1).map((r) => ({ jsonrpc: '2.0', id: r.id, result: '0xbad' })),
+    }));
+  });
+
+  it('a batch answered with an empty array moves every call on and rests the endpoint', async () => {
     const a = await rpcServer(() => ({ status: 200, json: [] }));
     const b = await rpcServer(ok);
     const pool = createRpcPool([a.url, b.url], [], { pace: NO_PACE });
     const out = await pool.all([code(1), code(2)]);
     expect(out.every((r) => r.status === 'fulfilled')).toBe(true);
     await pool.all([code(3)]);
-    expect(a.bodies).toHaveLength(2); // asked again: not resting
+    expect(a.bodies).toHaveLength(1); // resting: not asked again
   });
 });

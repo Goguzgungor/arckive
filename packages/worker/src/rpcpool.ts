@@ -1,5 +1,8 @@
 import type { Logger } from 'pino';
-import { HttpRequestError, TimeoutError, createPublicClient, http, webSocket, type PublicClient } from 'viem';
+import {
+  HttpRequestError, ResponseBodyTooLargeError, SocketClosedError, TimeoutError, WebSocketRequestError,
+  createPublicClient, http, webSocket, type PublicClient,
+} from 'viem';
 import { Pacer, isRateLimited, type PaceLimits } from './pacer.js';
 
 // The insight loop's RPC reads, ported from Arc Radar's pool
@@ -64,9 +67,83 @@ export function isTooLarge(err: unknown): boolean {
 }
 
 // The endpoint did not answer at all: a timeout, a dropped connection, an
-// HTTP error status. A JSON-RPC error inside a 200 is an answer, not this.
+// HTTP error status, a dead websocket. A JSON-RPC error inside a 200 is an
+// answer, not this.
 export function isTransportFailure(err: unknown): boolean {
-  return walk(err, (e) => (e instanceof HttpRequestError && e.status !== 429) || e instanceof TimeoutError);
+  return walk(
+    err,
+    (e) =>
+      (e instanceof HttpRequestError && e.status !== 429) ||
+      e instanceof TimeoutError ||
+      e instanceof SocketClosedError ||
+      e instanceof WebSocketRequestError,
+  );
+}
+
+// Thrown by the checked fetch below for a reply that is not the answer to
+// its request. viem wraps it in an HttpRequestError without a status, so it
+// reads as a transport failure: the endpoint rests, its calls move on.
+export class MalformedReplyError extends Error {
+  constructor(why: string) {
+    super(`malformed JSON-RPC reply: ${why}`);
+    this.name = 'MalformedReplyError';
+  }
+}
+
+const MAX_BODY_BYTES = 10_485_760; // viem's own cap
+
+async function readCapped(res: Response): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new ResponseBodyTooLargeError({ maxSize: MAX_BODY_BYTES, size });
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+// viem maps a batch reply onto its calls by position and, for a non-2xx
+// status, hands a JSON-RPC error body on as if it were the answer. Left
+// alone, a 429 with an error body, one error object answering a batch, or an
+// array that lost an id (the next call's result lands on the wrong call)
+// would reach us as wrong data or as errors that neither rest nor back off.
+// So the reply is checked before viem sees it: a status becomes the
+// HttpRequestError the classifiers know, and a body that is not exactly one
+// answer per request id is a MalformedReplyError.
+export function checkedFetch(
+  base: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
+): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
+  return async (input, init) => {
+    const res = await base(input, init);
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new HttpRequestError({ url, status: res.status });
+    }
+    const text = await readCapped(res);
+    let sent: unknown;
+    let got: unknown;
+    try {
+      sent = JSON.parse(String(init?.body));
+      got = JSON.parse(text);
+    } catch {
+      throw new MalformedReplyError('not JSON');
+    }
+    const want = (Array.isArray(sent) ? sent : [sent]).map((r) => (r as { id?: unknown }).id);
+    if (Array.isArray(sent) !== Array.isArray(got)) throw new MalformedReplyError('not shaped like the request');
+    const have = (Array.isArray(got) ? got : [got]).map((r) => (r as { id?: unknown } | null)?.id);
+    const same = have.length === want.length && want.every((id) => have.filter((h) => h === id).length === 1);
+    if (!same) throw new MalformedReplyError('ids differ from the request');
+    return new Response(text, { status: res.status, headers: res.headers });
+  };
 }
 
 class Slot {
@@ -157,8 +234,9 @@ export class RpcPool {
   async #send<T>(
     slot: Slot, calls: readonly Call<T>[], idx: number[], out: PromiseSettledResult<T>[], lastError: Map<number, unknown>,
   ): Promise<number[]> {
-    // started in one tick, so viem's batch scheduler sends them as one array
-    const settled = await slot.pacer.run(() => Promise.allSettled(idx.map((i) => calls[i]!(slot.client))));
+    // started in one tick, so viem's batch scheduler sends them as one array;
+    // the .then turns a Call that throws synchronously into a rejection
+    const settled = await slot.pacer.run(() => Promise.allSettled(idx.map((i) => Promise.resolve().then(() => calls[i]!(slot.client)))));
     let rateLimited = false;
     let transport = false;
     const failed: number[] = [];
@@ -220,7 +298,7 @@ export function createRpcPool(urls: readonly string[], ingestUrls: readonly stri
       const ws = /^wss?:\/\//i.test(url);
       const transport = ws
         ? webSocket(url, { timeout: 10_000, retryCount: 0 })
-        : http(url, { batch: { batchSize: CHUNK }, timeout: 10_000, retryCount: 0 });
+        : http(url, { batch: { batchSize: CHUNK }, fetchFn: checkedFetch(), timeout: 10_000, retryCount: 0 });
       return { url, client: createPublicClient({ transport }), shared: ingest.has(sameUrl(url)), chunk: ws ? 1 : CHUNK };
     }),
     opts,
