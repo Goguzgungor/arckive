@@ -4,7 +4,7 @@ import { pino } from 'pino';
 import {
   extractEventDefs, knownToken, parseWorkerConfig, schemaName, type EventDef,
 } from '@arckive/core';
-import { createStore } from './db.js';
+import { LayoutError, createStore } from './db.js';
 import { createMetrics } from './metrics.js';
 import { bootstrapIndexer, runLoop, type PipelineDeps } from './pipeline.js';
 import { RangeSizer } from './rangesizer.js';
@@ -15,7 +15,7 @@ import { startHealthServer } from './health.js';
 import { HeadSignal } from './signal.js';
 import { PhaseTracker } from './status.js';
 import { subscribeNewHeads } from './ws.js';
-import { crStatusTargetFromEnv, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
+import { crStatusTargetFromEnv, reportFatalToCr, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
 import { prepareInsights, runInsightsLoop } from './insights.js';
 import { Pacer } from './pacer.js';
 import { INSIGHTS_RPC_PACE, createContextSource, createInsightsRpc, readTokenInfo } from './txcontext.js';
@@ -137,7 +137,9 @@ async function main(): Promise<void> {
   await pool.end();
 }
 
-main().catch((err: unknown) => {
+main().catch(async (err: unknown) => {
   log.fatal({ err }, 'worker failed to start');
+  // Only LayoutError: the CR would otherwise keep reporting the previous Live.
+  if (err instanceof LayoutError) await reportFatalToCr(err, log);
   process.exit(1);
 });

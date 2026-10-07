@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { crStatusTargetFromEnv, patchCrStatus, startCrStatusLoop } from '../src/crstatus.js';
+import { crStatusTargetFromEnv, patchCrStatus, reportFatalToCr, startCrStatusLoop } from '../src/crstatus.js';
 import { PhaseTracker } from '../src/status.js';
 
 interface Captured {
@@ -88,5 +88,28 @@ describe('startCrStatusLoop', () => {
     expect(body.status.lag).toBe(90);
     await new Promise((r) => setTimeout(r, 60));
     expect(captured.length).toBe(seen); // no requests after stopping
+  });
+});
+
+describe('reportFatalToCr', () => {
+  const log = pino({ level: 'silent' });
+  const target = { baseUrl: 'https://x', token: 't', namespace: 'ns', name: 'n' };
+
+  it('patches Degraded with the error message', async () => {
+    const calls: unknown[] = [];
+    await reportFatalToCr(new Error('schema layout 1'), log, {
+      target: () => target, patch: async (t, s) => void calls.push([t, s]),
+    });
+    expect(calls).toEqual([[target, { phase: 'Degraded', lastError: 'schema layout 1' }]]);
+  });
+
+  it('never throws, whether the target or the patch fails, and skips outside a cluster', async () => {
+    await expect(reportFatalToCr(new Error('x'), log, { target: () => { throw new Error('no sa'); } })).resolves.toBeUndefined();
+    await expect(reportFatalToCr(new Error('x'), log, {
+      target: () => target, patch: async () => { throw new Error('HTTP 500'); },
+    })).resolves.toBeUndefined();
+    let called = false;
+    await reportFatalToCr(new Error('x'), log, { target: () => null, patch: async () => void (called = true) });
+    expect(called).toBe(false);
   });
 });
