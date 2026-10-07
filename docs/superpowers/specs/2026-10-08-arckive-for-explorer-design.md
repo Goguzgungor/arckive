@@ -1,13 +1,20 @@
-# Arckive insights throughput and the operator OOM
+# Arckive for the explorer: lanes within seconds, address lookups, operator OOM
 
 Date: 2026-10-08. Status: draft, awaiting review.
+
+Sub-project A2 of the explorer (A: storage layout 2, merged; B: the explorer;
+C: cutover; D: natural-language search). Everything here is Arckive code and
+must land before the explorer's Indexer is created, because two of the
+choices (§4 `insights.startBlock`, §7 `storage.addressIndexes`) are fixed when
+a schema is first bootstrapped.
 
 ## Why
 
 The explorer replacing radar.arckive.org (sub-project B) shows every USDC
 movement and Uniswap v4 event on Arc mainnet as it lands, and its lane
 (payment, swap, bridge, …) a few seconds later. Lanes come from the worker's
-insight loop. Measured on mainnet in the k3d test cluster (2026-10-07):
+insight loop. Measured on mainnet in the k3d test cluster (2026-10-07/08) and
+read from the code:
 
 - **Lanes fall behind and never catch up.** The loop classified ~105 blocks a
   minute against the chain's ~119. Every insight RPC call is sequential behind
@@ -28,6 +35,16 @@ insight loop. Measured on mainnet in the k3d test cluster (2026-10-07):
   operator runs a full reconcile (2–3 GETs + 5 server-side applies) for every
   watch event that is not a delete. Three Indexers → one reconcile per 3.3 s.
   Why memory grows by roughly 0.5 MB per reconcile is not known yet.
+- **Lanes would start at block 0.** The insights cursor is bootstrapped at
+  the indexer's own start (`initialCursor`). The explorer's Indexer reads the
+  whole mainnet history (~25M blocks since 2026-05-15); its insight loop would
+  then try to classify all of it — 50M block and receipt reads, most of them
+  older than what beamrpc serves without a token. Lanes are wanted from
+  launch on only.
+- **No lookup by address.** Layout 2 indexes event tables on
+  `(block_number, log_index)` and `tx_hash` only. "The latest movements of
+  this address" — the explorer's address page — scans every partition of a
+  ~45M-row table.
 
 Arc Radar keeps up with the same chain and the same three public endpoints by
 sending JSON-RPC **batches** (20 calls per request) to an endpoint **pool**
@@ -45,10 +62,17 @@ brings that model into the worker.
    requests are answered with a rate limit.
 4. **Ingest is untouched.** Insights still run behind `_cursor`, never inside
    ingest, and never send more than one RPC request at a time.
-5. **The operator stays up.** Three mainnet Indexers for ≥ 2 h at the
+5. **The operator stays up.** Three Indexers for ≥ 2 h at the
    chart's 256 Mi limit: no OOMKill; after warm-up the operator's memory does
    not keep growing; reconciles happen on spec changes, on resync and on
    start, not on worker status patches.
+6. **Lanes from a chosen block.** An Indexer can start its lanes at a block
+   other than its ingest start; the insight loop waits until ingest has
+   passed that block.
+7. **Address lookups use an index.** With `storage.addressIndexes`, the 25
+   latest rows where an address param equals a given address come from an
+   index scan in < 50 ms for the busiest address in a table of ≥ 5M rows,
+   with every partition's index rebuilt by the compactor like the others.
 
 Goals 1–3 are measured with the in-cluster Laya stub, which answers at once.
 With the real gate each cache miss adds the gate's round trip (≤ 1 call/s,
@@ -57,7 +81,7 @@ is not load-tested.
 
 ## Non-goals
 
-Lanes for history older than the indexer; running an Arc node; concurrency
+Lanes for blocks before their start; running an Arc node; concurrency
 inside one endpoint or across endpoints; any change to ingest's RPC path
 (`createRpc`, `fetchLogs`, `RangeSizer`); explorer code; Laya client
 changes.
@@ -146,15 +170,36 @@ Caches, `isContractCode`, the sender-is-a-wallet rule and the
 `TxContext` shape are unchanged. `readTokenInfo` (start-up only) stays on
 ingest's client.
 
-### 4. `spec.insights.rpc`
+### 4. `spec.insights.rpc` and `spec.insights.startBlock`
 
-An optional list of http(s) endpoints for insights only, in priority order
-(1–8 entries, no ws: viem's batch scheduler is http's). Absent, the pool is
-one endpoint: the last http entry of `network.rpc`, as `insightsRpc` picks
-today. It goes through every step of "Adding or changing an Indexer spec
-field" (CRD, `IndexerSpecSchema`, `renderWorkerConfig`, `WorkerConfigSchema`,
-parity test, `install.yaml`). URLs may carry API keys, so they are never
-logged whole: logs and metrics name an endpoint by its index and host.
+Both go through every step of "Adding or changing an Indexer spec field"
+(CRD, `IndexerSpecSchema`, `renderWorkerConfig`, `WorkerConfigSchema`, parity
+test, `install.yaml`).
+
+**`rpc`:** an optional list of http(s) endpoints for insights only, in
+priority order (1–8 entries, no ws: viem's batch scheduler is http's).
+Absent, the pool is one endpoint: the last http entry of `network.rpc`, as
+`insightsRpc` picks today. URLs may carry API keys, so they are never logged
+whole: logs and metrics name an endpoint by its index and host.
+
+**`startBlock`:** the first block that gets lanes. Omitted = the indexer's
+own start (today's behaviour); ≥ 0 = that block; negative = that many blocks
+before the head **when the insight loop first runs**. The last is the one an
+explorer wants, "lanes from launch on": a full-history Indexer backfills for
+hours, insights run only once ingest is `Live`, and a head resolved at pod
+start would by then be hours old — older than beamrpc serves.
+
+The start becomes the initial insights cursor (`start − 1`), clamped to be
+no earlier than the ingest start, and like the ingest cursor it is written
+only when the schema's `_insights_cursor` row does not exist yet: it takes
+effect once, and later edits change nothing (the CRD description says so).
+An absolute or omitted start is written by `bootstrapInsights`, as today. A
+negative one is written by the loop's first round, which runs only while
+ingest is `Live` and so reads the ingest cursor as the head:
+`max(ingest cursor − |n|, ingest start − 1)`, inserted with `ON CONFLICT DO
+NOTHING`. Until then `prepareRound` finds no cursor and waits instead of
+throwing. While ingest is below an absolute start, `planRange(insights
+cursor, ingest cursor)` is empty and the loop waits.
 
 The explorer's Indexer will use `rpc.blockdaemon.mainnet.arc.io`,
 `rpc.beamrpc.com`, `rpc.mainnet.arc.io` for insights (live blocks are
@@ -196,6 +241,35 @@ library, the fix is a version change or reusing one client, not a
 workaround in our code. This needs a cluster: the k3d `arckive` cluster is
 stopped and is restarted only with the user's go-ahead.
 
+### 7. `storage.addressIndexes`
+
+An optional boolean (default `false`). When true, bootstrap creates, for
+every event table and every `address` param `p`, one btree on the
+partitioned parent:
+
+```sql
+CREATE INDEX IF NOT EXISTS "<table>_<p>_id_idx"
+  ON "<schema>"."<table>" ("<p>_id", block_number, log_index);
+```
+
+An index on a partitioned table is created on every existing partition and
+on every partition created later, so `Partitions` needs no change, and the
+`Compactor`'s `REINDEX TABLE CONCURRENTLY` rebuilds it with the others.
+`(block_number, log_index)` after the id lets "latest N for this address"
+read each partition's index backwards and page by keyset. Index names go
+through the same 63-byte check as other identifiers (`NamingError`).
+
+The setting is a new `_meta` key, `address_indexes`, fixed for the schema's
+life like `partition_blocks`: turning it on for a schema that already holds
+rows would build the indexes inside bootstrap — `CREATE INDEX` on a
+partitioned table cannot run `CONCURRENTLY` — and block ingest for as long
+as that takes. A different value raises `LayoutError`. A schema bootstrapped
+before this change has no such key; bootstrap writes `'false'` for it.
+
+Cost: two more index entries per transfer row (`from_id`, `to_id`), about
+50–60 bytes, measured and written into this spec in the real test. The
+explorer's Indexer turns it on.
+
 ## Testing
 
 Unit (vitest, no network):
@@ -214,26 +288,51 @@ Unit (vitest, no network):
 - Operator: `MODIFIED` with an unchanged generation does not reconcile; a new
   generation does; resync always does; overlapping events for one Indexer run
   one reconcile and one rerun with the latest object.
+- Core: CRD↔zod parity for both new fields; `renderWorkerConfig` carries
+  them; `insights.rpc` refuses ws and more than 8 entries.
+
+Database (testcontainers Postgres, as the existing DB tests):
+
+- `insights.startBlock`: absolute — a fresh schema's insights cursor is
+  `startBlock − 1`, clamped to the ingest start, and the loop waits until
+  ingest passes it; negative — no cursor until the first `Live` round, which
+  writes `ingest cursor − |n|` (clamped); either way a second bootstrap or
+  round with a different value leaves an existing cursor alone.
+- `storage.addressIndexes`: indexes exist on the parent and on a partition
+  created after bootstrap; `EXPLAIN` of `WHERE from_id = $1 ORDER BY
+  block_number DESC, log_index DESC LIMIT 25` uses them; a schema created
+  with `false` refuses `true` with `LayoutError`, and so does a schema
+  without the key; a too-long index name raises `NamingError`.
 - Existing anvil-backed insight tests keep passing on a one-endpoint pool.
 
-Real test (k3d, needs the user's go-ahead): the mainnet explorer Indexer
-(native USDC + PoolManager) with the three insight endpoints above and the
-Laya stub, plus two testnet Indexers so the operator sees three:
+Real test (k3d, needs the user's go-ahead). It creates the explorer's own
+Indexer, which is kept afterwards as the explorer's data: native USDC +
+PoolManager from their first blocks, `storage.addressIndexes: true`, the
+three insight endpoints above, `insights.startBlock: -2000`, the Laya stub;
+plus two testnet Indexers so the operator sees three.
 
-- one hour caught up → goal 1 from `insights_blocks_behind` sampled every
-  5 s, goal 3 from `insights_rpc_requests_total`;
-- insights held back ≥ 1,000 blocks (start the worker with insights disabled,
-  then enable) → goal 2 from the cursor's progress;
+- insights start 2,000 blocks behind once ingest reaches the head → goal 2
+  from the insights cursor's progress, goal 6 from it not moving before;
+- the following hour, caught up → goal 1 from `insights_blocks_behind`
+  sampled every 5 s, goal 3 from `insights_rpc_requests_total`;
 - two hours with the operator at 256 Mi → goal 5 from restart count, memory
-  every minute and reconcile log lines.
+  every minute and reconcile log lines;
+- once `usdc_transfer` holds ≥ 5M rows → goal 7 from `EXPLAIN ANALYZE` on
+  the busiest `from_id`, and the bytes per row the indexes add.
+
+The full-history backfill runs on ingest's public endpoint and takes hours;
+the insight goals are measured only after ingest reaches the head, because
+insights do not run before.
 
 ## Docs to update with the change
 
 CLAUDE.md "Insights": the single-endpoint, one-call-at-a-time rule becomes
 "one request at a time, up to 20 calls each, over `insights.rpc` or the last
-http endpoint of `network.rpc`"; "Ingest loop": the `Live` rule;
-"Operator reconciliation": the generation filter and per-Indexer
-serialization. README: the new spec field and metric.
+http endpoint of `network.rpc`", plus `insights.startBlock`; "Ingest loop":
+the `Live` rule; "Database schema and naming": address indexes and the
+`address_indexes` `_meta` key; "Operator reconciliation": the generation
+filter and per-Indexer serialization. README: the new spec fields and
+metric.
 
 ## Risks
 
