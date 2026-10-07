@@ -92,6 +92,10 @@ spec:
                       minimum: 10000
                       default: 2000000
                       description: "Blocks per range partition of every table (storage layout 2)"
+                    addressIndexes:
+                      type: boolean
+                      default: false
+                      description: "Index every address param as (<p>_id, block_number, log_index) so the latest rows of an address come from an index; fixed when the schema is created"
                 contracts:
                   type: array
                   minItems: 1
@@ -165,6 +169,17 @@ spec:
                             key:
                               type: string
                               default: header
+                    rpc:
+                      type: array
+                      minItems: 1
+                      maxItems: 8
+                      items:
+                        type: string
+                        pattern: '^https?://'
+                      description: "http(s) endpoints for insight reads only, in priority order; default: the last http(s) entry of network.rpc"
+                    startBlock:
+                      type: integer
+                      description: "first block that gets lanes: omitted = the indexer's start, >= 0 = that block, negative = that many blocks before the head when insights first run; takes effect once per schema"
             status:
               type: object
               properties:

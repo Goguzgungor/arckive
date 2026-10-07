@@ -159,3 +159,34 @@ describe('insights', () => {
     expect(configHash(cfg)).toBe('2794d91436dcce97');
   });
 });
+
+describe('explorer fields', () => {
+  it('storage.addressIndexes defaults to false and reaches the worker only when true', () => {
+    const off = IndexerSpecSchema.parse(raw);
+    expect(off.storage.addressIndexes).toBe(false);
+    expect(renderWorkerConfig('x', off).storage).toEqual({ partitionBlocks: 2_000_000 });
+    const on = IndexerSpecSchema.parse({ ...raw, storage: { ...raw.storage, addressIndexes: true } });
+    expect(renderWorkerConfig('x', on).storage).toEqual({ partitionBlocks: 2_000_000, addressIndexes: true });
+  });
+
+  it('insights.rpc and insights.startBlock reach the worker; absent, they are absent', () => {
+    const insights = { laya: { url: 'https://gate.example' } };
+    const plain = renderWorkerConfig('x', IndexerSpecSchema.parse({ ...raw, insights }));
+    expect(plain.insights).toEqual({ laya: { url: 'https://gate.example' } });
+    const full = renderWorkerConfig('x', IndexerSpecSchema.parse({
+      ...raw,
+      insights: { ...insights, rpc: ['https://a.example', 'https://b.example'], startBlock: -2000 },
+    }));
+    expect(full.insights).toEqual({
+      laya: { url: 'https://gate.example' }, rpc: ['https://a.example', 'https://b.example'], startBlock: -2000,
+    });
+  });
+
+  it('insights.rpc refuses ws endpoints, an empty list and more than eight', () => {
+    const at = (rpc: string[]) => IndexerSpecSchema.safeParse({ ...raw, insights: { laya: { url: 'https://g' }, rpc } }).success;
+    expect(at(['wss://a.example'])).toBe(false);
+    expect(at([])).toBe(false);
+    expect(at(Array.from({ length: 9 }, (_, i) => `https://e${i}.example`))).toBe(false);
+    expect(at(Array.from({ length: 8 }, (_, i) => `https://e${i}.example`))).toBe(true);
+  });
+});

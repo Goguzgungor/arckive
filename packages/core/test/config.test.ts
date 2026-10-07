@@ -47,3 +47,22 @@ describe('parseWorkerConfig', () => {
     expect(cfg.storage.partitionBlocks).toBe(2_000_000);
   });
 });
+
+describe('explorer fields in the worker config', () => {
+  it('accepts addressIndexes, insights.rpc and insights.startBlock', () => {
+    const cfg = parseWorkerConfig({
+      ...VALID,
+      storage: { partitionBlocks: 50_000, addressIndexes: true },
+      insights: { laya: { url: 'https://g.example' }, rpc: ['https://a.example'], startBlock: 100 },
+    });
+    expect(cfg.storage.addressIndexes).toBe(true);
+    expect(cfg.insights?.rpc).toEqual(['https://a.example']);
+    expect(cfg.insights?.startBlock).toBe(100);
+  });
+
+  it('refuses a ws insights endpoint', () => {
+    expect(() => parseWorkerConfig({
+      ...VALID, insights: { laya: { url: 'https://g.example' }, rpc: ['wss://a.example'] },
+    })).toThrow();
+  });
+});
