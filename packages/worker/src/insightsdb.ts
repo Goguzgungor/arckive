@@ -32,15 +32,20 @@ export interface EventRow {
   transfer: { from: string; to: string; value: bigint } | null;
 }
 
-export async function bootstrapInsights(pool: pg.Pool, schema: string, start: bigint): Promise<void> {
+// start: the initial insights cursor, or null to create the tables only —
+// a start relative to the head is written by the loop's first round
+// (insights.ts prepareRound), when the head is known.
+export async function bootstrapInsights(pool: pg.Pool, schema: string, start: bigint | null): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     for (const s of buildInsightsTables(schema)) await client.query(s);
-    await client.query(
-      `INSERT INTO ${q(schema)}._insights_cursor (id, last_block) VALUES (1, $1) ON CONFLICT (id) DO NOTHING`,
-      [start.toString()],
-    );
+    if (start !== null) {
+      await client.query(
+        `INSERT INTO ${q(schema)}._insights_cursor (id, last_block) VALUES (1, $1) ON CONFLICT (id) DO NOTHING`,
+        [start.toString()],
+      );
+    }
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -48,6 +53,14 @@ export async function bootstrapInsights(pool: pg.Pool, schema: string, start: bi
   } finally {
     client.release();
   }
+}
+
+// Written once: an existing cursor is the loop's progress and is never moved.
+export async function initInsightsCursor(pool: pg.Pool, schema: string, lastBlock: bigint): Promise<void> {
+  await pool.query(
+    `INSERT INTO ${q(schema)}._insights_cursor (id, last_block) VALUES (1, $1) ON CONFLICT (id) DO NOTHING`,
+    [lastBlock.toString()],
+  );
 }
 
 export async function getInsightsCursor(pool: pg.Pool, schema: string): Promise<bigint | null> {
