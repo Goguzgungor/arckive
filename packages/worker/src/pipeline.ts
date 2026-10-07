@@ -42,7 +42,8 @@ export function initialCursor(cfg: WorkerConfig): bigint {
 
 export async function bootstrapIndexer(deps: PipelineDeps): Promise<void> {
   await bootstrap(
-    deps.pool, deps.schema, buildControlTables(deps.schema), [...deps.store.tables.values()], contractMeta(deps.defs),
+    deps.pool, deps.schema, buildControlTables(deps.schema), [...deps.store.tables.values()],
+    { ...contractMeta(deps.defs), partition_blocks: String(deps.store.partitions.size) },
   );
   await initCursor(deps.pool, deps.schema, initialCursor(deps.cfg));
 }

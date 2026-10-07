@@ -27,6 +27,10 @@ async function assertLayout(client: pg.PoolClient, schema: string): Promise<void
   }
 }
 
+// Every _meta key written here is fixed for the schema's life: rows carry
+// neither the contract address nor the partition span, so changing either
+// would silently mix two contracts' events in one table or misplace rows
+// against partition bounds. A mismatch is refused, never overwritten.
 export async function bootstrap(
   pool: pg.Pool,
   schema: string,
@@ -42,10 +46,15 @@ export async function bootstrap(
     for (const t of tables) for (const s of t.statements) await client.query(s);
     for (const [key, value] of Object.entries({ ...meta, layout: STORAGE_LAYOUT })) {
       await client.query(
-        `INSERT INTO ${q(schema)}._meta (key, value) VALUES ($1, $2)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        `INSERT INTO ${q(schema)}._meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
         [key, value],
       );
+      const stored: string = (await client.query(`SELECT value FROM ${q(schema)}._meta WHERE key = $1`, [key])).rows[0].value;
+      if (stored !== value) {
+        throw new LayoutError(
+          `schema ${schema} has ${key} = ${stored}, this Indexer has ${value}; drop the schema or rename the Indexer to re-index`,
+        );
+      }
     }
     await client.query('COMMIT');
   } catch (err) {

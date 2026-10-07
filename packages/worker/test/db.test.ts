@@ -19,6 +19,7 @@ const ABI = [
 ];
 const SCHEMA = 'idx_demo';
 const defs = extractEventDefs('usdc', ADDR, ABI);
+const META = { ...contractMeta(defs), partition_blocks: '1000' };
 const hex = (h: string) => Buffer.from(h.slice(2), 'hex');
 
 function row(blockNumber: number, logIndex: number): DecodedRow {
@@ -68,16 +69,17 @@ describe('db (storage layout 2)', () => {
   beforeEach(async () => {
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
     store = createStore(SCHEMA, defs, 1000);
-    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], contractMeta(defs));
+    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], META);
     await initCursor(pool, SCHEMA, 9n);
   });
 
   it('bootstrap is idempotent and records the layout and each contract', async () => {
-    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], contractMeta(defs));
+    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], META);
     const meta = await pool.query(`SELECT key, value FROM ${SCHEMA}._meta ORDER BY key`);
     expect(meta.rows).toEqual([
       { key: 'contract:usdc_transfer', value: ADDR.toLowerCase() },
       { key: 'layout', value: '2' },
+      { key: 'partition_blocks', value: '1000' },
     ]);
     expect(await getCursor(pool, SCHEMA)).toBe(9n);
   });
@@ -89,6 +91,30 @@ describe('db (storage layout 2)', () => {
     await pool.query(`CREATE TABLE ${SCHEMA}._meta (key text PRIMARY KEY, value text NOT NULL)`);
     await expect(
       bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], contractMeta(defs)),
+    ).rejects.toBeInstanceOf(LayoutError);
+  });
+
+  it('refuses a schema with a cursor but no _meta table', async () => {
+    await pool.query(`DROP SCHEMA ${SCHEMA} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${SCHEMA}`);
+    await pool.query(`CREATE TABLE ${SCHEMA}._cursor (id smallint PRIMARY KEY, last_block bigint NOT NULL)`);
+    await expect(
+      bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], META),
+    ).rejects.toBeInstanceOf(LayoutError);
+  });
+
+  it('refuses a different address for an existing table and leaves _meta unchanged', async () => {
+    const other = contractMeta(extractEventDefs('usdc', '0x' + '99'.repeat(20), ABI));
+    await expect(
+      bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], { ...other, partition_blocks: '1000' }),
+    ).rejects.toBeInstanceOf(LayoutError);
+    const meta = await pool.query(`SELECT value FROM ${SCHEMA}._meta WHERE key = 'contract:usdc_transfer'`);
+    expect(meta.rows).toEqual([{ value: ADDR.toLowerCase() }]);
+  });
+
+  it('refuses a different partition size', async () => {
+    await expect(
+      bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], { ...contractMeta(defs), partition_blocks: '2000' }),
     ).rejects.toBeInstanceOf(LayoutError);
   });
 
