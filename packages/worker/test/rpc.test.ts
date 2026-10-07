@@ -96,10 +96,30 @@ describe('isRangeCapError', () => {
     expect(isRangeCapError(new Error('outer', { cause: new Error('ranges over 100 blocks') }))).toBe(true);
   });
 
+  it('recognises the other common provider wordings', () => {
+    for (const m of [
+      'eth_getLogs is limited to a 10,000 range',
+      'eth_getLogs is limited to a 5 range',
+      'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range.',
+      'block range exceeds 1000',
+      'max allowed range is 1000 blocks',
+      'Query timeout exceeded. Consider reducing your block range.',
+    ]) expect(isRangeCapError(new Error(m)), m).toBe(true);
+  });
+
+  it('a cap whose request body carries "id":429 is still a cap', () => {
+    const err = Object.assign(new Error('RPC Request failed.'), {
+      details: 'block range too large', cause: new Error('Request body: {"id":429,"method":"eth_getLogs"}'),
+    });
+    expect(isRangeCapError(err)).toBe(true);
+  });
+
   it('a rate limit is not a cap, however it is worded', () => {
     expect(isRangeCapError(new Error('Too many requests, try again later'))).toBe(false);
     expect(isRangeCapError(new Error('rate limit exceeded'))).toBe(false);
     expect(isRangeCapError(new Error('HTTP request failed. Status: 429'))).toBe(false);
+    expect(isRangeCapError(new Error('HTTP 429 block range too large'))).toBe(false);
+    expect(isRangeCapError(new Error('429 Too Many Requests'))).toBe(false);
     expect(isRangeCapError(new Error('fetch failed'))).toBe(false);
   });
 
