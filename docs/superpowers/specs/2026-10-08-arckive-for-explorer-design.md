@@ -41,10 +41,12 @@ read from the code:
   then try to classify all of it — 50M block and receipt reads, most of them
   older than what beamrpc serves without a token. Lanes are wanted from
   launch on only.
-- **No lookup by address.** Layout 2 indexes event tables on
-  `(block_number, log_index)` and `tx_hash` only. "The latest movements of
-  this address" — the explorer's address page — scans every partition of a
-  ~45M-row table.
+- **No ordered lookup by address.** Layout 2 gives each indexed param a
+  single-column btree (`usdc_transfer_from_id_idx (from_id)`). It finds an
+  address's rows but not its latest ones: "the latest 25 movements of this
+  address" — the explorer's address page — reads all of that address's rows
+  in every partition and sorts them, and on ~45M rows the busiest addresses
+  have millions.
 
 Arc Radar keeps up with the same chain and the same three public endpoints by
 sending JSON-RPC **batches** (20 calls per request) to an endpoint **pool**
@@ -243,21 +245,25 @@ stopped and is restarted only with the user's go-ahead.
 
 ### 7. `storage.addressIndexes`
 
-An optional boolean (default `false`). When true, bootstrap creates, for
-every event table and every `address` param `p`, one btree on the
-partitioned parent:
+An optional boolean (default `false`, today's indexes). When true, every
+`address` param `p` of every event table — indexed in the ABI or not — gets
+this btree on the partitioned parent, under the name the single-column index
+has today, which it replaces:
 
 ```sql
 CREATE INDEX IF NOT EXISTS "<table>_<p>_id_idx"
   ON "<schema>"."<table>" ("<p>_id", block_number, log_index);
 ```
 
+Indexed params that are not addresses keep their single-column index.
+
 An index on a partitioned table is created on every existing partition and
 on every partition created later, so `Partitions` needs no change, and the
 `Compactor`'s `REINDEX TABLE CONCURRENTLY` rebuilds it with the others.
 `(block_number, log_index)` after the id lets "latest N for this address"
-read each partition's index backwards and page by keyset. Index names go
-through the same 63-byte check as other identifiers (`NamingError`).
+read each partition's index backwards and page by keyset. The new index
+names go through the same 63-byte check as other identifiers
+(`NamingError`); today's names are left as they are.
 
 The setting is a new `_meta` key, `address_indexes`, fixed for the schema's
 life like `partition_blocks`: turning it on for a schema that already holds
@@ -266,9 +272,11 @@ partitioned table cannot run `CONCURRENTLY` — and block ingest for as long
 as that takes. A different value raises `LayoutError`. A schema bootstrapped
 before this change has no such key; bootstrap writes `'false'` for it.
 
-Cost: two more index entries per transfer row (`from_id`, `to_id`), about
-50–60 bytes, measured and written into this spec in the real test. The
-explorer's Indexer turns it on.
+Cost: a composite entry does not deduplicate the way a single-column btree
+does (PostgreSQL 13+ keeps one key per run of equal values), so a transfer
+row costs roughly 20–50 bytes more than today across `from_id` and `to_id`;
+the real test measures it and writes it into this spec. The explorer's
+Indexer turns it on.
 
 ## Testing
 
