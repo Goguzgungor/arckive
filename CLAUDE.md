@@ -175,11 +175,11 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
   partitions are created by the worker inside the commit that first needs them
   (`Partitions` in `worker/src/db.ts`, remembered only after COMMIT).
 - Control tables per schema: `_cursor` (single row), `_meta` (layout +
-  `contract:<table>` + `partition_blocks` + `address_indexes`), `_dead_letter`, `_blocks`
-  (hash/time/`_ingested_at` once per block), `_addresses`. Every `_meta` key is fixed for the schema's life:
-  a different value (a contract's address or `partitionBlocks` changed under
-  the same Indexer) raises `LayoutError`; drop the schema or rename the
-  Indexer. A layout-1 schema is refused the same way; there is no in-place
+  `contract:<table>` + `partition_blocks` + `address_indexes`),
+  `_dead_letter`, `_blocks` (hash/time/`_ingested_at` once per block),
+  `_addresses`. Every `_meta` key is fixed for the schema's life: a different
+  value (a contract's address or `partitionBlocks` changed under the same
+  Indexer) raises `LayoutError`; drop the schema or rename the Indexer. A layout-1 schema is refused the same way; there is no in-place
   migration.
 - Column names are snake_cased; collisions with reserved names get a `param_`
   prefix; identifiers over 63 bytes raise `NamingError`.
@@ -315,7 +315,13 @@ for `UNIQUE NULLS NOT DISTINCT`).
   request move on. Endpoints: `spec.insights.rpc`, else the last http entry
   of `network.rpc` (`insightsRpc`); a ws endpoint is asked one call per
   request. Rounds still run only while ingest is `Live`, and while ingest is
-  `Degraded` the endpoints it shares are slowed (`backOffShared`). A round
+  `Degraded` the endpoints it shares are slowed (`backOffShared`). Each pool
+  endpoint has its own `Pacer` (`INSIGHTS_RPC_PACE`), one request (batch)
+  at a time: starts at 4 requests/s (`startMs` 250), halves on -32005/429,
+  relaxes 3% per answered request (`RELAX`) up to 20/s (`minMs` 50), as slow
+  as one per 8 s (`maxMs` 8000). A transaction's sender is taken for a wallet
+  without a `getCode` call (`insights.ts`): only the other transfer parties
+  are asked about, so do not add a `getCode` for senders. A round
   whose model call fails is kept and only the model call is retried
   (`prepareRound` / `finishRound`): a gate outage must cost no RPC. Arc
   mainnet's public RPC has a per-minute quota that ingest alone (1 s

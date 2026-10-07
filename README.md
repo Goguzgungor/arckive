@@ -128,7 +128,9 @@ time, and only while ingest is `Live`. List endpoints for them in
 `insights.rpc` (http(s), in priority order); without it they use the last
 `http(s)` entry of `network.rpc`. An endpoint that rate-limits or fails rests
 for 5 s, doubling to 60 s, while the next one carries the load, and a call one
-endpoint refuses is asked of the next. Arc mainnet's public RPC has a
+endpoint refuses is asked of the next. Each endpoint starts at about four
+requests a second, halves that whenever it says "rate limited", and creeps
+back up to at most twenty a second while requests go through. Arc mainnet's public RPC has a
 per-minute quota that ingest alone runs into, so give insights endpoints of
 their own. The header Secret must hold one line of printable ASCII (a
 trailing newline is dropped).
@@ -194,9 +196,9 @@ DISTINCT`).
   once in `_labels` and each sentence once in `_sentences`; `_insights_full`
   joins them.
 - Every `_meta` key bootstrap writes (`layout`, `contract:<table>`,
-  `partition_blocks`, `address_indexes`) is fixed for the schema's life: a different value (a
-  contract's address or `partitionBlocks` changed under the same Indexer)
-  raises `LayoutError`; drop the schema or rename the Indexer.
+  `partition_blocks`, `address_indexes`) is fixed for the schema's life: a
+  different value (a contract's address or `partitionBlocks` changed under the
+  same Indexer) raises `LayoutError`; drop the schema or rename the Indexer.
 
 Upgrading from layout 1: see the breaking-change note under Quickstart.
 
