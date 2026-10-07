@@ -24,7 +24,7 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 
 ## Quickstart (2 commands)
 
-Prerequisites: a running Kubernetes cluster and a reachable Postgres.
+Prerequisites: a running Kubernetes cluster and a reachable PostgreSQL 15 or later.
 
 ```bash
 # 1) Install the operator (CRD included)
@@ -60,7 +60,7 @@ listened to only and never queried.
 
 Data: `<contract>_<event>` tables in an `idx_<indexer>` schema
 (e.g. `idx_usdc_arc.usdc_transfer`) plus `_cursor`, `_meta`, `_dead_letter`,
-`_blocks` control tables (see Storage layout below). Deleting the CR cleans up the worker resources and **never
+`_blocks`, `_addresses` control tables (see Storage layout below). Deleting the CR cleans up the worker resources and **never
 touches the DB**.
 
 ## Insights (optional)
@@ -98,9 +98,10 @@ spec:
 Results land in `idx_<indexer>._insights`, keyed like the event rows:
 
 ```sql
-SELECT t.block_time, t.value, i.lane, i.lane_p, i.protocol
+SELECT b.block_time, t.value, i.lane, i.lane_p, i.protocol
 FROM idx_usdc_arc.usdc_transfer t
-JOIN idx_usdc_arc._insights i USING (block_number, log_index)
+JOIN idx_usdc_arc._blocks b USING (block_number)
+JOIN idx_usdc_arc._insights_full i USING (block_number, log_index)
 WHERE i.lane = 'bridge'
 ORDER BY t.block_number DESC LIMIT 20;
 ```
@@ -108,7 +109,9 @@ ORDER BY t.block_number DESC LIMIT 20;
 `lane_p` is the model's confidence (NULL when the transaction itself decides
 the lane — mint/burn, zero-value spam, no transfer, unreadable); `probabilities` keeps the
 whole distribution, and `sentence` is exactly what the model read (both live
-in `_sentences`; query `_insights_full` to see them beside each row).
+in `_sentences`). `_insights` itself is a narrow row per event; the label (lane,
+confidence, protocol, facts) is stored once in `_labels` and the sentence once
+in `_sentences`, and the `_insights_full` view joins them back together.
 
 Insights run in their own loop behind the ingest cursor. Ingest never waits for
 the model: if the gate is slow, rate-limited or down, insights fall behind
@@ -145,27 +148,43 @@ FROM idx_<indexer>._insights_full ORDER BY random() LIMIT 50;
 
 ## Storage layout
 
-Arckive writes **storage layout 2** (recorded in `_meta` as `layout = 2`):
+Arckive writes **storage layout 2** (recorded in `_meta` as `layout = 2`).
+It needs **PostgreSQL 15 or later** (`_labels` uses `UNIQUE NULLS NOT
+DISTINCT`).
 
-- Hashes and addresses are `bytea`. psql prints them as `\x…`; filter with a
-  `'\x…'` literal so the index is used:
+- An event table is dense: `block_number`, `tx_hash`, `log_index`, then the
+  event's parameters. Hashes are `bytea` (psql prints `\x…`; `tx_hash` has a
+  btree index). Block time is not in the row: `block_hash`, `block_time` and
+  `_ingested_at` live once per block in `_blocks`, so join it by
+  `block_number`.
+- An `address` parameter `p` is stored as `"<p>_id" integer` (a parameter
+  named `from` becomes `from_id`), pointing into `_addresses(id, address)`,
+  which holds each distinct address once. Filter by address on the base table
+  through its id:
 
   ```sql
-  SELECT block_time, "from", "to", value
-  FROM idx_usdc.usdc_transfer
-  WHERE "to" = '\x8366a39cc670b4001a1121b8f6a443a643e40951'
-  ORDER BY block_number DESC LIMIT 20;
+  SELECT b.block_time, t.*
+  FROM idx_usdc.usdc_transfer t JOIN idx_usdc._blocks b USING (block_number)
+  WHERE t.to_id = (SELECT id FROM idx_usdc._addresses
+                   WHERE address = '\x8366a39cc670b4001a1121b8f6a443a643e40951')
+  ORDER BY t.block_number DESC LIMIT 20;
   ```
 
-  Every event table has a `<table>_hex` view with `0x…` text for dashboards
-  and exports; filter on the base table, not on the view.
-- Rows are keyed by `(block_number, log_index)`. The block hash is stored once
-  per block in `_blocks`; the contract address once per table in `_meta`
-  (`contract:<table>`).
+- Every event table has a `<table>_hex` view, the readable form of the table
+  for dashboards and exports: `block_time` and `_ingested_at` from `_blocks`,
+  addresses resolved from `_addresses` under their original parameter names,
+  hashes and addresses as `0x…` text. A predicate on the view's text columns
+  cannot use the indexes, so filter on the base table as above.
+- Rows are keyed by `(block_number, log_index)`. The contract address is
+  stored once per table in `_meta` (`contract:<table>`), not in the rows.
 - Every row table is range-partitioned by `block_number`,
   `spec.storage.partitionBlocks` blocks per partition (default 2,000,000).
-- Insights keep one narrow row per event in `_insights` and each sentence
-  once in `_sentences`; `_insights_full` joins them.
+  When ingest moves into the next partition, the worker rebuilds the finished
+  partition's indexes once in the background (`REINDEX TABLE CONCURRENTLY`);
+  a restart does not revisit earlier partitions.
+- Insights keep one narrow row per event in `_insights`, each distinct label
+  once in `_labels` and each sentence once in `_sentences`; `_insights_full`
+  joins them.
 - Every `_meta` key bootstrap writes (`layout`, `contract:<table>`,
   `partition_blocks`) is fixed for the schema's life: a different value (a
   contract's address or `partitionBlocks` changed under the same Indexer)
@@ -186,8 +205,8 @@ instrumentation in product code:
 | Burst ingest | **2,628 events/s** | Local anvil; decode + single-transaction SQL write ceiling |
 | Provider floor | ~0.75–0.9s (p50) | The official endpoint's `newHeads` announce lag — the part of the budget outside the indexer (the engine itself adds ~40ms) |
 
-Freshness is read from the product's own meta columns
-(`_ingested_at − block_time`); a run is invalidated if the WS connection does
+Freshness is read from the product's own `_blocks` columns
+(`_ingested_at − block_time`, one row per block); a run is invalidated if the WS connection does
 not stay up for the whole window. When Arc mainnet launches, the same suite
 runs there with a single `NETWORKS` entry. Raw results and the HTML report
 live in `docs/benchmarks/` · reproduce with `pnpm bench`

@@ -143,19 +143,34 @@ via `resolveStartBlock` so the pipeline only ever sees concrete numbers.
 
 - Schema per indexer: `idx_<snake_case(indexerName)>`; table per event:
   `<contract>_<event>` (plus a 4-hex-char topic0 suffix for overloads).
-- Storage layout 2 (`STORAGE_LAYOUT`, `_meta.layout = '2'`): every event table
-  gets `COMMON_COLUMNS` (`block_number`, `block_time`, `tx_hash` bytea,
-  `tx_index`, `log_index`) plus `_ingested_at` (DB default `now()`, used for
-  freshness measurement) and `PRIMARY KEY (block_number, log_index)`; inserts
-  are `ON CONFLICT DO NOTHING`, making re-processing idempotent. Addresses and
-  hashes are bytea; `<table>_hex` views print them as `0x…`.
+- Storage layout 2 (`STORAGE_LAYOUT`, `_meta.layout = '2'`): event tables are
+  dense — `COMMON_COLUMNS` are only `block_number`, `tx_hash` bytea (btree
+  `<table>_tx_hash_idx`) and `log_index`, then the params, with
+  `PRIMARY KEY (block_number, log_index)`; inserts are
+  `ON CONFLICT (block_number, log_index) DO NOTHING`, making re-processing
+  idempotent. No `block_time`, `tx_index`, `_ingested_at`, `block_hash` or
+  contract address in event rows: `_blocks` holds `block_hash`, `block_time`
+  and `_ingested_at` (DB default `now()`, used for freshness measurement) once
+  per block; the contract address is in `_meta`.
+- An `address` param `p` is `"<p>_id" integer` (snake_case name + `_id`) into
+  `_addresses(id, address bytea UNIQUE)`, filled in the same transaction as the
+  rows. Dictionary inserts (`_addresses`, `_sentences`, `_labels`) insert only
+  rows that do not exist yet, because Postgres consumes an identity value even
+  for rows `ON CONFLICT` skips. `<table>_hex` views are the readable form
+  (`block_time`/`_ingested_at` from `_blocks`, addresses under the original
+  param names, hashes and addresses as `0x…`); filters belong on the base table.
+- Compaction: when ingest moves into partition n+1, the worker rebuilds
+  partition n's indexes once in the background (`REINDEX TABLE CONCURRENTLY`,
+  `Compactor` in `worker/src/db.ts`); a restart does not revisit earlier
+  partitions.
+- Requires PostgreSQL 15+ (`_labels` uses `UNIQUE NULLS NOT DISTINCT`).
 - Every row table (event tables, `_blocks`, `_insights`) is
   `PARTITION BY RANGE (block_number)` in `storage.partitionBlocks` spans;
   partitions are created by the worker inside the commit that first needs them
   (`Partitions` in `worker/src/db.ts`, remembered only after COMMIT).
 - Control tables per schema: `_cursor` (single row), `_meta` (layout +
   `contract:<table>` + `partition_blocks`), `_dead_letter`, `_blocks`
-  (hash/time once per block). Every `_meta` key is fixed for the schema's life:
+  (hash/time/`_ingested_at` once per block), `_addresses`. Every `_meta` key is fixed for the schema's life:
   a different value (a contract's address or `partitionBlocks` changed under
   the same Indexer) raises `LayoutError`; drop the schema or rename the
   Indexer. A layout-1 schema is refused the same way; there is no in-place
@@ -244,8 +259,10 @@ Phases: `Provisioning` → `Backfilling` → `Live`, or `Degraded` on error.
 
 Optional (`spec.insights.laya.{url, headerSecretRef}`): every indexed event's
 transaction is classified into a lane by a Laya model gate and written to
-`_insights` (+ `_insights_cursor`) in the indexer's schema; each sentence is
-stored once in `_sentences`.
+`_insights(block_number, log_index, lane, label_id)` (+ `_insights_cursor`) in
+the indexer's schema; each distinct label is stored once in `_labels` and each
+sentence once in `_sentences` (`_insights_full` joins them; needs PostgreSQL 15+
+for `UNIQUE NULLS NOT DISTINCT`).
 
 - Pure logic in `core/src/insights/`: `signatures.ts` is a port of
   `radar/radar/signatures.py`, `sentence.ts` of Radar's `shape` sentence and
@@ -290,7 +307,7 @@ stored once in `_sentences`.
 `packages/worker/scripts/bench/` runs the **real worker** and reads only its
 production surface (Postgres rows + `/metrics`). Do not add benchmark-only
 instrumentation to product code — freshness is derived from
-`_ingested_at − block_time`. Scenarios: `visibility`, `freshness`, `backfill`,
+`_ingested_at − block_time` per block in `_blocks`. Scenarios: `visibility`, `freshness`, `backfill`,
 `burst`; select with `BENCH_SCENARIOS=...`. Results land in
 `docs/benchmarks/<YYYY-MM-DD>/results.json` and are merged with same-day runs.
 Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
