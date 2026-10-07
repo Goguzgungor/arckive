@@ -2,11 +2,14 @@ import type pg from 'pg';
 import type { Logger } from 'pino';
 import type { PublicClient } from 'viem';
 import {
-  buildControlTables, buildEventTable, decodeLogToRow, planRange,
+  buildControlTables, decodeLogToRow, planRange,
   type DecodedRow, type EventDef, type RawLog, type WorkerConfig,
 } from '@arckive/core';
-import { bootstrap, commitBatch, getCursor, initCursor, type DeadLetterEntry } from './db.js';
-import { fetchLogs, getBlockTimes, getFinalizedBlockNumber } from './rpc.js';
+import {
+  bootstrap, commitBatch, contractMeta, getCursor, initCursor, type DeadLetterEntry, type Store,
+} from './db.js';
+import { blockTimesFromLogs, fetchLogs, getBlockTimes, getFinalizedBlockNumber, isRangeCapError } from './rpc.js';
+import type { RangeSizer } from './rangesizer.js';
 import type { Metrics } from './metrics.js';
 import type { HeadSignal } from './signal.js';
 import type { PhaseTracker } from './status.js';
@@ -17,6 +20,7 @@ export interface PipelineDeps {
   cfg: WorkerConfig;
   defs: EventDef[];
   schema: string;
+  store: Store;
   metrics: Metrics;
   phase: PhaseTracker;
   headSignal: HeadSignal;
@@ -24,6 +28,8 @@ export interface PipelineDeps {
   // Called after every committed range; the insight loop waits on it so it
   // follows ingest without polling. The only thing ingest knows about insights.
   onCommitted?: () => void;
+  // the working getLogs span; absent = always cfg.polling.batchBlocks
+  sizer?: RangeSizer;
 }
 
 // startBlock is resolved to a concrete number in main.ts (undefined -> head),
@@ -38,8 +44,10 @@ export function initialCursor(cfg: WorkerConfig): bigint {
 }
 
 export async function bootstrapIndexer(deps: PipelineDeps): Promise<void> {
-  const tables = deps.defs.map((d) => buildEventTable(deps.schema, d));
-  await bootstrap(deps.pool, buildControlTables(deps.schema), tables);
+  await bootstrap(
+    deps.pool, deps.schema, buildControlTables(deps.schema), [...deps.store.tables.values()],
+    { ...contractMeta(deps.defs), partition_blocks: String(deps.store.partitions.size) },
+  );
   await initCursor(deps.pool, deps.schema, initialCursor(deps.cfg));
 }
 
@@ -60,7 +68,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   metrics.blocksBehind.set(Number(finalized - cursor));
   phase.setBlocks(cursor, finalized);
 
-  const range = planRange(cursor, finalized, cfg.polling.batchBlocks);
+  const range = planRange(cursor, finalized, deps.sizer?.size ?? cfg.polling.batchBlocks);
   if (!range) {
     phase.set('Live');
     return false;
@@ -78,23 +86,32 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   // seen is committed and the rest goes to the next round.
   let logs;
   let safeTo = range.toBlock;
-  if (signalHead && finalized === signalHead.number) {
-    const [fetched, queryHead] = await Promise.all([
-      fetchLogs(client, addresses, range.fromBlock, range.toBlock),
-      getFinalizedBlockNumber(client, cfg.network.finalityTag),
-    ]);
-    if (queryHead < range.fromBlock) return false; // node too far behind — skip this round
-    safeTo = queryHead < range.toBlock ? queryHead : range.toBlock;
-    logs = fetched.filter((l) => l.blockNumber! <= safeTo);
-  } else {
-    logs = await fetchLogs(client, addresses, range.fromBlock, range.toBlock);
+  try {
+    if (signalHead && finalized === signalHead.number) {
+      const [fetched, queryHead] = await Promise.all([
+        fetchLogs(client, addresses, range.fromBlock, range.toBlock),
+        getFinalizedBlockNumber(client, cfg.network.finalityTag),
+      ]);
+      if (queryHead < range.fromBlock) return false; // node too far behind — skip this round
+      safeTo = queryHead < range.toBlock ? queryHead : range.toBlock;
+      logs = fetched.filter((l) => l.blockNumber! <= safeTo);
+    } else {
+      logs = await fetchLogs(client, addresses, range.fromBlock, range.toBlock);
+    }
+  } catch (err) {
+    // A provider cap is not an outage: retry at once with half the span
+    // instead of going Degraded and backing off for 30 s.
+    const before = deps.sizer?.size;
+    if (deps.sizer && isRangeCapError(err) && deps.sizer.shrink()) {
+      deps.log.warn({ from: before, to: deps.sizer.size }, 'getLogs range capped by the provider — shrinking the span');
+      return true;
+    }
+    throw err;
   }
   // the cache fed from the newHeads payload answers with zero RTT in tail mode
-  const times = await getBlockTimes(
-    client,
-    logs.map((l) => l.blockNumber!),
-    deps.headSignal.blockTimes(),
-  );
+  const times =
+    blockTimesFromLogs(logs) ??
+    (await getBlockTimes(client, logs.map((l) => l.blockNumber!), deps.headSignal.blockTimes()));
 
   const rows: DecodedRow[] = [];
   const dead: DeadLetterEntry[] = [];
@@ -116,9 +133,12 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   }
 
   const end = deps.metrics.writeLatency.startTimer();
-  const inserted = await commitBatch(pool, schema, rows, dead, safeTo);
+  const inserted = await commitBatch(pool, deps.store, rows, dead, safeTo);
   end();
   deps.onCommitted?.();
+  // Each span change is logged once at warn with both sizes (spec §7), like the shrink.
+  const spanBefore = deps.sizer?.size;
+  if (deps.sizer?.succeeded()) deps.log.warn({ from: spanBefore, to: deps.sizer.size }, 'getLogs span grown');
 
   metrics.eventsIngested.inc(inserted);
   metrics.deadLetters.inc(dead.length);

@@ -40,7 +40,7 @@ export function crStatusTargetFromEnv(
   };
 }
 
-export function patchCrStatus(target: CrStatusTarget, status: CrRuntimeStatus): Promise<void> {
+export function patchCrStatus(target: CrStatusTarget, status: Partial<CrRuntimeStatus>): Promise<void> {
   const url = new URL(
     `/apis/arckive.org/v1alpha1/namespaces/${target.namespace}/indexers/${target.name}/status`
       + '?fieldManager=arckive-worker&force=true&fieldValidation=Strict',
@@ -91,4 +91,27 @@ export function startCrStatusLoop(
   push();
   const t = setInterval(push, intervalMs);
   return () => clearInterval(t);
+}
+
+// A fatal start-up error (a schema written by another storage layout) ends the
+// process before startCrStatusLoop runs, so the CR would keep its old phase
+// (Live) next to a worker that is down. Report it once, best effort: a failure
+// here is logged and never replaces the error that is being reported. Block
+// numbers are left out on purpose — this process never read them, and zeros
+// would overwrite the last real progress.
+export async function reportFatalToCr(
+  err: unknown,
+  log: Logger,
+  deps: { target?: () => CrStatusTarget | null; patch?: typeof patchCrStatus } = {},
+): Promise<void> {
+  try {
+    const target = (deps.target ?? crStatusTargetFromEnv)();
+    if (!target) return;
+    await (deps.patch ?? patchCrStatus)(target, {
+      phase: 'Degraded',
+      lastError: err instanceof Error ? err.message : String(err),
+    });
+  } catch (e) {
+    log.warn({ err: e }, 'could not report the fatal error to the CR status');
+  }
 }

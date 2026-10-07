@@ -44,6 +44,12 @@ export const WorkerConfigSchema = z.object({
       intervalMs: z.number().int().positive().default(2000),
     })
     .default({}),
+  // Rows are range-partitioned by block_number, partitionBlocks blocks per
+  // partition: vacuum and index builds stay per range, and a retention
+  // window, if one is ever wanted, is a DROP TABLE.
+  storage: z
+    .object({ partitionBlocks: z.number().int().min(10_000).default(2_000_000) })
+    .default({}),
   // Laya insights (optional): where the model gate is. The header that
   // authenticates to it is a secret and arrives as INSIGHTS_HEADER, never here.
   insights: z

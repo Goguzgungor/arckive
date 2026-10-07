@@ -1,10 +1,10 @@
 import type pg from 'pg';
 import type { Logger } from 'pino';
 import {
-  describeEvent, eventColumns, extractFunctionNames, isTransferEvent, planRange, settleLane,
+  describeEvent, eventColumns, extractFunctionNames, isTransferEvent, partitionName, planRange, settleLane,
   type CallInfo, type Description, type EventDef, type LaneAnswer, type TokenInfo, type TxContext, type WorkerConfig,
 } from '@arckive/core';
-import { getCursor } from './db.js';
+import { Partitions, getCursor, type Compactor } from './db.js';
 import {
   bootstrapInsights, capRange, commitInsights, getInsightsCursor, readEventRows,
   type EventRow, type EventSource, type InsightRow,
@@ -57,6 +57,7 @@ export interface InsightsDeps {
   ingestPhase: () => Phase;
   // the pacer every insight RPC call goes through (txcontext.ts)
   rpcPacer: Pick<Pacer, 'backOff'>;
+  partitions: Partitions; // _insights partitions this process has created (db.ts)
 }
 
 export class InsightsError extends Error {
@@ -163,12 +164,12 @@ export async function finishRound(deps: InsightsDeps, round: PreparedRound, mode
     const answer = d.ruled ? null : (answers.get(d.sentence) ?? null);
     const { lane, laneP } = settleLane(answer, d.ruled);
     return {
-      blockNumber: row.blockNumber, txHash: row.txHash, logIndex: row.logIndex, tableName: row.tableName,
+      blockNumber: row.blockNumber, logIndex: row.logIndex,
       lane, laneP, ruled: Boolean(d.ruled), protocol: d.protocol, facts: d.facts,
       probabilities: answer?.probabilities ?? null, sentence: d.sentence, model: answer ? model : null,
     };
   });
-  const inserted = await at('db', commitInsights(pool, schema, insights, toBlock));
+  const inserted = await at('db', commitInsights(pool, schema, deps.partitions, insights, toBlock));
 
   for (const lane of inserted) metrics.insightsClassified.inc({ lane });
   metrics.insightsBlocksBehind.set(Number(round.ingested > toBlock ? round.ingested - toBlock : 0n));
@@ -251,6 +252,7 @@ export interface PrepareInsightsInput {
   headerLine: string | undefined; // INSIGHTS_HEADER
   ingestPhase: () => Phase;
   rpcPacer: Pick<Pacer, 'backOff'>;
+  compactor?: Pick<Compactor, 'enqueue'>; // absent: finished partitions are not rebuilt
   fetch?: typeof fetch;
 }
 
@@ -298,6 +300,11 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     metrics,
     log: input.log,
     batchBlocks: cfg.polling.batchBlocks,
+    partitions: new Partitions(
+      input.schema,
+      BigInt(cfg.storage.partitionBlocks),
+      input.compactor ? (t, n) => input.compactor!.enqueue(input.schema, partitionName(t, n)) : undefined,
+    ),
     intervalMs: cfg.polling.intervalMs,
     wake: input.wake,
     ingestPhase: input.ingestPhase,

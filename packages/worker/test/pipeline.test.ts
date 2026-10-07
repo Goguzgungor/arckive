@@ -8,9 +8,10 @@ import { createWalletClient, http, publicActions } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractEventDefs, parseWorkerConfig, type WorkerConfig } from '@arckive/core';
-import { getCursor } from '../src/db.js';
+import { createStore, getCursor } from '../src/db.js';
 import { createMetrics } from '../src/metrics.js';
 import { bootstrapIndexer, runLoop, runOnce, type PipelineDeps } from '../src/pipeline.js';
+import { RangeSizer } from '../src/rangesizer.js';
 import { createRpc, getBlockTimes } from '../src/rpc.js';
 import { HeadSignal } from '../src/signal.js';
 import { PhaseTracker } from '../src/status.js';
@@ -65,12 +66,14 @@ describe('pipeline', () => {
       contracts: [{ name: 'emitter', address: contractAddress, abiPath: 'unused' }],
       polling: { batchBlocks: 2, intervalMs: 100 },
     });
+    const defs = extractEventDefs('emitter', contractAddress, artifact.abi);
     deps = {
       client: createRpc([anvil.url]),
       pool,
       cfg,
-      defs: extractEventDefs('emitter', contractAddress, artifact.abi),
+      defs,
       schema: 'idx_demo',
+      store: createStore('idx_demo', defs, 1_000_000),
       metrics: createMetrics('demo'),
       phase: new PhaseTracker(),
       headSignal: new HeadSignal(),
@@ -87,7 +90,7 @@ describe('pipeline', () => {
 
   it('with batchBlocks=2, processes range by range until caught up, writes 5 events', async () => {
     while (await runOnce(deps)) { /* until caught up */ }
-    const r = await pool.query(`SELECT n, who FROM idx_demo.emitter_ping ORDER BY n`);
+    const r = await pool.query(`SELECT n, who FROM idx_demo.emitter_ping_hex ORDER BY n`);
     expect(r.rows).toHaveLength(5);
     expect(r.rows.map((x) => x.n)).toEqual(['1', '2', '3', '4', '5']);
     expect(deps.phase.phase).toBe('Live');
@@ -179,7 +182,7 @@ describe('pipeline', () => {
       polling: { batchBlocks: 100, intervalMs: 100 },
     });
     const d2: PipelineDeps = {
-      ...deps, client: fake, cfg: cfg2, schema: 'idx_hot',
+      ...deps, client: fake, cfg: cfg2, schema: 'idx_hot', store: createStore('idx_hot', deps.defs, 1_000_000),
       headSignal: hs, metrics: createMetrics('hot'), phase: new PhaseTracker(),
     };
     await bootstrapIndexer(d2);
@@ -203,7 +206,7 @@ describe('pipeline', () => {
       polling: { batchBlocks: 100, intervalMs: 100 },
     });
     const d2: PipelineDeps = {
-      ...deps, client: fake, cfg: cfg2, schema: 'idx_clamp',
+      ...deps, client: fake, cfg: cfg2, schema: 'idx_clamp', store: createStore('idx_clamp', deps.defs, 1_000_000),
       headSignal: hs, metrics: createMetrics('clamp'), phase: new PhaseTracker(),
     };
     await bootstrapIndexer(d2);
@@ -236,5 +239,35 @@ describe('pipeline', () => {
     await wallet.waitForTransactionReceipt({ hash: txHash });
     while (await runOnce(withHook)) { /* catch up */ }
     expect(calls).toBeGreaterThan(before);
+  });
+
+  it('a provider range cap shrinks the span without going Degraded, and every event still lands', async () => {
+    const real = deps.client;
+    const capped = {
+      ...real,
+      getLogs: (args: { fromBlock: bigint; toBlock: bigint }) =>
+        args.toBlock - args.fromBlock + 1n > 2n
+          ? Promise.reject(new Error('ranges over 10000 blocks are not supported on free plan'))
+          : real.getLogs(args as never),
+    } as unknown as PipelineDeps['client'];
+    const schema = 'idx_capped';
+    const sizer = new RangeSizer(1000);
+    const d: PipelineDeps = {
+      ...deps,
+      client: capped,
+      schema,
+      store: createStore(schema, deps.defs, 1_000_000),
+      cfg: { ...deps.cfg, polling: { ...deps.cfg.polling, batchBlocks: 1000 } },
+      phase: new PhaseTracker(),
+      sizer,
+    };
+    await bootstrapIndexer(d);
+    let rounds = 0;
+    while ((await runOnce(d)) && rounds++ < 200) {
+      expect(d.phase.phase).not.toBe('Degraded');
+    }
+    const r = await pool.query(`SELECT count(*)::int AS c FROM ${schema}.emitter_ping`);
+    expect(r.rows[0].c).toBeGreaterThanOrEqual(5);
+    expect(sizer.size).toBeLessThanOrEqual(2);
   });
 });

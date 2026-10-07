@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { pino } from 'pino';
 import {
-  extractEventDefs, parseWorkerConfig, schemaName, type EventDef,
+  extractEventDefs, knownToken, parseWorkerConfig, schemaName, type EventDef,
 } from '@arckive/core';
+import { Compactor, LayoutError, createStore } from './db.js';
 import { createMetrics } from './metrics.js';
 import { bootstrapIndexer, runLoop, type PipelineDeps } from './pipeline.js';
+import { RangeSizer } from './rangesizer.js';
 import { createRpc, filterHealthyRpcs, getFinalizedBlockNumber, splitRpcUrls } from './rpc.js';
 import { resolveContractAbi } from './abi.js';
 import { resolveStartBlock } from './blocks.js';
@@ -13,7 +15,7 @@ import { startHealthServer } from './health.js';
 import { HeadSignal } from './signal.js';
 import { PhaseTracker } from './status.js';
 import { subscribeNewHeads } from './ws.js';
-import { crStatusTargetFromEnv, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
+import { crStatusTargetFromEnv, reportFatalToCr, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
 import { prepareInsights, runInsightsLoop } from './insights.js';
 import { Pacer } from './pacer.js';
 import { INSIGHTS_RPC_PACE, createContextSource, createInsightsRpc, readTokenInfo } from './txcontext.js';
@@ -59,6 +61,7 @@ async function main(): Promise<void> {
     extractEventDefs(c.name, c.address, abis[i], c.events.length ? c.events : undefined),
   );
 
+  const compactor = new Compactor(pool, log); // one per process, shared by ingest and insights
   const headSignal = new HeadSignal();
   const deps: PipelineDeps = {
     client,
@@ -66,10 +69,12 @@ async function main(): Promise<void> {
     cfg,
     defs,
     schema: schemaName(cfg.indexerName),
+    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor),
     metrics,
     phase,
     headSignal,
     log,
+    sizer: new RangeSizer(cfg.polling.batchBlocks),
   };
   await bootstrapIndexer(deps);
 
@@ -80,10 +85,13 @@ async function main(): Promise<void> {
     ? await prepareInsights({
         cfg, pool, schema: deps.schema, defs, abis, metrics, log, wake: insightsWake,
         context: createContextSource(createInsightsRpc(rpcs), { pacer: insightsPacer }),
-        readToken: (address, fallback) => readTokenInfo(client, address, fallback),
+        // native USDC has no symbol()/decimals() to read (core insights/tokens.ts)
+        readToken: async (address, fallback) =>
+          knownToken(cfg.network.chainId, address) ?? readTokenInfo(client, address, fallback),
         headerLine: process.env['INSIGHTS_HEADER'],
         ingestPhase: () => phase.phase,
         rpcPacer: insightsPacer,
+        compactor,
       })
     : null;
   if (insights) deps.onCommitted = () => insightsWake.notify();
@@ -128,10 +136,13 @@ async function main(): Promise<void> {
   subscription?.close();
   stopCrStatus();
   server.close();
+  compactor.close(); // no new REINDEX once the pool is going away
   await pool.end();
 }
 
-main().catch((err: unknown) => {
+main().catch(async (err: unknown) => {
   log.fatal({ err }, 'worker failed to start');
+  // Only LayoutError: the CR would otherwise keep reporting the previous Live.
+  if (err instanceof LayoutError) await reportFatalToCr(err, log);
   process.exit(1);
 });

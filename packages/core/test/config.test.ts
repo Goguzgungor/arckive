@@ -37,4 +37,13 @@ describe('parseWorkerConfig', () => {
     const bad = { ...VALID, network: { ...VALID.network, rpc: [] } };
     expect(() => parseWorkerConfig(bad)).toThrow();
   });
+
+  it('worker config defaults storage.partitionBlocks to 2,000,000', () => {
+    const cfg = parseWorkerConfig({
+      indexerName: 'x',
+      network: { chainId: 1, rpc: ['http://127.0.0.1:1'] },
+      contracts: [{ name: 'a', address: `0x${'ab'.repeat(20)}` }],
+    });
+    expect(cfg.storage.partitionBlocks).toBe(2_000_000);
+  });
 });

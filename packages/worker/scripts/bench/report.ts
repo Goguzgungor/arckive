@@ -159,9 +159,9 @@ function freshnessSection(
   <p>A worker subscribed to <code>newHeads</code> over WebSocket (<em>listening, not polling</em> —
   ${fmtN(r.headNotifications)} head signals in the window) and tailed native USDC
   (<code>${esc(r.contractAddress.slice(0, 8))}…</code>) <code>Transfer</code> events on the real Arc
-  testnet. Latency is read from the product's own meta columns —
-  <code>_ingested_at − block_time</code> — for every row that arrived in the window:
-  <strong>${r.stats.count} events</strong> of genuine third-party traffic.</p>
+  testnet. Latency is read from the product's own meta columns of <code>_blocks</code> —
+  <code>_ingested_at − block_time</code> — once per block that carried an event in the window:
+  <strong>${r.stats.count} blocks</strong> of genuine third-party traffic.</p>
   <div class="tiles">
     ${tile('p50', sec(r.stats.p50), 'block close → queryable row')}
     ${tile('p90', sec(r.stats.p90))}
@@ -295,7 +295,7 @@ export function render(results: Results): string {
     <strong>Methodology.</strong> Each scenario spawns the actual <code>arckive-worker</code> binary and
     observes it only through Postgres rows and its Prometheus <code>/metrics</code> endpoint — the same
     surface you would monitor in production. Freshness = <code>_ingested_at − block_time</code>
-    per row, where <code>block_time</code> is the validator timestamp and <code>_ingested_at</code>
+    per block (from <code>_blocks</code>; every row of a block shares both times), where <code>block_time</code> is the validator timestamp and <code>_ingested_at</code>
     is the database clock at insert (local clock assumed NTP-synced). The freshness worker runs in
     WS-hybrid mode: an <code>eth_subscribe(newHeads)</code> subscription triggers an immediate fetch
     round the moment a block is announced, and interval polling remains only as a safety net — the

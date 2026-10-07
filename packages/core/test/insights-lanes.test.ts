@@ -46,7 +46,8 @@ describe('buildInsightsTables', () => {
   it('creates _insights keyed like the event rows and a single-row cursor', () => {
     const sql = buildInsightsTables('idx_demo').join('\n');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"."_insights"');
-    expect(sql).toContain('UNIQUE (block_number, tx_hash, log_index)');
+    expect(sql).toContain('PRIMARY KEY (block_number, log_index)');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"._labels');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"."_insights_cursor"');
     expect(sql).toContain('CHECK (id = 1)');
   });

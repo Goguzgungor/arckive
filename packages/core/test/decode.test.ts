@@ -34,26 +34,26 @@ function makeLog(): RawLog {
 }
 
 describe('toSqlValue', () => {
-  it('bigint → string, address → lowercase, bytes → Buffer, array → JSON string', () => {
+  it('bigint → string, address → 20-byte Buffer, bytes → Buffer, array → JSON string', () => {
     expect(toSqlValue('uint256', 5n)).toBe('5');
-    expect(toSqlValue('address', '0xABCDEF0000000000000000000000000000000000'))
-      .toBe('0xabcdef0000000000000000000000000000000000');
-    expect(toSqlValue('bytes32', '0x01ff')).toEqual(Buffer.from('01ff', 'hex'));
+    expect(toSqlValue('address', '0xAbCd' + '00'.repeat(18))).toEqual(Buffer.from('abcd' + '00'.repeat(18), 'hex'));
+    expect((toSqlValue('address', `0x${'11'.repeat(20)}`) as Buffer).length).toBe(20);
+    expect(toSqlValue('bytes32', `0x${'ff'.repeat(32)}`)).toEqual(Buffer.from('ff'.repeat(32), 'hex'));
     expect(toSqlValue('uint256[]', [1n, 2n])).toBe('["1","2"]');
   });
 });
 
 describe('decodeLogToRow', () => {
-  it('common columns + parameter columns filled correctly', () => {
-    const [def] = extractEventDefs('usdc', ADDR, TRANSFER_ABI as unknown as unknown[]);
-    const t = new Date('2026-07-03T00:00:00Z');
-    const row = decodeLogToRow(def!, makeLog(), t);
+  it('fills dense columns; block hash and time ride beside them; addresses stay Buffers under _id', () => {
+    const def = extractEventDefs('usdc', ADDR, TRANSFER_ABI as unknown as unknown[])[0]!;
+    const log = makeLog();
+    const row = decodeLogToRow(def, log, new Date(1000));
     expect(row.tableName).toBe('usdc_transfer');
-    expect(row.columns['block_number']).toBe('42');
-    expect(row.columns['block_time']).toBe(t);
-    expect(row.columns['contract_address']).toBe(ADDR.toLowerCase());
-    expect(row.columns['from']).toBe(FROM);
-    expect(row.columns['to']).toBe(TO);
+    expect(row.blockHash).toBe(log.blockHash);
+    expect(row.blockTime).toEqual(new Date(1000));
+    expect(Object.keys(row.columns)).toEqual(['block_number', 'tx_hash', 'log_index', 'from_id', 'to_id', 'value']);
+    expect(row.columns['from_id']).toEqual(Buffer.from(FROM.slice(2), 'hex'));
+    expect(row.columns['block_number']).toBe(log.blockNumber.toString());
     expect(row.columns['value']).toBe('123456789');
   });
 

@@ -21,8 +21,15 @@ export interface RawLog {
 
 export interface DecodedRow {
   tableName: string;
+  // written once per block to _blocks, not into the event table
+  blockHash: `0x${string}`;
+  // also per block: written to _blocks with the hash
+  blockTime: Date;
+  // an address param is a 20-byte Buffer under its _id column; the worker swaps it for an id
   columns: Record<string, unknown>;
 }
+
+const hexBytes = (hex: string): Buffer => Buffer.from(hex.slice(2), 'hex');
 
 export function toSqlValue(abiType: string, value: unknown): unknown {
   if (abiType.endsWith(']') || abiType.startsWith('tuple')) {
@@ -30,8 +37,8 @@ export function toSqlValue(abiType: string, value: unknown): unknown {
       typeof v === 'bigint' ? v.toString() : v,
     );
   }
-  if (abiType === 'address') return String(value).toLowerCase();
-  if (/^bytes(\d+)?$/.test(abiType)) return Buffer.from(String(value).slice(2), 'hex');
+  if (abiType === 'address') return hexBytes(String(value));
+  if (/^bytes(\d+)?$/.test(abiType)) return hexBytes(String(value));
   if (typeof value === 'bigint') return value.toString();
   return value;
 }
@@ -45,12 +52,8 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
   }
   const columns: Record<string, unknown> = {
     block_number: log.blockNumber.toString(),
-    block_hash: log.blockHash,
-    block_time: blockTime,
-    tx_hash: log.transactionHash,
-    tx_index: log.transactionIndex,
+    tx_hash: hexBytes(log.transactionHash),
     log_index: log.logIndex,
-    contract_address: log.address.toLowerCase(),
   };
   const cols = eventColumns(def.event);
   for (const [i, col] of cols.entries()) {
@@ -59,9 +62,9 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
       ? (args as Record<string, unknown>)[param.name]
       : (args as unknown[])[i];
     if (raw === undefined) {
-      throw new DecodeError(`${def.tableName}: parameter '${col.name}' missing from decode result`);
+      throw new DecodeError(`${def.tableName}: parameter '${col.viewName}' missing from decode result`);
     }
     columns[col.name] = toSqlValue(col.abiType, raw);
   }
-  return { tableName: def.tableName, columns };
+  return { tableName: def.tableName, blockHash: log.blockHash, blockTime, columns };
 }

@@ -87,6 +87,11 @@ spec:
                             key:
                               type: string
                               default: url
+                    partitionBlocks:
+                      type: integer
+                      minimum: 10000
+                      default: 2000000
+                      description: "Blocks per range partition of every table (storage layout 2)"
                 contracts:
                   type: array
                   minItems: 1

@@ -8,6 +8,7 @@ import { createWalletClient, http, publicActions } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractEventDefs, parseWorkerConfig } from '@arckive/core';
+import { createStore } from '../src/db.js';
 import { createMetrics } from '../src/metrics.js';
 import { bootstrapIndexer, runLoop, runOnce, type PipelineDeps } from '../src/pipeline.js';
 import { HeadSignal } from '../src/signal.js';
@@ -65,6 +66,7 @@ describe('dead-letter + degraded', () => {
     });
     await wallet.waitForTransactionReceipt({ hash: tx });
 
+    const dlDefs = extractEventDefs('emitter', address, WRONG_ABI);
     const deps: PipelineDeps = {
       client: createRpc([anvil.url]),
       pool,
@@ -73,8 +75,9 @@ describe('dead-letter + degraded', () => {
         network: { chainId: 31337, rpc: [anvil.url], finalityTag: 'latest' },
         contracts: [{ name: 'emitter', address, abiPath: 'unused' }],
       }),
-      defs: extractEventDefs('emitter', address, WRONG_ABI),
+      defs: dlDefs,
       schema: 'idx_dl',
+      store: createStore('idx_dl', dlDefs, 1_000_000),
       metrics: createMetrics('dl'),
       phase: new PhaseTracker(),
       headSignal: new HeadSignal(),
@@ -106,6 +109,7 @@ describe('dead-letter + degraded', () => {
       }),
       defs: [],
       schema: 'idx_dg',
+      store: createStore('idx_dg', [], 1_000_000),
       metrics: createMetrics('dg'),
       phase: new PhaseTracker(),
       headSignal: new HeadSignal(),

@@ -9,7 +9,7 @@ export function toSnakeCase(input: string): string {
     .toLowerCase();
 }
 
-function assertPgIdentifier(id: string): string {
+export function assertPgIdentifier(id: string): string {
   if (Buffer.byteLength(id, 'utf8') > 63) {
     throw new NamingError(`PostgreSQL identifier exceeds 63 bytes: ${id}`);
   }

@@ -1,18 +1,61 @@
 import pg from 'pg';
-import type { DecodedRow, TableSpec } from '@arckive/core';
+import {
+  BLOCK_COLUMNS, STORAGE_LAYOUT, buildEventTable, partitionDdl, partitionName, partitionOf,
+  type ColumnSpec, type DecodedRow, type EventDef, type TableSpec,
+} from '@arckive/core';
 
 const q = (id: string) => `"${id}"`;
 
+// A schema written by storage layout 1 has a _cursor and no layout row. Its
+// tables cannot take layout-2 rows, and rewriting text into bytea in place is
+// slower than re-indexing from the chain, so it is refused, never mixed.
+export class LayoutError extends Error {}
+
+async function assertLayout(client: pg.PoolClient, schema: string): Promise<void> {
+  const r = await client.query(
+    'SELECT to_regclass($1) IS NOT NULL AS has_cursor, to_regclass($2) IS NOT NULL AS has_meta',
+    [`${q(schema)}._cursor`, `${q(schema)}._meta`],
+  );
+  if (!r.rows[0].has_cursor) return; // a fresh schema
+  const layout: string | undefined = r.rows[0].has_meta
+    ? (await client.query(`SELECT value FROM ${q(schema)}._meta WHERE key = 'layout'`)).rows[0]?.value
+    : undefined;
+  if (layout !== STORAGE_LAYOUT) {
+    throw new LayoutError(
+      `schema ${schema} uses storage layout ${layout ?? '1'}; drop the schema or rename the Indexer to re-index`,
+    );
+  }
+}
+
+// Every _meta key written here is fixed for the schema's life: rows carry
+// neither the contract address nor the partition span, so changing either
+// would silently mix two contracts' events in one table or misplace rows
+// against partition bounds. A mismatch is refused, never overwritten.
 export async function bootstrap(
   pool: pg.Pool,
+  schema: string,
   controlStatements: string[],
   tables: TableSpec[],
+  meta: Record<string, string>,
 ): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await assertLayout(client, schema);
     for (const s of controlStatements) await client.query(s);
     for (const t of tables) for (const s of t.statements) await client.query(s);
+    for (const [key, value] of Object.entries({ ...meta, layout: STORAGE_LAYOUT })) {
+      await client.query(
+        `INSERT INTO ${q(schema)}._meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [key, value],
+      );
+      const stored: string = (await client.query(`SELECT value FROM ${q(schema)}._meta WHERE key = $1`, [key])).rows[0].value;
+      if (stored !== value) {
+        throw new LayoutError(
+          `schema ${schema} has ${key} = ${stored}, this Indexer has ${value}; drop the schema or rename the Indexer to re-index`,
+        );
+      }
+    }
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -44,36 +87,303 @@ export interface DeadLetterEntry {
   error: string;
 }
 
+export interface PlannedPartition {
+  key: string;
+  table: string;
+  n: bigint;
+  sql: string;
+}
+
+// Which partitions this process has created. A partition is created inside
+// the transaction that first writes to it and remembered only after that
+// transaction commits: a rolled-back batch leaves nothing believed to exist,
+// and the steady state sends no DDL at all.
+export class Partitions {
+  private readonly made = new Set<string>();
+  // the highest partition this process has committed into, per table
+  private readonly lastSeen = new Map<string, bigint>();
+
+  constructor(
+    readonly schema: string,
+    readonly size: bigint,
+    private readonly onFinished?: (table: string, n: bigint) => void,
+  ) {}
+
+  plan(tables: readonly string[], blocks: Iterable<bigint>): PlannedPartition[] {
+    const ns = new Set<bigint>();
+    for (const b of blocks) ns.add(partitionOf(b, this.size));
+    const out: PlannedPartition[] = [];
+    for (const table of tables) {
+      for (const n of ns) {
+        const key = `${table}:${n}`;
+        if (!this.made.has(key)) out.push({ key, table, n, sql: partitionDdl(this.schema, table, n, this.size) });
+      }
+    }
+    // One lock order for every writer: concurrent transactions that each take
+    // parent locks for their partition DDL must not cross (deadlock).
+    return out.sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
+  }
+
+  // Call after COMMIT only. Remembers the partitions the batch created, and
+  // reports every partition the batch moved past as finished. Only a table
+  // this process has already written to can finish: the first batch after a
+  // restart just records where it is, so partitions finished before the
+  // restart are never revisited. An empty batch records and finishes nothing.
+  committed(tables: readonly string[], blocks: Iterable<bigint>, planned: readonly PlannedPartition[]): void {
+    for (const p of planned) this.made.add(p.key);
+    let m: bigint | undefined;
+    for (const b of blocks) {
+      const n = partitionOf(b, this.size);
+      if (m === undefined || n > m) m = n;
+    }
+    if (m === undefined) return;
+    for (const table of tables) {
+      const last = this.lastSeen.get(table);
+      if (last === undefined) {
+        this.lastSeen.set(table, m);
+        continue;
+      }
+      if (m <= last) continue;
+      this.lastSeen.set(table, m);
+      // A sparse table only has the partitions it had rows in; rebuilding one
+      // that was never created would just fail with 42P01.
+      for (let k = last; k < m; k++) if (this.made.has(`${table}:${k}`)) this.onFinished?.(table, k);
+    }
+  }
+}
+
+// Rebuilds a finished partition's indexes once. Indexes grown row by row are
+// looser than freshly built ones (measured on mainnet: from/to 26 → 20 B per
+// row, tx_hash 36 → 32 rebuilt). REINDEX … CONCURRENTLY cannot run inside a
+// transaction and must not hold up ingest, so it runs here, one at a time, in
+// the background; a failure leaves a correct but looser index and is logged.
+export class Compactor {
+  private tail: Promise<void> = Promise.resolve();
+  private closed = false;
+
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly log: {
+      info(o: object, msg?: string): void;
+      warn(o: object, msg?: string): void;
+      debug?(o: object, msg?: string): void;
+    },
+  ) {}
+
+  enqueue(schema: string, partition: string): void {
+    if (this.closed) return;
+    this.tail = this.tail.then(async () => {
+      if (this.closed) return; // queued before close(): dropped
+      const started = Date.now();
+      let client: pg.PoolClient | undefined;
+      try {
+        // A dedicated client: statement_timeout is session state, and a
+        // rebuild of a big partition legitimately outlasts any default.
+        client = await this.pool.connect();
+        await client.query('SET statement_timeout = 0');
+        // autocommit, outside any transaction
+        await client.query(`REINDEX TABLE CONCURRENTLY ${q(schema)}.${q(partition)}`);
+        await client.query('RESET statement_timeout');
+        this.log.info({ schema, partition, ms: Date.now() - started }, 'partition indexes rebuilt');
+      } catch (err) {
+        if ((err as { code?: string }).code === '42P01') {
+          this.log.debug?.({ schema, partition }, 'partition does not exist, nothing to rebuild');
+          return;
+        }
+        // A failed REINDEX CONCURRENTLY leaves an INVALID "_ccnew" index that
+        // is still maintained on every write; drop it so it costs nothing.
+        const dropped = await this.dropInvalid(client, schema, partition);
+        this.log.warn(
+          { schema, partition, err, invalidIndexesDropped: dropped },
+          dropped
+            ? 'partition index rebuild failed; leftover invalid indexes were dropped'
+            : 'partition index rebuild failed; leftover invalid indexes could not be dropped',
+        );
+      } finally {
+        // never hand a no-timeout session back to the pool, whatever failed
+        await client?.query('RESET statement_timeout').catch(() => {});
+        client?.release();
+      }
+    });
+  }
+
+  private async dropInvalid(client: pg.PoolClient | undefined, schema: string, partition: string): Promise<boolean> {
+    try {
+      const c = client ?? (await this.pool.connect());
+      try {
+        const r = await c.query(
+          `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+           JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE n.nspname = $1 AND t.relname = $2 AND NOT i.indisvalid`,
+          [schema, partition],
+        );
+        for (const x of r.rows) {
+          await c.query(`DROP INDEX CONCURRENTLY ${q(schema)}.${q(x.relname as string)}`);
+        }
+        await c.query('RESET statement_timeout').catch(() => {});
+        return true;
+      } finally {
+        if (!client) c.release();
+      }
+    } catch (err) {
+      this.log.warn({ schema, partition, err }, 'could not drop invalid indexes');
+      return false;
+    }
+  }
+
+  // Drops queued jobs and ignores later ones. A REINDEX already running
+  // finishes, or is cancelled when the pool ends; either leaves a correct
+  // (at worst looser, or invalid-and-droppable) index.
+  close(): void {
+    this.closed = true;
+  }
+
+  idle(): Promise<void> {
+    return this.tail;
+  }
+}
+
+export interface Store {
+  schema: string;
+  tables: ReadonlyMap<string, TableSpec>; // event tables by name
+  partitions: Partitions;
+}
+
+export function createStore(
+  schema: string, defs: EventDef[], partitionBlocks: number, compactor?: Pick<Compactor, 'enqueue'>,
+): Store {
+  const specs = defs.map((d) => buildEventTable(schema, d));
+  return {
+    schema,
+    tables: new Map(specs.map((s) => [s.table, s])),
+    partitions: new Partitions(
+      schema,
+      BigInt(partitionBlocks),
+      compactor ? (table, n) => compactor.enqueue(schema, partitionName(table, n)) : undefined,
+    ),
+  };
+}
+
+// The contract behind each table, recorded once instead of in every row.
+export function contractMeta(defs: EventDef[]): Record<string, string> {
+  return Object.fromEntries(defs.map((d) => [`contract:${d.tableName}`, d.address.toLowerCase()]));
+}
+
+// One statement per table, whatever the row count: each column travels as one
+// array, so a database ~40 ms away costs one round trip per table instead of
+// one per row.
+export function unnestInsert(qualifiedTable: string, columns: readonly ColumnSpec[], conflict: string): string {
+  const names = columns.map((c) => q(c.name)).join(', ');
+  const arrays = columns.map((c, i) => `$${i + 1}::${c.pgType}[]`).join(', ');
+  return `INSERT INTO ${qualifiedTable} (${names}) SELECT * FROM unnest(${arrays}) ON CONFLICT ${conflict} DO NOTHING`;
+}
+
+function columnArrays(columns: readonly ColumnSpec[], rows: ReadonlyArray<Record<string, unknown>>): unknown[][] {
+  return columns.map((c) => rows.map((r) => r[c.name] ?? null));
+}
+
+// Each address once: the batch's distinct addresses are inserted if new and
+// read back as ids in the same transaction, so a rolled-back batch leaves no
+// id pointing at an address that does not exist. The NOT EXISTS filter is
+// load-bearing: an identity value is consumed before ON CONFLICT is checked,
+// so inserting known addresses would burn an id each and overflow the integer
+// key within a couple of years; ON CONFLICT stays as the race safety net.
+async function resolveAddresses(
+  client: pg.PoolClient, schema: string, store: Store, byTable: ReadonlyMap<string, Array<Record<string, unknown>>>,
+): Promise<void> {
+  const wanted = new Map<string, Buffer>();
+  for (const [table, group] of byTable) {
+    for (const c of store.tables.get(table)!.columns) {
+      if (!c.address) continue;
+      for (const r of group) {
+        const v = r[c.name];
+        if (Buffer.isBuffer(v)) wanted.set(v.toString('hex'), v);
+      }
+    }
+  }
+  if (!wanted.size) return;
+  const all = [...wanted.values()];
+  await client.query(
+    `INSERT INTO ${q(schema)}._addresses (address) SELECT u.a FROM unnest($1::bytea[]) AS u(a)
+     WHERE NOT EXISTS (SELECT 1 FROM ${q(schema)}._addresses x WHERE x.address = u.a)
+     ON CONFLICT (address) DO NOTHING`,
+    [all],
+  );
+  const ids = new Map<string, number>();
+  const res = await client.query(`SELECT id, address FROM ${q(schema)}._addresses WHERE address = ANY($1::bytea[])`, [all]);
+  for (const x of res.rows) ids.set((x.address as Buffer).toString('hex'), Number(x.id));
+  for (const [table, group] of byTable) {
+    for (const c of store.tables.get(table)!.columns) {
+      if (!c.address) continue;
+      for (const r of group) {
+        const v = r[c.name];
+        if (Buffer.isBuffer(v)) r[c.name] = ids.get(v.toString('hex'))!;
+      }
+    }
+  }
+}
+
 export async function commitBatch(
   pool: pg.Pool,
-  schema: string,
+  store: Store,
   rows: DecodedRow[],
   deadLetters: DeadLetterEntry[],
   newCursor: bigint,
 ): Promise<number> {
+  const { schema } = store;
+  // Shallow copies: address resolution rewrites Buffers into ids in place, and
+  // a retried batch must still carry the caller's Buffers.
+  const byTable = new Map<string, Array<Record<string, unknown>>>();
+  const blocks = new Map<string, { hash: Buffer; time: Date }>();
+  for (const r of rows) {
+    const group = byTable.get(r.tableName) ?? [];
+    group.push({ ...r.columns });
+    byTable.set(r.tableName, group);
+    blocks.set(String(r.columns['block_number']), {
+      hash: Buffer.from(r.blockHash.slice(2), 'hex'),
+      time: r.blockTime,
+    });
+  }
+  const written = byTable.size ? ['_blocks', ...byTable.keys()] : [];
+  const blockNumbers = [...blocks.keys()].map(BigInt);
+  const planned = store.partitions.plan(written, blockNumbers);
+
   const client = await pool.connect();
   let inserted = 0;
   try {
     await client.query('BEGIN');
-    for (const row of rows) {
-      const cols = Object.keys(row.columns);
-      const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      const quoted = cols.map(q).join(', ');
+    for (const p of planned) await client.query(p.sql);
+    for (const table of byTable.keys()) {
+      if (!store.tables.has(table)) throw new Error(`no table spec for ${table}`);
+    }
+    await resolveAddresses(client, schema, store, byTable);
+    if (blocks.size) {
+      await client.query(unnestInsert(`${q(schema)}._blocks`, BLOCK_COLUMNS, '(block_number)'), [
+        [...blocks.keys()],
+        [...blocks.values()].map((b) => b.hash),
+        [...blocks.values()].map((b) => b.time),
+      ]);
+    }
+    for (const [table, group] of byTable) {
+      const spec = store.tables.get(table)!;
       const res = await client.query(
-        `INSERT INTO ${q(schema)}.${q(row.tableName)} (${quoted}) VALUES (${placeholders})
-         ON CONFLICT (block_number, tx_hash, log_index) DO NOTHING`,
-        cols.map((c) => row.columns[c]),
+        unnestInsert(`${q(schema)}.${q(table)}`, spec.columns, '(block_number, log_index)'),
+        columnArrays(spec.columns, group),
       );
       inserted += res.rowCount ?? 0;
     }
-    for (const d of deadLetters) {
+    if (deadLetters.length) {
       await client.query(
-        `INSERT INTO ${q(schema)}._dead_letter
-           (block_number, tx_hash, log_index, address, topics, data, error)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO ${q(schema)}._dead_letter (block_number, tx_hash, log_index, address, topics, data, error)
+         SELECT * FROM unnest($1::bigint[], $2::text[], $3::integer[], $4::text[], $5::jsonb[], $6::text[], $7::text[])`,
         [
-          d.blockNumber?.toString() ?? null, d.txHash, d.logIndex, d.address,
-          JSON.stringify(d.topics), d.data, d.error,
+          deadLetters.map((d) => d.blockNumber?.toString() ?? null),
+          deadLetters.map((d) => d.txHash),
+          deadLetters.map((d) => d.logIndex),
+          deadLetters.map((d) => d.address),
+          deadLetters.map((d) => JSON.stringify(d.topics)),
+          deadLetters.map((d) => d.data),
+          deadLetters.map((d) => d.error),
         ],
       );
     }
@@ -82,6 +392,7 @@ export async function commitBatch(
       [newCursor.toString()],
     );
     await client.query('COMMIT');
+    store.partitions.committed(written, blockNumbers, planned);
     return inserted;
   } catch (err) {
     await client.query('ROLLBACK');
