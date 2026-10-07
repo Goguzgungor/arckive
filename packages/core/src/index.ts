@@ -1,16 +1,20 @@
-export { NamingError, eventTableName, schemaName, toSnakeCase } from './naming.js';
+export { NamingError, assertPgIdentifier, eventTableName, schemaName, toSnakeCase } from './naming.js';
 export { AbiError, extractEventDefs, extractFunctionNames, type EventDef } from './abi.js';
 export {
+  BLOCK_COLUMNS,
   COMMON_COLUMNS,
   DdlError,
+  STORAGE_LAYOUT,
   buildControlTables,
   buildEventTable,
   buildInsightsTables,
   eventColumns,
   pgTypeFor,
+  type ColumnSpec,
   type EventColumn,
   type TableSpec,
 } from './ddl.js';
+export { partitionDdl, partitionName, partitionOf } from './partitions.js';
 export { DecodeError, decodeLogToRow, toSqlValue, type DecodedRow, type RawLog } from './decode.js';
 export { planRange, type BlockRange } from './ranges.js';
 export {

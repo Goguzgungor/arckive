@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { extractEventDefs } from '../src/abi.js';
-import { buildControlTables, buildEventTable, eventColumns, pgTypeFor, DdlError } from '../src/ddl.js';
+import {
+  DdlError,
+  NamingError,
+  buildControlTables,
+  buildEventTable,
+  eventColumns,
+  extractEventDefs,
+  pgTypeFor,
+} from '../src/index.js';
 
 const ADDR = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const TRANSFER_ABI = [
@@ -15,19 +22,96 @@ const TRANSFER_ABI = [
 ];
 
 describe('pgTypeFor', () => {
-  it('maps types according to the spec', () => {
-    expect(pgTypeFor('address')).toBe('text');
-    expect(pgTypeFor('uint256')).toBe('numeric(78,0)');
-    expect(pgTypeFor('int128')).toBe('numeric(78,0)');
-    expect(pgTypeFor('bool')).toBe('boolean');
-    expect(pgTypeFor('bytes')).toBe('bytea');
+  it('maps types according to layout 2', () => {
+    expect(pgTypeFor('address')).toBe('bytea');
     expect(pgTypeFor('bytes32')).toBe('bytea');
+    expect(pgTypeFor('bytes')).toBe('bytea');
+    expect(pgTypeFor('uint256')).toBe('numeric(78,0)');
+    expect(pgTypeFor('int24')).toBe('numeric(78,0)');
+    expect(pgTypeFor('bool')).toBe('boolean');
     expect(pgTypeFor('string')).toBe('text');
     expect(pgTypeFor('uint256[]')).toBe('jsonb');
     expect(pgTypeFor('tuple')).toBe('jsonb');
   });
+
   it('unknown type throws DdlError', () => {
-    expect(() => pgTypeFor('function')).toThrow(DdlError);
+    expect(() => pgTypeFor('fixed128x18')).toThrow(DdlError);
+  });
+});
+
+describe('buildEventTable (layout 2)', () => {
+  const transfer = extractEventDefs('usdc', `0x${'ab'.repeat(20)}`, [{
+    type: 'event', name: 'Transfer', inputs: [
+      { name: 'from', type: 'address', indexed: true },
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'value', type: 'uint256', indexed: false },
+    ],
+  }])[0]!;
+  const spec = buildEventTable('idx_x', transfer);
+
+  it('lists the columns a row supplies, in insert order', () => {
+    expect(spec.columns).toEqual([
+      { name: 'block_number', pgType: 'bigint' },
+      { name: 'block_time', pgType: 'timestamptz' },
+      { name: 'tx_hash', pgType: 'bytea' },
+      { name: 'tx_index', pgType: 'integer' },
+      { name: 'log_index', pgType: 'integer' },
+      { name: 'from', pgType: 'bytea' },
+      { name: 'to', pgType: 'bytea' },
+      { name: 'value', pgType: 'numeric(78,0)' },
+    ]);
+  });
+
+  it('creates a partitioned table keyed by (block_number, log_index), without block_hash or contract_address', () => {
+    const create = spec.statements[0]!;
+    expect(create).toContain('CREATE TABLE IF NOT EXISTS "idx_x"."usdc_transfer"');
+    expect(create).toContain('"tx_hash" bytea NOT NULL');
+    expect(create).toContain('"_ingested_at" timestamptz NOT NULL DEFAULT now()');
+    expect(create).toContain('PRIMARY KEY (block_number, log_index)');
+    expect(create).toMatch(/\) PARTITION BY RANGE \(block_number\)$/);
+    expect(create).not.toContain('block_hash');
+    expect(create).not.toContain('contract_address');
+  });
+
+  it('indexes tx_hash with a hash index and indexed params with btree', () => {
+    expect(spec.statements).toContain(
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_tx_hash_idx" ON "idx_x"."usdc_transfer" USING hash (tx_hash)',
+    );
+    expect(spec.statements).toContain(
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_from_idx" ON "idx_x"."usdc_transfer" ("from")',
+    );
+    expect(spec.statements.some((s) => s.includes('"usdc_transfer_value_idx"'))).toBe(false);
+  });
+
+  it('adds a _hex view that prints bytea as 0x text', () => {
+    const view = spec.statements.find((s) => s.startsWith('CREATE OR REPLACE VIEW'))!;
+    expect(view).toBe(
+      'CREATE OR REPLACE VIEW "idx_x"."usdc_transfer_hex" AS SELECT "block_number", "block_time", ' +
+        `'0x' || encode("tx_hash", 'hex') AS "tx_hash", "tx_index", "log_index", "_ingested_at", ` +
+        `'0x' || encode("from", 'hex') AS "from", '0x' || encode("to", 'hex') AS "to", "value" ` +
+        'FROM "idx_x"."usdc_transfer"',
+    );
+  });
+
+  it('refuses a table whose partitions could not be named', () => {
+    const long = extractEventDefs('a'.repeat(30), `0x${'ab'.repeat(20)}`, [{
+      type: 'event', name: 'B'.repeat(27), inputs: [],
+    }])[0]!;
+    expect(() => buildEventTable('idx_x', long)).toThrow(NamingError);
+  });
+});
+
+describe('buildControlTables (layout 2)', () => {
+  it('schema, cursor, meta, dead letters and a partitioned _blocks', () => {
+    const s = buildControlTables('idx_x');
+    expect(s[0]).toBe('CREATE SCHEMA IF NOT EXISTS "idx_x"');
+    expect(s.some((x) => x.includes('"idx_x"._cursor'))).toBe(true);
+    expect(s.some((x) => x.includes('"idx_x"._meta'))).toBe(true);
+    expect(s.some((x) => x.includes('"idx_x"._dead_letter'))).toBe(true);
+    const blocks = s.find((x) => x.includes('"idx_x"._blocks'))!;
+    expect(blocks).toContain('block_hash bytea NOT NULL');
+    expect(blocks).toContain('PRIMARY KEY (block_number)');
+    expect(blocks).toMatch(/PARTITION BY RANGE \(block_number\)$/);
   });
 });
 
@@ -48,29 +132,7 @@ describe('eventColumns', () => {
   });
 });
 
-describe('buildEventTable', () => {
-  it('common columns + parameters + unique constraint + indexes for indexed params', () => {
-    const [def] = extractEventDefs('usdc', ADDR, TRANSFER_ABI);
-    const spec = buildEventTable('idx_demo', def!);
-    const create = spec.statements[0]!;
-    expect(create).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"."usdc_transfer"');
-    expect(create).toContain('"block_number" bigint NOT NULL');
-    expect(create).toContain('"from" text');
-    expect(create).toContain('"value" numeric(78,0)');
-    expect(create).toContain('UNIQUE (block_number, tx_hash, log_index)');
-    expect(spec.statements.filter((s) => s.startsWith('CREATE INDEX'))).toHaveLength(2);
-  });
-
-  it('_ingested_at meta column: in CREATE + ALTER for existing tables', () => {
-    const [def] = extractEventDefs('usdc', ADDR, TRANSFER_ABI);
-    const spec = buildEventTable('idx_demo', def!);
-    expect(spec.statements[0]).toContain('"_ingested_at" timestamptz NOT NULL DEFAULT now()');
-    const alter = spec.statements.find((s) => s.startsWith('ALTER TABLE'));
-    expect(alter).toContain(
-      'ADD COLUMN IF NOT EXISTS "_ingested_at" timestamptz NOT NULL DEFAULT now()',
-    );
-  });
-
+describe('buildEventTable (event parameter names)', () => {
   it('event parameter named _ingestedAt does not collide with the meta column (becomes ingested_at)', () => {
     const abi = [
       {
@@ -82,15 +144,6 @@ describe('buildEventTable', () => {
     const [def] = extractEventDefs('x', ADDR, abi);
     // toSnakeCase strips the leading _; the result differs from the DB meta column "_ingested_at"
     expect(eventColumns(def!.event).map((c) => c.name)).toEqual(['ingested_at']);
-  });
-});
-
-describe('buildControlTables', () => {
-  it('schema + three control tables', () => {
-    const stmts = buildControlTables('idx_demo');
-    expect(stmts[0]).toContain('CREATE SCHEMA IF NOT EXISTS "idx_demo"');
-    expect(stmts.join(' ')).toContain('_cursor');
-    expect(stmts.join(' ')).toContain('_meta');
-    expect(stmts.join(' ')).toContain('_dead_letter');
+    expect(buildEventTable('idx_x', def!).columns.map((c) => c.name)).toContain('ingested_at');
   });
 });
