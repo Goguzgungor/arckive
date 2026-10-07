@@ -91,6 +91,8 @@ describe('isRangeCapError', () => {
     expect(isRangeCapError(new Error('Log response size exceeded.'))).toBe(true);
     expect(isRangeCapError(Object.assign(new Error('RPC Request failed.'), { details: 'exceed maximum block range: 2000' }))).toBe(true);
     expect(isRangeCapError(Object.assign(new Error('Invalid parameters were provided to the RPC method.'), { details: 'invalid params: block range too large (max 1000 blocks per eth_getLogs)' }))).toBe(true);
+    expect(isRangeCapError(Object.assign(new Error('Invalid parameters were provided to the RPC method.'), { details: 'query exceeds max results 20000, retry with the range 24747323-24748307' }))).toBe(true);
+    expect(isRangeCapError(new Error('query exceeds max results 10000'))).toBe(true);
     expect(isRangeCapError(new Error('outer', { cause: new Error('ranges over 100 blocks') }))).toBe(true);
   });
 
@@ -99,5 +101,10 @@ describe('isRangeCapError', () => {
     expect(isRangeCapError(new Error('rate limit exceeded'))).toBe(false);
     expect(isRangeCapError(new Error('HTTP request failed. Status: 429'))).toBe(false);
     expect(isRangeCapError(new Error('fetch failed'))).toBe(false);
+  });
+
+  it('other block-range complaints are not caps', () => {
+    expect(isRangeCapError(new Error('invalid block range params'))).toBe(false);
+    expect(isRangeCapError(new Error('requested block range extends beyond current head'))).toBe(false);
   });
 });

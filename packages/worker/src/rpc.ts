@@ -159,7 +159,7 @@ function errorText(err: unknown): string {
 
 const RATE_LIMIT = /rate.?limit|too many requests|status: 429|\b429\b/i;
 const RANGE_CAP =
-  /block range|ranges? over|range (is )?too (large|wide|big)|range limit|max(imum)? (block )?range|too many (blocks|logs|results)|more than \d+ (results|logs|blocks)|response size|query returned more than/i;
+  /block range (is )?too (large|wide|big)|block range limit|exceeds? (the )?max(imum)? (block )?range|ranges? over|range (is )?too (large|wide|big)|range limit|max(imum)? (block )?range|exceeds? (the )?max(imum)? (number of )?results|max(imum)? results|retry with (the|a) range|too many (blocks|logs|results)|more than \d+ (results|logs|blocks)|response size|query returned more than/i;
 
 // Providers cap eth_getLogs by block span or by result size, each in words of
 // its own (drpc's free plan: "ranges over 10000 blocks are not supported", at
