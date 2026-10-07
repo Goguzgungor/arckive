@@ -23,6 +23,9 @@ export interface DecodedRow {
   tableName: string;
   // written once per block to _blocks, not into the event table
   blockHash: `0x${string}`;
+  // also per block: written to _blocks with the hash
+  blockTime: Date;
+  // an address param is a 20-byte Buffer under its _id column; the worker swaps it for an id
   columns: Record<string, unknown>;
 }
 
@@ -49,9 +52,7 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
   }
   const columns: Record<string, unknown> = {
     block_number: log.blockNumber.toString(),
-    block_time: blockTime,
     tx_hash: hexBytes(log.transactionHash),
-    tx_index: log.transactionIndex,
     log_index: log.logIndex,
   };
   const cols = eventColumns(def.event);
@@ -65,5 +66,5 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
     }
     columns[col.name] = toSqlValue(col.abiType, raw);
   }
-  return { tableName: def.tableName, blockHash: log.blockHash, columns };
+  return { tableName: def.tableName, blockHash: log.blockHash, blockTime, columns };
 }

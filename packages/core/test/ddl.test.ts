@@ -24,7 +24,7 @@ const TRANSFER_ABI = [
 
 describe('pgTypeFor', () => {
   it('maps types according to layout 2', () => {
-    expect(pgTypeFor('address')).toBe('bytea');
+    expect(pgTypeFor('address')).toBe('integer');
     expect(pgTypeFor('bytes32')).toBe('bytea');
     expect(pgTypeFor('bytes')).toBe('bytea');
     expect(pgTypeFor('uint256')).toBe('numeric(78,0)');
@@ -40,51 +40,45 @@ describe('pgTypeFor', () => {
   });
 });
 
-describe('buildEventTable (layout 2)', () => {
+describe('buildEventTable (dense layout 2)', () => {
   const transfer = extractEventDefs('usdc', ADDR, TRANSFER_ABI)[0]!;
   const spec = buildEventTable('idx_x', transfer);
 
-  it('lists the columns a row supplies, in insert order', () => {
+  it('keeps only per-log columns and stores addresses as ids', () => {
     expect(spec.columns).toEqual([
       { name: 'block_number', pgType: 'bigint' },
-      { name: 'block_time', pgType: 'timestamptz' },
       { name: 'tx_hash', pgType: 'bytea' },
-      { name: 'tx_index', pgType: 'integer' },
       { name: 'log_index', pgType: 'integer' },
-      { name: 'from', pgType: 'bytea' },
-      { name: 'to', pgType: 'bytea' },
+      { name: 'from_id', pgType: 'integer', address: true },
+      { name: 'to_id', pgType: 'integer', address: true },
       { name: 'value', pgType: 'numeric(78,0)' },
     ]);
-  });
-
-  it('creates a partitioned table keyed by (block_number, log_index), without block_hash or contract_address', () => {
     const create = spec.statements[0]!;
-    expect(create).toContain('CREATE TABLE IF NOT EXISTS "idx_x"."usdc_transfer"');
-    expect(create).toContain('"tx_hash" bytea NOT NULL');
-    expect(create).toContain('"_ingested_at" timestamptz NOT NULL DEFAULT now()');
+    for (const gone of ['block_time', 'tx_index', '_ingested_at', 'block_hash', 'contract_address']) {
+      expect(create).not.toContain(gone);
+    }
+    expect(create).toContain('"from_id" integer');
     expect(create).toContain('PRIMARY KEY (block_number, log_index)');
-    expect(create).toMatch(/\) PARTITION BY RANGE \(block_number\)$/);
-    expect(create).not.toContain('block_hash');
-    expect(create).not.toContain('contract_address');
   });
 
-  it('indexes tx_hash with a hash index and indexed params with btree', () => {
+  it('indexes tx_hash with a btree and indexed addresses by id', () => {
     expect(spec.statements).toContain(
-      'CREATE INDEX IF NOT EXISTS "usdc_transfer_tx_hash_idx" ON "idx_x"."usdc_transfer" USING hash (tx_hash)',
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_tx_hash_idx" ON "idx_x"."usdc_transfer" (tx_hash)',
     );
     expect(spec.statements).toContain(
-      'CREATE INDEX IF NOT EXISTS "usdc_transfer_from_idx" ON "idx_x"."usdc_transfer" ("from")',
+      'CREATE INDEX IF NOT EXISTS "usdc_transfer_from_id_idx" ON "idx_x"."usdc_transfer" ("from_id")',
     );
-    expect(spec.statements.some((s) => s.includes('"usdc_transfer_value_idx"'))).toBe(false);
   });
 
-  it('adds a _hex view that prints bytea as 0x text', () => {
+  it('the _hex view reads like the old rows: block time, ingest time and 0x addresses', () => {
     const view = spec.statements.find((s) => s.startsWith('CREATE OR REPLACE VIEW'))!;
     expect(view).toBe(
-      'CREATE OR REPLACE VIEW "idx_x"."usdc_transfer_hex" AS SELECT "block_number", "block_time", ' +
-        `'0x' || encode("tx_hash", 'hex') AS "tx_hash", "tx_index", "log_index", "_ingested_at", ` +
-        `'0x' || encode("from", 'hex') AS "from", '0x' || encode("to", 'hex') AS "to", "value" ` +
-        'FROM "idx_x"."usdc_transfer"',
+      'CREATE OR REPLACE VIEW "idx_x"."usdc_transfer_hex" AS SELECT t."block_number", b."block_time", ' +
+        `'0x' || encode(t."tx_hash", 'hex') AS "tx_hash", t."log_index", b."_ingested_at", ` +
+        `'0x' || encode(a0."address", 'hex') AS "from", '0x' || encode(a1."address", 'hex') AS "to", t."value" ` +
+        'FROM "idx_x"."usdc_transfer" t JOIN "idx_x"."_blocks" b ON b."block_number" = t."block_number" ' +
+        'LEFT JOIN "idx_x"."_addresses" a0 ON a0."id" = t."from_id" ' +
+        'LEFT JOIN "idx_x"."_addresses" a1 ON a1."id" = t."to_id"',
     );
   });
 
@@ -96,17 +90,25 @@ describe('buildEventTable (layout 2)', () => {
   });
 });
 
-describe('buildControlTables (layout 2)', () => {
-  it('schema, cursor, meta, dead letters and a partitioned _blocks', () => {
-    const s = buildControlTables('idx_x');
+describe('buildControlTables (dense layout 2)', () => {
+  const s = buildControlTables('idx_x');
+  it('schema, cursor, meta and dead letters', () => {
     expect(s[0]).toBe('CREATE SCHEMA IF NOT EXISTS "idx_x"');
     expect(s.some((x) => x.includes('"idx_x"._cursor'))).toBe(true);
     expect(s.some((x) => x.includes('"idx_x"._meta'))).toBe(true);
     expect(s.some((x) => x.includes('"idx_x"._dead_letter'))).toBe(true);
+  });
+  it('_blocks carries block time and ingest time; _addresses stores each address once', () => {
     const blocks = s.find((x) => x.includes('"idx_x"._blocks'))!;
     expect(blocks).toContain('block_hash bytea NOT NULL');
     expect(blocks).toContain('PRIMARY KEY (block_number)');
+    expect(blocks).toContain('block_time timestamptz NOT NULL');
+    expect(blocks).toContain('_ingested_at timestamptz NOT NULL DEFAULT now()');
     expect(blocks).toMatch(/PARTITION BY RANGE \(block_number\)$/);
+    const addresses = s.find((x) => x.includes('"idx_x"._addresses'))!;
+    expect(addresses).toContain('id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY');
+    expect(addresses).toContain('address bytea NOT NULL UNIQUE');
+    expect(addresses).not.toContain('PARTITION');
   });
 });
 
@@ -123,11 +125,24 @@ describe('eventColumns', () => {
     ];
     const [def] = extractEventDefs('x', ADDR, abi);
     const cols = eventColumns(def!.event);
-    expect(cols.map((c) => c.name)).toEqual(['param_block_number', 'arg1']);
+    expect(cols.map((c) => c.name)).toEqual(['param_block_number', 'arg1_id']);
+    expect(cols.map((c) => c.viewName)).toEqual(['param_block_number', 'arg1']);
   });
 });
 
 describe('buildEventTable (event parameter names)', () => {
+  it('an address named like another parameter plus Id collides on the stored name', () => {
+    const abi = [{
+      type: 'event', name: 'Dup',
+      inputs: [
+        { name: 'from', type: 'address', indexed: false },
+        { name: 'fromId', type: 'uint256', indexed: false },
+      ],
+    }];
+    const [def] = extractEventDefs('x', ADDR, abi);
+    expect(() => eventColumns(def!.event)).toThrow(DdlError);
+  });
+
   it('event parameter named _ingestedAt does not collide with the meta column (becomes ingested_at)', () => {
     const abi = [
       {

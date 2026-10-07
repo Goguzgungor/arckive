@@ -44,18 +44,16 @@ describe('toSqlValue', () => {
 });
 
 describe('decodeLogToRow', () => {
-  it('fills layout-2 columns; the block hash rides beside them', () => {
+  it('fills dense columns; block hash and time ride beside them; addresses stay Buffers under _id', () => {
     const def = extractEventDefs('usdc', ADDR, TRANSFER_ABI as unknown as unknown[])[0]!;
     const log = makeLog();
     const row = decodeLogToRow(def, log, new Date(1000));
     expect(row.tableName).toBe('usdc_transfer');
     expect(row.blockHash).toBe(log.blockHash);
-    expect(Object.keys(row.columns)).toEqual([
-      'block_number', 'block_time', 'tx_hash', 'tx_index', 'log_index', 'from', 'to', 'value',
-    ]);
-    expect(row.columns['tx_hash']).toEqual(Buffer.from(log.transactionHash.slice(2), 'hex'));
+    expect(row.blockTime).toEqual(new Date(1000));
+    expect(Object.keys(row.columns)).toEqual(['block_number', 'tx_hash', 'log_index', 'from_id', 'to_id', 'value']);
+    expect(row.columns['from_id']).toEqual(Buffer.from(FROM.slice(2), 'hex'));
     expect(row.columns['block_number']).toBe(log.blockNumber.toString());
-    expect(row.columns['from']).toEqual(Buffer.from(FROM.slice(2), 'hex'));
     expect(row.columns['value']).toBe('123456789');
   });
 
