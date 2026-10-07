@@ -1,10 +1,12 @@
 # Arc mainnet explorer data plane: every USDC movement and the Uniswap v4
 # PoolManager, whole history (startBlock 0 backfills from genesis).
 #
-# Every USDC movement is logged once by 0xff…fe — a plain value send, value
-# passed into a call, and the twin of every ERC-20 transfer through 0x3600…0000
-# (same parties, 18 decimals) — so indexing that one log covers USDC without
-# double counting. Needs a Secret pg-dsn (see ../../arc-testnet/k8s/pg-dsn-secret.example.yaml).
+# Every USDC value movement is logged once by 0xff…fe — a plain value send,
+# value passed into a call, and the twin of each ERC-20 transfer through
+# 0x3600…0000 that moves value (same parties, 18 decimals) — so indexing that
+# one log covers USDC without double counting. Zero-value ERC-20 transfers
+# (often address-poisoning spam) and ERC-20 self-transfers have no native twin
+# and are not indexed here; index 0x3600…0000 too if they must appear. Needs a Secret pg-dsn (see ../../arc-testnet/k8s/pg-dsn-secret.example.yaml).
 apiVersion: arckive.org/v1alpha1
 kind: Indexer
 metadata:

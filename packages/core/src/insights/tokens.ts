@@ -1,7 +1,7 @@
 import type { TokenInfo } from './sentence.js';
 
 // Token facts the chain cannot answer. Arc logs every native USDC movement —
-// including the twin of every ERC-20 USDC transfer — as a Transfer from
+// including the twin of every ERC-20 USDC transfer that moves value — as a Transfer from
 // 0xff…fe, an address with no code: no symbol(), no decimals(). Its values are
 // in USDC's native 18 decimals.
 export const NATIVE_USDC = '0xfffffffffffffffffffffffffffffffffffffffe';

@@ -168,7 +168,7 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
   any event table. `protocol` is `NULL` instead of `''`.
 - The lane index becomes `(lane, block_number)`, which serves "latest swaps".
 - Sentence ids are resolved per round with one `INSERT … ON CONFLICT DO
-  NOTHING` plus one `SELECT`.
+  UPDATE` (keeping any probabilities already stored) plus one `SELECT`.
 - A view `_insights_full` joins each row with its sentence, model (`NULL`
   for `''`) and probabilities, for plain SQL.
 - `facts` cannot travel through `unnest` as an array of arrays (unnest
@@ -177,11 +177,14 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
 
 ### 9. Native USDC
 
-Every USDC transfer through the ERC-20 interface is logged twice: by
+Every USDC ERC-20 transfer that moves value is logged twice: by
 `0x3600…0000` with 6 decimals and by `0xff…fe` with the same parties and the
 value in 18 decimals (Radar's audit; `radar/radar/arc.py:_without_mirrors`).
-The native log alone therefore covers every USDC movement once. The explorer
-indexes `0xff…fe` Transfer only.
+The native log alone therefore covers every USDC value movement once.
+Zero-value ERC-20 transfers (often address-poisoning spam) and ERC-20
+self-transfers move no USDC, so no native log is written for them; the explorer
+indexes `0xff…fe` Transfer only and does not see them (index `0x3600…0000` too
+if they must appear).
 
 `0xff…fe` has no `symbol()` or `decimals()`, so core gets `KNOWN_TOKENS`
 keyed by chainId: `0xff…fe` is `USDC` with 18 decimals on Arc mainnet (5042)
@@ -222,3 +225,25 @@ else in the operator changes.
   blocks/s, live lag and statements per commit; confirm every ERC-20 log in a
   sample has its native twin and that no `(block_number, log_index)` repeats.
   Lanes come from the Mac's Laya model when it is reachable from the cluster.
+
+## Measured (2026-10-07, Arc mainnet, k3d)
+
+- Same block window (24,745,323–24,752,500) indexed by v1 and v2: 81,725 USDC
+  rows and 12,936 swaps in both, equal value sums, 0 row-by-row mismatches
+  (tx_hash, from, value, block_time) — block times from `blockTimestamp` equal
+  `getBlock` times.
+- Bytes per row including indexes, v1 → v2: usdc_transfer 490 → 269 (v2
+  includes the tx_hash hash index v1 lacked); poolmanager_swap 546 → 337;
+  _insights 679 → 166; _sentences 142 rows (160 kB) for 3,997 lane rows;
+  _blocks 109 B per block (~9 B per transfer). A USDC event with its lane:
+  ~1,170 B → ~445 B.
+- Backfill: ~5,700 blocks (~60k rows) in ~20 s, no per-block getBlock.
+- Adaptive span: batchBlocks 5000 met "query exceeds max results 20000, retry
+  with the range …", shrank 5000→2500→1250→625 and grew back to 5000 with no
+  Degraded.
+- Twins: 2,689/2,700 ERC-20 USDC logs have a native twin; the 11 without are 7
+  zero-value and 4 self-transfers.
+- Insights (unchanged by this work): sequential RPC at ~350–700 ms round trips
+  keeps lanes near ingest's row rate (~1,035 vs ~1,027 rows/min) but behind
+  the chain in blocks (105 vs 119 blocks/min); a backfilled backlog does not
+  shrink.

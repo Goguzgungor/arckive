@@ -16,6 +16,12 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
                                           └──status patch──▶ Indexer .status
 ```
 
+> **Breaking change — storage layout 2.** Workers refuse a schema written by
+> an earlier version with a `LayoutError` and report `Degraded` on the Indexer.
+> Drop the schema (`DROP SCHEMA idx_<name> CASCADE`) or rename the Indexer, and
+> it re-indexes from `startBlock`. Helm applies CRDs only on first install, so
+> apply the new one by hand: `kubectl apply -f charts/arckive/crds/indexer.yaml`.
+
 ## Quickstart (2 commands)
 
 Prerequisites: a running Kubernetes cluster and a reachable Postgres.
@@ -165,10 +171,7 @@ Arckive writes **storage layout 2** (recorded in `_meta` as `layout = 2`):
   contract's address or `partitionBlocks` changed under the same Indexer)
   raises `LayoutError`; drop the schema or rename the Indexer.
 
-Upgrading from layout 1: a worker refuses a schema written by layout 1
-(`LayoutError` in its log). Drop the schema (`DROP SCHEMA idx_<name> CASCADE`)
-or rename the Indexer, and it re-indexes from `startBlock`. Apply the CRD
-change by hand: `kubectl apply -f charts/arckive/crds/indexer.yaml`.
+Upgrading from layout 1: see the breaking-change note under Quickstart.
 
 ## Benchmarks
 
@@ -188,6 +191,8 @@ Freshness is read from the product's own meta columns
 not stay up for the whole window. When Arc mainnet launches, the same suite
 runs there with a single `NETWORKS` entry. Raw results and the HTML report
 live in `docs/benchmarks/` · reproduce with `pnpm bench`
+
+The table above was measured with storage layout 1 (one `getBlock` per block for block times); layout 2 reads block times from the logs themselves, and the suite has not been re-run for it here.
 (prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`).
 
 ## Observability
