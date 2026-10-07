@@ -11,7 +11,7 @@ import {
 } from './insightsdb.js';
 import { LayaClient, LayaError, parseHeaderLine } from './laya.js';
 import type { Metrics } from './metrics.js';
-import type { Pacer } from './pacer.js';
+import type { RpcPool } from './rpcpool.js';
 import { initialCursor, sleep } from './pipeline.js';
 import type { Phase } from './status.js';
 import type { ContextSource } from './txcontext.js';
@@ -55,8 +55,8 @@ export interface InsightsDeps {
   // Read, never set: insights run only while ingest is Live. While it
   // backfills or is Degraded, the RPC budget is ingest's.
   ingestPhase: () => Phase;
-  // the pacer every insight RPC call goes through (txcontext.ts)
-  rpcPacer: Pick<Pacer, 'backOff'>;
+  // the pool every insight RPC call goes through (rpcpool.ts)
+  rpcPool: Pick<RpcPool, 'backOffShared'>;
   partitions: Partitions; // _insights partitions this process has created (db.ts)
 }
 
@@ -197,7 +197,7 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
       // Degraded is ingest failing — often on the endpoint's rate limit, which
       // insights share — so insights slow down too; while it backfills they
       // only wait their turn.
-      if (phase === 'Degraded') deps.rpcPacer.backOff();
+      if (phase === 'Degraded') deps.rpcPool.backOffShared();
       await deps.wake.wait(deps.intervalMs, signal);
       continue;
     }
@@ -251,7 +251,7 @@ export interface PrepareInsightsInput {
   readToken: (address: string, fallback: string) => Promise<TokenInfo>;
   headerLine: string | undefined; // INSIGHTS_HEADER
   ingestPhase: () => Phase;
-  rpcPacer: Pick<Pacer, 'backOff'>;
+  rpcPool: Pick<RpcPool, 'backOffShared'>;
   compactor?: Pick<Compactor, 'enqueue'>; // absent: finished partitions are not rebuilt
   fetch?: typeof fetch;
 }
@@ -308,6 +308,6 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     intervalMs: cfg.polling.intervalMs,
     wake: input.wake,
     ingestPhase: input.ingestPhase,
-    rpcPacer: input.rpcPacer,
+    rpcPool: input.rpcPool,
   };
 }

@@ -71,8 +71,8 @@ function fakeContext(contexts: Record<string, TxContext | null>): ContextSource 
   };
 }
 
-function fakePacer() {
-  return { backOffs: 0, backOff() { this.backOffs++; } };
+function fakePool() {
+  return { backOffs: 0, backOffShared() { this.backOffs++; } };
 }
 
 function fakeClassifier() {
@@ -132,7 +132,7 @@ describe('insights', () => {
       intervalMs: 60_000,
       wake: new HeadSignal(),
       ingestPhase: () => 'Live',
-      rpcPacer: fakePacer(),
+      rpcPool: fakePool(),
       partitions: new Partitions(SCHEMA, 1_000_000n),
     };
     askedParties.length = 0;
@@ -295,7 +295,7 @@ describe('insights', () => {
       cfg, pool, schema: SCHEMA, defs, abis: [[], vaultAbi],
       metrics: createMetrics('prep'), log: pino({ level: 'silent' }), wake: new HeadSignal(),
       context: fakeContext({}), readToken: async () => ({ label: 'TKN', decimals: 6 }),
-      ingestPhase: () => 'Live' as const, rpcPacer: fakePacer(),
+      ingestPhase: () => 'Live' as const, rpcPool: fakePool(),
     };
     await expect(prepareInsights({ ...base, headerLine: 'nonsense secret' })).rejects.toThrow(/INSIGHTS_HEADER/);
     const prepared = await prepareInsights({ ...base, headerLine: 'Authorization: Bearer x' });
@@ -322,8 +322,8 @@ describe('insights', () => {
   });
 
   it('slows its RPC pace while ingest is Degraded', async () => {
-    const pacer = fakePacer();
-    deps.rpcPacer = pacer;
+    const pacer = fakePool();
+    deps.rpcPool = pacer;
     deps.ingestPhase = () => 'Degraded';
     deps.intervalMs = 20;
     const ctrl = new AbortController();
