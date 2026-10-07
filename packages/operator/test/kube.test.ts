@@ -45,7 +45,7 @@ describe('createKubeApi over KubeHttp', () => {
     ]);
   });
 
-  it('applies server-side, forced, as arckive-operator', async () => {
+  it('applies server-side, forced and strict, as pepr', async () => {
     const s = await apiServer(() => ({ status: 200, json: {} }));
     const api = createKubeApi(s.http);
     const deployment = { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'w', namespace: 'ns' }, spec: { replicas: 1 } };
@@ -53,11 +53,53 @@ describe('createKubeApi over KubeHttp', () => {
     await api.applyRole({ apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', metadata: { name: 'r', namespace: 'ns' } } as never);
     await api.applyConfigMap({ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'c', namespace: 'ns' } } as never);
     expect(s.seen.map((x) => `${x.method} ${x.url} ${x.type}`)).toEqual([
-      'PATCH /apis/apps/v1/namespaces/ns/deployments/w?fieldManager=arckive-operator&force=true application/apply-patch+yaml',
-      'PATCH /apis/rbac.authorization.k8s.io/v1/namespaces/ns/roles/r?fieldManager=arckive-operator&force=true application/apply-patch+yaml',
-      'PATCH /api/v1/namespaces/ns/configmaps/c?fieldManager=arckive-operator&force=true application/apply-patch+yaml',
+      'PATCH /apis/apps/v1/namespaces/ns/deployments/w?fieldManager=pepr&fieldValidation=Strict&force=true application/apply-patch+yaml',
+      'PATCH /apis/rbac.authorization.k8s.io/v1/namespaces/ns/roles/r?fieldManager=pepr&fieldValidation=Strict&force=true application/apply-patch+yaml',
+      'PATCH /api/v1/namespaces/ns/configmaps/c?fieldManager=pepr&fieldValidation=Strict&force=true application/apply-patch+yaml',
     ]);
     expect(JSON.parse(s.seen[0]!.body)).toEqual(deployment);
+  });
+
+  it('applies ServiceAccounts and RoleBindings on their paths', async () => {
+    const s = await apiServer(() => ({ status: 200, json: {} }));
+    const api = createKubeApi(s.http);
+    await api.applyServiceAccount({ apiVersion: 'v1', kind: 'ServiceAccount', metadata: { name: 'sa', namespace: 'ns' } } as never);
+    await api.applyRoleBinding({ apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', metadata: { name: 'rb', namespace: 'ns' } } as never);
+    expect(s.seen.map((x) => x.url)).toEqual([
+      '/api/v1/namespaces/ns/serviceaccounts/sa?fieldManager=pepr&fieldValidation=Strict&force=true',
+      '/apis/rbac.authorization.k8s.io/v1/namespaces/ns/rolebindings/rb?fieldManager=pepr&fieldValidation=Strict&force=true',
+    ]);
+  });
+
+  it('rejects when the server cuts the response off mid-body', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '1000' });
+      res.write('{"data":');
+      setTimeout(() => res.socket!.destroy(), 20);
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    const http = createKubeHttp({ server: `http://127.0.0.1:${port}`, tls: {}, headers: async () => ({}) });
+    await expect(createKubeApi(http).getSecret('ns', 'x')).rejects.toThrow();
+    http.close();
+  });
+
+  it('a 2xx body that is not JSON fails without quoting the body', async () => {
+    const server = createServer((_req, res) => res.writeHead(200).end('SECRET-VALUE not json'));
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    const http = createKubeHttp({ server: `http://127.0.0.1:${port}`, tls: {}, headers: async () => ({}) });
+    const err = await createKubeApi(http).getSecret('ns', 'x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KubeHttpError);
+    expect((err as Error).message).not.toContain('SECRET-VALUE');
+    http.close();
+  });
+
+  it('listing Indexers throws on a 404 (CRD missing)', async () => {
+    const s = await apiServer(() => ({ status: 404 }));
+    await expect(createKubeApi(s.http).listIndexers()).rejects.toMatchObject({ name: 'KubeHttpError', status: 404 });
   });
 
   it('merge-patches the Indexer status and lists Indexers', async () => {

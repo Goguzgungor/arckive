@@ -1,7 +1,7 @@
 import type { kind } from 'kubernetes-fluent-client';
 import type { IndexerStatus } from '@arckive/core';
 import type { Indexer } from './kinds.js';
-import type { KubeHttp } from './kubehttp.js';
+import { KubeHttpError, type KubeHttp } from './kubehttp.js';
 
 export interface KubeApi {
   getConfigMap(namespace: string, name: string): Promise<kind.ConfigMap | null>;
@@ -15,10 +15,13 @@ export interface KubeApi {
   listIndexers(): Promise<Indexer[]>;
 }
 
-// Server-side apply's field manager. kubernetes-fluent-client applied as
-// "pepr"; with force=true the first apply under this name takes the fields
-// over, and since the operator applies the same objects none is dropped.
-const FIELD_MANAGER = 'arckive-operator';
+// Server-side apply's field manager, kept as "pepr": the name
+// kubernetes-fluent-client applied with. Managers that apply the same value
+// share ownership, so a different name would leave "pepr" co-owning every
+// field of objects applied before this client existed, and a field later
+// removed from the desired state (the INSIGHTS_HEADER env, ABI volumes)
+// would never be deleted. Same name = no ownership migration.
+const FIELD_MANAGER = 'pepr';
 
 const PLURAL: Readonly<Record<string, string>> = {
   ConfigMap: 'configmaps', Secret: 'secrets', ServiceAccount: 'serviceaccounts',
@@ -47,7 +50,7 @@ export function createKubeApi(http: KubeHttp): KubeApi {
     }
     // JSON is YAML: the apply-patch content type takes it as is
     await http.patch(
-      `${objectPath(apiVersion, kindName, metadata.namespace, metadata.name)}?fieldManager=${FIELD_MANAGER}&force=true`,
+      `${objectPath(apiVersion, kindName, metadata.namespace, metadata.name)}?fieldManager=${FIELD_MANAGER}&fieldValidation=Strict&force=true`,
       'application/apply-patch+yaml',
       obj,
     );
@@ -69,8 +72,11 @@ export function createKubeApi(http: KubeHttp): KubeApi {
       );
     },
     async listIndexers() {
-      const list = (await http.get('/apis/arckive.org/v1alpha1/indexers')) as { items?: Indexer[] } | null;
-      return list?.items ?? [];
+      const path = '/apis/arckive.org/v1alpha1/indexers';
+      const list = (await http.get(path)) as { items?: Indexer[] } | null;
+      // a 404 here means the CRD is missing: say so rather than list nothing
+      if (list === null) throw new KubeHttpError('GET', path, 404, '');
+      return list.items ?? [];
     },
   };
 }

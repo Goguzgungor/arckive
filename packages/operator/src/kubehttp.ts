@@ -13,8 +13,8 @@ import { KubeConfig } from '@kubernetes/client-node';
 
 export class KubeHttpError extends Error {
   readonly status: number;
-  constructor(method: string, path: string, status: number, body: string) {
-    super(`${method} ${path}: HTTP ${status}${body ? ` — ${body.slice(0, 300)}` : ''}`);
+  constructor(method: string, path: string, status: number, body: string, note?: string) {
+    super(`${method} ${path}: HTTP ${status}${note ? ` — ${note}` : body ? ` — ${body.slice(0, 300)}` : ''}`);
     this.name = 'KubeHttpError';
     this.status = status;
   }
@@ -53,6 +53,13 @@ export function createKubeHttp(conn: KubeConnection): KubeHttp {
         res.setEncoding('utf8');
         res.on('data', (c: string) => (text += c));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, text }));
+        // a server that closes the socket mid-body destroys res without 'end';
+        // req emits nothing once a response exists and the timeout does not
+        // fire on a destroyed socket, so without these the promise never settles
+        res.on('error', reject);
+        res.on('close', () => {
+          if (!res.complete) reject(new Error(`${method} ${path}: response closed before it was complete`));
+        });
       });
       req.on('timeout', () => req.destroy(new Error(`${method} ${path}: timed out`)));
       req.on('error', reject);
@@ -62,7 +69,14 @@ export function createKubeHttp(conn: KubeConnection): KubeHttp {
 
   function parse(method: string, path: string, r: { status: number; text: string }): unknown {
     if (r.status < 200 || r.status >= 300) throw new KubeHttpError(method, path, r.status, r.text);
-    return r.text ? JSON.parse(r.text) : null;
+    if (!r.text) return null;
+    try {
+      return JSON.parse(r.text);
+    } catch {
+      // not the parse error: its message quotes a snippet of the body, which
+      // on a Secret GET is secret data headed for the log
+      throw new KubeHttpError(method, path, r.status, '', 'response body is not valid JSON');
+    }
   }
 
   return {
