@@ -4,6 +4,7 @@ import { pino } from 'pino';
 import {
   extractEventDefs, parseWorkerConfig, schemaName, type EventDef,
 } from '@arckive/core';
+import { createStore } from './db.js';
 import { createMetrics } from './metrics.js';
 import { bootstrapIndexer, runLoop, type PipelineDeps } from './pipeline.js';
 import { createRpc, filterHealthyRpcs, getFinalizedBlockNumber, splitRpcUrls } from './rpc.js';
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
     cfg,
     defs,
     schema: schemaName(cfg.indexerName),
+    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks),
     metrics,
     phase,
     headSignal,

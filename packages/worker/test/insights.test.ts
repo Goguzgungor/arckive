@@ -4,10 +4,10 @@ import { pino } from 'pino';
 import { toFunctionSelector } from 'viem';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  TRANSFER_TOPIC, buildControlTables, buildEventTable, extractEventDefs, parseWorkerConfig,
+  TRANSFER_TOPIC, buildControlTables, extractEventDefs, parseWorkerConfig,
   type DecodedRow, type LaneAnswer, type TxContext,
 } from '@arckive/core';
-import { bootstrap, commitBatch, initCursor } from '../src/db.js';
+import { bootstrap, commitBatch, contractMeta, createStore, initCursor, type Store } from '../src/db.js';
 import {
   InsightsError, insightTargets, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
 } from '../src/insights.js';
@@ -42,17 +42,17 @@ const defs = [
   }]),
 ];
 
-const common = (block: number, n: number, contract: string) => ({
-  block_number: String(block), block_hash: `0x${'bb'.repeat(32)}`, block_time: new Date(0),
-  tx_hash: tx(n), tx_index: 0, log_index: n, contract_address: contract,
+const b = (h: string) => Buffer.from(h.slice(2), 'hex');
+const common = (block: number, n: number) => ({
+  block_number: String(block), block_time: new Date(0), tx_hash: b(tx(n)), tx_index: 0, log_index: n,
 });
 const transferRow = (block: number, n: number, value: bigint): DecodedRow => ({
-  tableName: 'tok_transfer',
-  columns: { ...common(block, n, TOKEN), from: WALLET, to: WALLET2, value: value.toString() },
+  tableName: 'tok_transfer', blockHash: `0x${'bb'.repeat(32)}`,
+  columns: { ...common(block, n), from: b(WALLET), to: b(WALLET2), value: value.toString() },
 });
 const depositRow = (block: number, n: number): DecodedRow => ({
-  tableName: 'vault_deposited',
-  columns: { ...common(block, n, VAULT), user: WALLET, amount: '5' },
+  tableName: 'vault_deposited', blockHash: `0x${'bb'.repeat(32)}`,
+  columns: { ...common(block, n), user: b(WALLET), amount: '5' },
 });
 
 const ctx = (over: Partial<TxContext>): TxContext => ({
@@ -95,6 +95,7 @@ describe('insights', () => {
   let pool: pg.Pool;
   let classifier: ReturnType<typeof fakeClassifier>;
   let deps: InsightsDeps;
+  let store: Store;
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:17-alpine').start();
@@ -108,7 +109,8 @@ describe('insights', () => {
 
   beforeEach(async () => {
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-    await bootstrap(pool, buildControlTables(SCHEMA), defs.map((d) => buildEventTable(SCHEMA, d)));
+    store = createStore(SCHEMA, defs, 1_000_000);
+    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], contractMeta(defs));
     await initCursor(pool, SCHEMA, 99n);
     await bootstrapInsights(pool, SCHEMA, 99n);
     classifier = fakeClassifier();
@@ -139,8 +141,8 @@ describe('insights', () => {
     (await pool.query(`SELECT * FROM ${SCHEMA}._insights ORDER BY block_number, log_index`)).rows;
 
   it('classifies committed rows up to the ingest cursor and no further', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), depositRow(102, 3)], [], 102n);
-    await commitBatch(pool, SCHEMA, [transferRow(103, 4, 1n)], [], 102n); // written, not yet committed past
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), depositRow(102, 3)], [], 102n);
+    await commitBatch(pool, store, [transferRow(103, 4, 1n)], [], 102n); // written, not yet committed past
     while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
     const rows = await insights();
     expect(rows.map((r) => r.tx_hash)).toEqual([tx(1), tx(2), tx(3)]);
@@ -148,7 +150,7 @@ describe('insights', () => {
   });
 
   it('rules what the transfer decides and asks the model the rest', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), depositRow(102, 3)], [], 102n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), depositRow(102, 3)], [], 102n);
     await runInsightsOnce(deps, 'laya-test');
     const [swap, spam, deposit] = await insights();
     expect(swap).toMatchObject({ lane: 'swap', lane_p: 0.9, ruled: false, protocol: 'Uniswap', facts: ['swap'], model: 'laya-test' });
@@ -161,7 +163,7 @@ describe('insights', () => {
   });
 
   it('a failed model call writes nothing and leaves the cursor', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n)], [], 100n);
     classifier.state.fail = new LayaError('gate answered HTTP 503', 503);
     await expect(runInsightsOnce(deps, null)).rejects.toMatchObject({ stage: 'model' });
     expect(await insights()).toEqual([]);
@@ -169,7 +171,7 @@ describe('insights', () => {
   });
 
   it('re-running a range changes nothing', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n), depositRow(101, 3)], [], 101n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), depositRow(101, 3)], [], 101n);
     await runInsightsOnce(deps, 'laya-test');
     await pool.query(`UPDATE ${SCHEMA}._insights_cursor SET last_block = 99`);
     await runInsightsOnce(deps, 'laya-test');
@@ -177,7 +179,7 @@ describe('insights', () => {
   });
 
   it('caps a round by rows, taking an oversized block whole', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 1n), transferRow(100, 2, 1n), depositRow(101, 3), depositRow(103, 4)], [], 103n);
+    await commitBatch(pool, store, [transferRow(100, 1, 1n), transferRow(100, 2, 1n), depositRow(101, 3), depositRow(103, 4)], [], 103n);
     expect(await capRange(pool, SCHEMA, deps.targets, 100n, 103n, 2)).toBe(100n);
     expect(await capRange(pool, SCHEMA, deps.targets, 100n, 103n, 3)).toBe(102n);
     expect(await capRange(pool, SCHEMA, deps.targets, 100n, 103n, 10)).toBe(103n);
@@ -185,7 +187,7 @@ describe('insights', () => {
   });
 
   it('the loop keeps going through gate failures and counts them by stage', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n)], [], 100n);
     classifier.state.fail = new LayaError('gate answered HTTP 401', 401);
     const ctrl = new AbortController();
     const loop = runInsightsLoop(deps, ctrl.signal);
@@ -202,7 +204,7 @@ describe('insights', () => {
     const ctrl = new AbortController();
     const loop = runInsightsLoop(deps, ctrl.signal);
     await new Promise((r) => setTimeout(r, 200));
-    await commitBatch(pool, SCHEMA, [depositRow(100, 3)], [], 100n);
+    await commitBatch(pool, store, [depositRow(100, 3)], [], 100n);
     (deps.wake as HeadSignal).notify();
     await expect.poll(async () => (await insights()).length, { timeout: 3_000 }).toBe(1);
     ctrl.abort();
@@ -211,7 +213,8 @@ describe('insights', () => {
 
   it('prepareInsights creates the tables, reads token info and refuses a bad header', async () => {
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-    await bootstrap(pool, buildControlTables(SCHEMA), defs.map((d) => buildEventTable(SCHEMA, d)));
+    store = createStore(SCHEMA, defs, 1_000_000);
+    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], contractMeta(defs));
     const cfg = parseWorkerConfig({
       indexerName: 'ins',
       network: { chainId: 31337, rpc: ['http://127.0.0.1:1'] },
@@ -238,7 +241,7 @@ describe('insights', () => {
   it('waits while ingest is not Live, so ingest keeps the RPC to itself', async () => {
     let live = false;
     deps.ingestPhase = () => (live ? 'Live' : 'Backfilling');
-    await commitBatch(pool, SCHEMA, [depositRow(100, 3)], [], 100n);
+    await commitBatch(pool, store, [depositRow(100, 3)], [], 100n);
     const ctrl = new AbortController();
     const loop = runInsightsLoop(deps, ctrl.signal);
     (deps.wake as HeadSignal).notify();
@@ -265,14 +268,14 @@ describe('insights', () => {
 
   it('takes a transaction’s sender for a wallet without asking the chain', async () => {
     // tx(1)'s sender is WALLET, the transfer's from; only WALLET2 needs asking
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n)], [], 100n);
     await runInsightsOnce(deps, 'laya-test');
     expect(askedParties).toEqual([WALLET2]);
     expect((await insights())[0].sentence).toMatch(/^TKN moved from a wallet to a wallet/);
   });
 
   it('a gate outage retries the model call only, never the chain reads', async () => {
-    await commitBatch(pool, SCHEMA, [transferRow(100, 1, 5_000_000n)], [], 100n);
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n)], [], 100n);
     let reads = 0;
     const inner = deps.context;
     deps.context = { ...inner, contexts: (txs) => { reads++; return inner.contexts(txs); } };
@@ -283,7 +286,7 @@ describe('insights', () => {
       .poll(async () => (await deps.metrics.insightsErrors.get()).values.find((v) => v.labels.stage === 'model')?.value ?? 0, { timeout: 8_000 })
       .toBeGreaterThan(1);
     // ingest moves on meanwhile; the failed round must not grow to take it in
-    await commitBatch(pool, SCHEMA, [depositRow(101, 3)], [], 101n);
+    await commitBatch(pool, store, [depositRow(101, 3)], [], 101n);
     classifier.state.fail = null;
     await expect.poll(async () => (await insights()).length, { timeout: 10_000 }).toBe(2);
     ctrl.abort();
@@ -292,7 +295,7 @@ describe('insights', () => {
   });
 
   it('a transaction that moved nothing is ruled no_transfer and never asked', async () => {
-    await commitBatch(pool, SCHEMA, [depositRow(100, 5)], [], 100n);
+    await commitBatch(pool, store, [depositRow(100, 5)], [], 100n);
     await runInsightsOnce(deps, 'laya-test');
     const [row] = await insights();
     expect(row).toMatchObject({ lane: 'no_transfer', ruled: true, lane_p: null, model: null });

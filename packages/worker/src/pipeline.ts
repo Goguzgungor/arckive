@@ -2,10 +2,12 @@ import type pg from 'pg';
 import type { Logger } from 'pino';
 import type { PublicClient } from 'viem';
 import {
-  buildControlTables, buildEventTable, decodeLogToRow, planRange,
+  buildControlTables, decodeLogToRow, planRange,
   type DecodedRow, type EventDef, type RawLog, type WorkerConfig,
 } from '@arckive/core';
-import { bootstrap, commitBatch, getCursor, initCursor, type DeadLetterEntry } from './db.js';
+import {
+  bootstrap, commitBatch, contractMeta, getCursor, initCursor, type DeadLetterEntry, type Store,
+} from './db.js';
 import { fetchLogs, getBlockTimes, getFinalizedBlockNumber } from './rpc.js';
 import type { Metrics } from './metrics.js';
 import type { HeadSignal } from './signal.js';
@@ -17,6 +19,7 @@ export interface PipelineDeps {
   cfg: WorkerConfig;
   defs: EventDef[];
   schema: string;
+  store: Store;
   metrics: Metrics;
   phase: PhaseTracker;
   headSignal: HeadSignal;
@@ -38,8 +41,9 @@ export function initialCursor(cfg: WorkerConfig): bigint {
 }
 
 export async function bootstrapIndexer(deps: PipelineDeps): Promise<void> {
-  const tables = deps.defs.map((d) => buildEventTable(deps.schema, d));
-  await bootstrap(deps.pool, buildControlTables(deps.schema), tables);
+  await bootstrap(
+    deps.pool, deps.schema, buildControlTables(deps.schema), [...deps.store.tables.values()], contractMeta(deps.defs),
+  );
   await initCursor(deps.pool, deps.schema, initialCursor(deps.cfg));
 }
 
@@ -116,7 +120,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   }
 
   const end = deps.metrics.writeLatency.startTimer();
-  const inserted = await commitBatch(pool, schema, rows, dead, safeTo);
+  const inserted = await commitBatch(pool, deps.store, rows, dead, safeTo);
   end();
   deps.onCommitted?.();
 

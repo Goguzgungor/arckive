@@ -80,9 +80,10 @@ export async function readEventRows(
   const rows: EventRow[] = [];
   for (const t of tables) {
     const c = t.transferColumns;
-    const extra = c ? `, ${q(c[0])} AS t_from, ${q(c[1])} AS t_to, ${q(c[2])}::text AS t_value` : '';
+    const hexOf = (col: string) => `'0x' || encode(${q(col)}, 'hex')`;
+    const extra = c ? `, ${hexOf(c[0])} AS t_from, ${hexOf(c[1])} AS t_to, ${q(c[2])}::text AS t_value` : '';
     const r = await pool.query(
-      `SELECT block_number, tx_hash, log_index${extra} FROM ${q(schema)}.${q(t.tableName)}
+      `SELECT block_number, ${hexOf('tx_hash')} AS tx_hash, log_index${extra} FROM ${q(schema)}.${q(t.tableName)}
        WHERE block_number BETWEEN $1 AND $2`,
       [from.toString(), to.toString()],
     );

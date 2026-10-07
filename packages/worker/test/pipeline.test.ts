@@ -8,7 +8,7 @@ import { createWalletClient, http, publicActions } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractEventDefs, parseWorkerConfig, type WorkerConfig } from '@arckive/core';
-import { getCursor } from '../src/db.js';
+import { createStore, getCursor } from '../src/db.js';
 import { createMetrics } from '../src/metrics.js';
 import { bootstrapIndexer, runLoop, runOnce, type PipelineDeps } from '../src/pipeline.js';
 import { createRpc, getBlockTimes } from '../src/rpc.js';
@@ -65,12 +65,14 @@ describe('pipeline', () => {
       contracts: [{ name: 'emitter', address: contractAddress, abiPath: 'unused' }],
       polling: { batchBlocks: 2, intervalMs: 100 },
     });
+    const defs = extractEventDefs('emitter', contractAddress, artifact.abi);
     deps = {
       client: createRpc([anvil.url]),
       pool,
       cfg,
-      defs: extractEventDefs('emitter', contractAddress, artifact.abi),
+      defs,
       schema: 'idx_demo',
+      store: createStore('idx_demo', defs, 1_000_000),
       metrics: createMetrics('demo'),
       phase: new PhaseTracker(),
       headSignal: new HeadSignal(),
@@ -179,7 +181,7 @@ describe('pipeline', () => {
       polling: { batchBlocks: 100, intervalMs: 100 },
     });
     const d2: PipelineDeps = {
-      ...deps, client: fake, cfg: cfg2, schema: 'idx_hot',
+      ...deps, client: fake, cfg: cfg2, schema: 'idx_hot', store: createStore('idx_hot', deps.defs, 1_000_000),
       headSignal: hs, metrics: createMetrics('hot'), phase: new PhaseTracker(),
     };
     await bootstrapIndexer(d2);
@@ -203,7 +205,7 @@ describe('pipeline', () => {
       polling: { batchBlocks: 100, intervalMs: 100 },
     });
     const d2: PipelineDeps = {
-      ...deps, client: fake, cfg: cfg2, schema: 'idx_clamp',
+      ...deps, client: fake, cfg: cfg2, schema: 'idx_clamp', store: createStore('idx_clamp', deps.defs, 1_000_000),
       headSignal: hs, metrics: createMetrics('clamp'), phase: new PhaseTracker(),
     };
     await bootstrapIndexer(d2);
