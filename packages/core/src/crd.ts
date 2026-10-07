@@ -33,6 +33,7 @@ export const IndexerSpecSchema = z.object({
         key: z.string().min(1).default('url'),
       }),
     }),
+    partitionBlocks: z.number().int().min(10_000).default(2_000_000),
   }),
   contracts: z
     .array(
@@ -123,6 +124,7 @@ export function renderWorkerConfig(crName: string, spec: IndexerSpec): WorkerCon
       };
     }),
     polling: spec.polling,
+    storage: { partitionBlocks: spec.storage.partitionBlocks },
     ...(spec.insights ? { insights: { laya: { url: spec.insights.laya.url } } } : {}),
   });
 }

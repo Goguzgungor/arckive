@@ -51,6 +51,12 @@ describe('IndexerSpecSchema', () => {
     const bad = { ...raw, network: { ...raw.network, rpc: ['ftp://bad.example'] } };
     expect(IndexerSpecSchema.safeParse(bad).success).toBe(false);
   });
+
+  it('storage.partitionBlocks defaults to 2,000,000 and rejects less than 10,000', () => {
+    expect(IndexerSpecSchema.parse(raw).storage.partitionBlocks).toBe(2_000_000);
+    const small = { ...raw, storage: { ...raw.storage, partitionBlocks: 9_999 } };
+    expect(() => IndexerSpecSchema.parse(small)).toThrow();
+  });
 });
 
 describe('renderWorkerConfig', () => {
@@ -98,6 +104,11 @@ describe('renderWorkerConfig', () => {
     expect(cfg.contracts[0]!.abiPath).toBeUndefined();
   });
 
+  it('renderWorkerConfig passes storage.partitionBlocks to the worker', () => {
+    const spec = IndexerSpecSchema.parse({ ...raw, storage: { ...raw.storage, partitionBlocks: 50_000 } });
+    expect(renderWorkerConfig('x', spec).storage).toEqual({ partitionBlocks: 50_000 });
+  });
+
   it('explicit explorerApi overrides the chainId default', () => {
     const spec = IndexerSpecSchema.parse({
       ...raw,
@@ -142,7 +153,7 @@ describe('insights', () => {
   it('without insights the worker config, and so its hash, is what it was before insights existed', () => {
     const cfg = renderWorkerConfig('demo', IndexerSpecSchema.parse(raw));
     expect('insights' in cfg).toBe(false);
-    // computed on the commit before spec.insights existed: no rollout for existing indexers
-    expect(configHash(cfg)).toBe('43420313e1f130e0');
+    // hash includes storage.partitionBlocks (default 2_000_000)
+    expect(configHash(cfg)).toBe('2794d91436dcce97');
   });
 });

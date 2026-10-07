@@ -52,4 +52,16 @@ describe('Indexer CRD manifest', () => {
       ['contracts', 'insights', 'network', 'polling', 'storage'],
     );
   });
+
+  it('storage.partitionBlocks matches the zod default and minimum', () => {
+    const storage = v.schema.openAPIV3Schema.properties.spec.properties['storage'] as {
+      properties: Record<string, { type: string; minimum?: number; default?: number; description?: string }>;
+    };
+    expect(storage.properties['partitionBlocks']).toEqual({
+      type: 'integer',
+      minimum: 10000,
+      default: 2000000,
+      description: 'Blocks per range partition of every table (storage layout 2)',
+    });
+  });
 });
