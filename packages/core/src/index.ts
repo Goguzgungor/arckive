@@ -67,3 +67,4 @@ export {
   type LaneAnswer,
   type SettledLane,
 } from './insights/lanes.js';
+export { NATIVE_USDC, knownToken } from './insights/tokens.js';

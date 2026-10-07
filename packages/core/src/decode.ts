@@ -21,8 +21,12 @@ export interface RawLog {
 
 export interface DecodedRow {
   tableName: string;
+  // written once per block to _blocks, not into the event table
+  blockHash: `0x${string}`;
   columns: Record<string, unknown>;
 }
+
+const hexBytes = (hex: string): Buffer => Buffer.from(hex.slice(2), 'hex');
 
 export function toSqlValue(abiType: string, value: unknown): unknown {
   if (abiType.endsWith(']') || abiType.startsWith('tuple')) {
@@ -30,8 +34,8 @@ export function toSqlValue(abiType: string, value: unknown): unknown {
       typeof v === 'bigint' ? v.toString() : v,
     );
   }
-  if (abiType === 'address') return String(value).toLowerCase();
-  if (/^bytes(\d+)?$/.test(abiType)) return Buffer.from(String(value).slice(2), 'hex');
+  if (abiType === 'address') return hexBytes(String(value));
+  if (/^bytes(\d+)?$/.test(abiType)) return hexBytes(String(value));
   if (typeof value === 'bigint') return value.toString();
   return value;
 }
@@ -45,12 +49,10 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
   }
   const columns: Record<string, unknown> = {
     block_number: log.blockNumber.toString(),
-    block_hash: log.blockHash,
     block_time: blockTime,
-    tx_hash: log.transactionHash,
+    tx_hash: hexBytes(log.transactionHash),
     tx_index: log.transactionIndex,
     log_index: log.logIndex,
-    contract_address: log.address.toLowerCase(),
   };
   const cols = eventColumns(def.event);
   for (const [i, col] of cols.entries()) {
@@ -63,5 +65,5 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
     }
     columns[col.name] = toSqlValue(col.abiType, raw);
   }
-  return { tableName: def.tableName, columns };
+  return { tableName: def.tableName, blockHash: log.blockHash, columns };
 }
