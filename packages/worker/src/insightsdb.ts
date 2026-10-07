@@ -116,7 +116,9 @@ async function sentenceIds(client: pg.PoolClient, schema: string, rows: InsightR
   const all = [...unique.values()];
   await client.query(
     `INSERT INTO ${q(schema)}._sentences (sentence, model, probabilities)
-     SELECT * FROM unnest($1::text[], $2::text[], $3::jsonb[]) ON CONFLICT (sentence, model) DO NOTHING`,
+     SELECT * FROM unnest($1::text[], $2::text[], $3::jsonb[]) ON CONFLICT (sentence, model)
+     -- a ruled row (NULL probabilities) may already hold this sentence under model ''; an answered one must not be lost
+     DO UPDATE SET probabilities = COALESCE(${q(schema)}._sentences.probabilities, EXCLUDED.probabilities)`,
     [all.map((x) => x.sentence), all.map((x) => x.model), all.map((x) => x.probabilities)],
   );
   const r = await client.query(

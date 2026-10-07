@@ -150,10 +150,12 @@ describe('insights', () => {
     expect(IndexerSpecSchema.safeParse(bad).success).toBe(false);
   });
 
-  it('without insights the worker config, and so its hash, is what it was before insights existed', () => {
+  it('without insights the worker config carries no insights key, and its hash is pinned', () => {
     const cfg = renderWorkerConfig('demo', IndexerSpecSchema.parse(raw));
     expect('insights' in cfg).toBe(false);
-    // hash includes storage.partitionBlocks (default 2_000_000)
+    // The hash includes storage.partitionBlocks (default 2_000_000). It changed
+    // on purpose with storage layout 2: every worker rolls out once, which is
+    // wanted because layout 2 workers replace layout 1 ones.
     expect(configHash(cfg)).toBe('2794d91436dcce97');
   });
 });

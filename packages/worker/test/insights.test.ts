@@ -11,7 +11,7 @@ import { Partitions, bootstrap, commitBatch, contractMeta, createStore, initCurs
 import {
   InsightsError, insightTargets, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
 } from '../src/insights.js';
-import { bootstrapInsights, capRange, getInsightsCursor } from '../src/insightsdb.js';
+import { bootstrapInsights, capRange, commitInsights, getInsightsCursor, type InsightRow } from '../src/insightsdb.js';
 import { LayaError } from '../src/laya.js';
 import { createMetrics } from '../src/metrics.js';
 import { HeadSignal } from '../src/signal.js';
@@ -175,6 +175,17 @@ describe('insights', () => {
     for (const r of ruled) expect(r).toMatchObject({ model: null, probabilities: null });
     const raw = await pool.query(`SELECT protocol FROM ${SCHEMA}._insights WHERE ruled`);
     expect(raw.rows.some((r) => r.protocol === '')).toBe(false);
+  });
+
+  it('an answered sentence keeps its probabilities behind a ruled row with the same sentence', async () => {
+    const row = (logIndex: number, probabilities: Record<string, number> | null): InsightRow => ({
+      blockNumber: 100n, logIndex, lane: 'swap', laneP: probabilities ? 0.9 : null, ruled: !probabilities,
+      protocol: '', facts: [], probabilities, sentence: 'same sentence', model: '',
+    });
+    await commitInsights(pool, SCHEMA, deps.partitions, [row(1, null)], 100n);
+    await commitInsights(pool, SCHEMA, deps.partitions, [row(2, { swap: 0.9 })], 100n);
+    const r = await pool.query(`SELECT probabilities FROM ${SCHEMA}._sentences WHERE sentence = 'same sentence'`);
+    expect(r.rows).toEqual([{ probabilities: { swap: 0.9 } }]);
   });
 
   it('a failed model call writes nothing and leaves the cursor', async () => {
