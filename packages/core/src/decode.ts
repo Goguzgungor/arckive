@@ -62,7 +62,7 @@ export function decodeLogToRow(def: EventDef, log: RawLog, blockTime: Date): Dec
       ? (args as Record<string, unknown>)[param.name]
       : (args as unknown[])[i];
     if (raw === undefined) {
-      throw new DecodeError(`${def.tableName}: parameter '${col.name}' missing from decode result`);
+      throw new DecodeError(`${def.tableName}: parameter '${col.viewName}' missing from decode result`);
     }
     columns[col.name] = toSqlValue(col.abiType, raw);
   }

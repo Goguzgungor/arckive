@@ -78,7 +78,7 @@ describe('buildEventTable (dense layout 2)', () => {
       'CREATE OR REPLACE VIEW "idx_x"."usdc_transfer_hex" AS SELECT t."block_number", b."block_time", ' +
         `'0x' || encode(t."tx_hash", 'hex') AS "tx_hash", t."log_index", b."_ingested_at", ` +
         `'0x' || encode(a0."address", 'hex') AS "from", '0x' || encode(a1."address", 'hex') AS "to", t."value" ` +
-        'FROM "idx_x"."usdc_transfer" t JOIN "idx_x"."_blocks" b ON b."block_number" = t."block_number" ' +
+        'FROM "idx_x"."usdc_transfer" t LEFT JOIN "idx_x"."_blocks" b ON b."block_number" = t."block_number" ' +
         'LEFT JOIN "idx_x"."_addresses" a0 ON a0."id" = t."from_id" ' +
         'LEFT JOIN "idx_x"."_addresses" a1 ON a1."id" = t."to_id"',
     );

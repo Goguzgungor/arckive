@@ -33,8 +33,10 @@ export const BLOCK_COLUMNS: ReadonlyArray<ColumnSpec> = [
 ];
 
 // _ingested_at is filled in by the DB (DEFAULT now()) in _blocks. block_time,
-// tx_index and _ingested_at are no longer event columns but stay reserved: they
-// still name columns readers see in the _hex view.
+// tx_index and _ingested_at are no longer event columns but stay reserved so a
+// parameter cannot take the name of a column readers knew. block_time and
+// _ingested_at are still seen in the _hex view (from _blocks); tx_index is not
+// — it is only reserved.
 export const INGESTED_AT = '_ingested_at';
 const RESERVED = new Set([
   ...COMMON_COLUMNS.map((c) => c.name),
@@ -93,7 +95,7 @@ export function eventColumns(event: AbiEvent): EventColumn[] {
 export interface TableSpec {
   schema: string;
   table: string;
-  // every column a row supplies, in insert order; _ingested_at is the DB's
+  // every column a row supplies, in insert order; _ingested_at lives in _blocks
   columns: ColumnSpec[];
   statements: string[];
 }
@@ -123,9 +125,12 @@ function hexView(schema: string, table: string, params: EventColumn[]): string {
       return `t.${q(c.name)}`;
     }),
   ];
+  // LEFT JOIN: an event whose _blocks row is missing stays visible (with a NULL
+  // block time) instead of silently vanishing; on PostgreSQL 16+ the planner
+  // drops the join when no _blocks column is selected.
   return (
     `CREATE OR REPLACE VIEW ${q(schema)}.${q(view)} AS SELECT ${select.join(', ')} ` +
-    `FROM ${q(schema)}.${q(table)} t JOIN ${q(schema)}."_blocks" b ON b."block_number" = t."block_number"` +
+    `FROM ${q(schema)}.${q(table)} t LEFT JOIN ${q(schema)}."_blocks" b ON b."block_number" = t."block_number"` +
     (joins.length ? ` ${joins.join(' ')}` : '')
   );
 }

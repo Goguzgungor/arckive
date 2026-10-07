@@ -364,4 +364,34 @@ describe('db (storage layout 2)', () => {
     expect(enqueued.filter((p) => p.startsWith('usdc_transfer')).sort())
       .toEqual(['usdc_transfer_p0', 'usdc_transfer_p1', 'usdc_transfer_p2', 'usdc_transfer_p3']);
   });
+
+  it('one address in two tables of the same batch gets one _addresses row and one id', async () => {
+    const approvalAbi = [{
+      type: 'event', name: 'Approval',
+      inputs: [
+        { name: 'owner', type: 'address', indexed: true },
+        { name: 'value', type: 'uint256', indexed: false },
+      ],
+    }];
+    const two = [...defs, ...extractEventDefs('token', ADDR, approvalAbi)];
+    const s2 = createStore(SCHEMA, two, 1000);
+    await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...s2.tables.values()], { ...contractMeta(two), partition_blocks: '1000' });
+    const shared = hex('0x' + '1'.repeat(40));
+    const approval: DecodedRow = {
+      tableName: 'token_approval',
+      blockHash: `0x${'a'.repeat(64)}`,
+      blockTime: new Date('2026-07-03T00:00:00Z'),
+      columns: {
+        block_number: '10', tx_hash: hex('0x' + 'b'.repeat(64)), log_index: 1,
+        owner_id: shared, value: '5',
+      },
+    };
+    await commitBatch(pool, s2, [row(10, 0), approval], [], 10n); // row(): from_id = shared too
+    const addrs = await pool.query(`SELECT id FROM ${SCHEMA}._addresses WHERE address = $1`, [shared]);
+    expect(addrs.rows).toHaveLength(1);
+    const t = await pool.query(`SELECT from_id FROM ${SCHEMA}.usdc_transfer`);
+    const a = await pool.query(`SELECT owner_id FROM ${SCHEMA}.token_approval`);
+    expect(t.rows[0].from_id).toBe(addrs.rows[0].id);
+    expect(a.rows[0].owner_id).toBe(addrs.rows[0].id);
+  });
 });
