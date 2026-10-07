@@ -188,6 +188,18 @@ describe('insights', () => {
     expect(r.rows).toEqual([{ probabilities: { swap: 0.9 } }]);
   });
 
+  it('seeing the same sentences again burns no sentence ids', async () => {
+    const row = (logIndex: number): InsightRow => ({
+      blockNumber: 100n, logIndex, lane: 'swap', laneP: 0.9, ruled: false,
+      protocol: '', facts: [], probabilities: { swap: 0.9 }, sentence: 'same sentence', model: 'm',
+    });
+    for (let i = 1; i <= 3; i++) await commitInsights(pool, SCHEMA, deps.partitions, [row(i)], 100n);
+    // a burned value shows only in the next id actually handed out
+    await commitInsights(pool, SCHEMA, deps.partitions, [{ ...row(4), sentence: 'another sentence' }], 100n);
+    const r = await pool.query(`SELECT max(id)::int AS m, count(*)::int AS n FROM ${SCHEMA}._sentences`);
+    expect(r.rows[0].m).toBe(r.rows[0].n);
+  });
+
   it('a failed model call writes nothing and leaves the cursor', async () => {
     await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n)], [], 100n);
     classifier.state.fail = new LayaError('gate answered HTTP 503', 503);

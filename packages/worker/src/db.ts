@@ -161,7 +161,10 @@ function columnArrays(columns: readonly ColumnSpec[], rows: ReadonlyArray<Record
 
 // Each address once: the batch's distinct addresses are inserted if new and
 // read back as ids in the same transaction, so a rolled-back batch leaves no
-// id pointing at an address that does not exist.
+// id pointing at an address that does not exist. The NOT EXISTS filter is
+// load-bearing: an identity value is consumed before ON CONFLICT is checked,
+// so inserting known addresses would burn an id each and overflow the integer
+// key within a couple of years; ON CONFLICT stays as the race safety net.
 async function resolveAddresses(
   client: pg.PoolClient, schema: string, store: Store, byTable: ReadonlyMap<string, Array<Record<string, unknown>>>,
 ): Promise<void> {
@@ -178,7 +181,9 @@ async function resolveAddresses(
   if (!wanted.size) return;
   const all = [...wanted.values()];
   await client.query(
-    `INSERT INTO ${q(schema)}._addresses (address) SELECT unnest($1::bytea[]) ON CONFLICT (address) DO NOTHING`,
+    `INSERT INTO ${q(schema)}._addresses (address) SELECT u.a FROM unnest($1::bytea[]) AS u(a)
+     WHERE NOT EXISTS (SELECT 1 FROM ${q(schema)}._addresses x WHERE x.address = u.a)
+     ON CONFLICT (address) DO NOTHING`,
     [all],
   );
   const ids = new Map<string, number>();

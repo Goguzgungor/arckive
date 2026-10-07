@@ -119,12 +119,24 @@ async function sentenceIds(client: pg.PoolClient, schema: string, rows: InsightR
     });
   }
   const all = [...unique.values()];
+  const sentences = all.map((x) => x.sentence);
+  const models = all.map((x) => x.model);
+  const probs = all.map((x) => x.probabilities);
+  // Only pairs that do not exist yet: an identity value is consumed before
+  // ON CONFLICT is checked, so re-inserting known sentences would burn ids.
   await client.query(
     `INSERT INTO ${q(schema)}._sentences (sentence, model, probabilities)
-     SELECT * FROM unnest($1::text[], $2::text[], $3::jsonb[]) ON CONFLICT (sentence, model)
-     -- a ruled row (NULL probabilities) may already hold this sentence under model ''; an answered one must not be lost
-     DO UPDATE SET probabilities = COALESCE(${q(schema)}._sentences.probabilities, EXCLUDED.probabilities)`,
-    [all.map((x) => x.sentence), all.map((x) => x.model), all.map((x) => x.probabilities)],
+     SELECT u.sentence, u.model, u.p FROM unnest($1::text[], $2::text[], $3::jsonb[]) AS u(sentence, model, p)
+     WHERE NOT EXISTS (SELECT 1 FROM ${q(schema)}._sentences x WHERE x.sentence = u.sentence AND x.model = u.model)
+     ON CONFLICT (sentence, model) DO NOTHING`,
+    [sentences, models, probs],
+  );
+  // a ruled row (NULL probabilities) may already hold this sentence under model ''; an answered one must not be lost
+  await client.query(
+    `UPDATE ${q(schema)}._sentences s SET probabilities = u.p
+     FROM unnest($1::text[], $2::text[], $3::jsonb[]) AS u(sentence, model, p)
+     WHERE s.sentence = u.sentence AND s.model = u.model AND s.probabilities IS NULL AND u.p IS NOT NULL`,
+    [sentences, models, probs],
   );
   const r = await client.query(
     `SELECT s.id, s.sentence, s.model FROM ${q(schema)}._sentences s

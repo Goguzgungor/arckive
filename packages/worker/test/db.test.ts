@@ -183,6 +183,43 @@ describe('db (storage layout 2)', () => {
     expect(t.rows).toEqual([{ from_id: a.rows[0].id, to_id: a.rows[1].id }, { from_id: a.rows[0].id, to_id: a.rows[1].id }]);
   });
 
+  it('burns no identity values when the same addresses are committed again', async () => {
+    for (let i = 0; i < 5; i++) await commitBatch(pool, store, [row(10 + i, 0)], [], BigInt(10 + i));
+    // a burned value shows only in the next id actually handed out
+    const fresh = row(20, 0);
+    fresh.columns['to_id'] = hex('0x' + '3'.repeat(40));
+    await commitBatch(pool, store, [fresh], [], 20n);
+    const r = await pool.query(`SELECT max(id)::int AS m FROM ${SCHEMA}._addresses`);
+    expect(r.rows[0].m).toBe(3);
+  });
+
+  it('a table without address columns sends no address statements', async () => {
+    const plain = extractEventDefs('plain', ADDR, [{
+      type: 'event', name: 'Done', inputs: [
+        { name: 'amount', type: 'uint256', indexed: false },
+        { name: 'ref', type: 'bytes32', indexed: false },
+      ],
+    }]);
+    const schema = 'idx_plain';
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    const st = createStore(schema, plain, 1000);
+    await bootstrap(pool, schema, buildControlTables(schema), [...st.tables.values()], contractMeta(plain));
+    await initCursor(pool, schema, 9n);
+    const { pool: counted, sent } = countingPool(container.getConnectionUri());
+    try {
+      const r = (b: number): DecodedRow => ({
+        tableName: 'plain_done', blockHash: `0x${'a'.repeat(64)}`, blockTime: new Date(0),
+        columns: { block_number: String(b), tx_hash: hex('0x' + 'b'.repeat(64)), log_index: 0, amount: '1', ref: hex('0x' + 'c'.repeat(64)) },
+      });
+      await commitBatch(counted, st, [r(20)], [], 20n); // creates the partitions
+      sent.n = 0;
+      await commitBatch(counted, st, [r(21)], [], 21n);
+      expect(sent.n).toBe(5); // BEGIN, _blocks, plain_done, cursor, COMMIT
+    } finally {
+      await counted.end();
+    }
+  });
+
   it('keeps an address id across commits', async () => {
     await commitBatch(pool, store, [row(10, 0)], [], 10n);
     await commitBatch(pool, store, [row(11, 0)], [], 11n);
