@@ -172,21 +172,27 @@ describe('buildEventTable (event parameter names)', () => {
   });
 });
 
-describe('buildInsightsTables (layout 2)', () => {
+describe('buildInsightsTables (labels)', () => {
   const s = buildInsightsTables('idx_x');
-  it('keeps one row per event, keyed like the events, and sentences once', () => {
+  it('keeps sentences once', () => {
     const sentences = s.find((x) => x.includes('"idx_x"._sentences'))!;
     expect(sentences).toContain('UNIQUE (sentence, model)');
+  });
+  it('stores each label once and keeps rows to key, lane and label id', () => {
+    const labels = s.find((x) => x.includes('"idx_x"._labels'))!;
+    expect(labels).toContain('UNIQUE NULLS NOT DISTINCT (lane, lane_p, ruled, protocol, facts, sentence_id)');
     const insights = s.find((x) => x.includes('"idx_x"."_insights" ('))!;
     expect(insights).toContain('PRIMARY KEY (block_number, log_index)');
-    expect(insights).toContain('facts text[] NOT NULL');
-    expect(insights).toContain('sentence_id integer NOT NULL');
+    expect(insights).toContain('label_id integer NOT NULL');
     expect(insights).toMatch(/PARTITION BY RANGE \(block_number\)$/);
-    expect(insights).not.toContain('tx_hash');
-    expect(insights).not.toContain('table_name');
+    for (const gone of ['lane_p', 'ruled', 'protocol', 'facts', 'sentence_id', 'classified_at', 'tx_hash', 'table_name']) {
+      expect(insights).not.toContain(gone);
+    }
   });
   it('indexes lanes for "latest of a lane" and offers a joined view', () => {
     expect(s).toContain('CREATE INDEX IF NOT EXISTS "_insights_lane_idx" ON "idx_x"."_insights" (lane, block_number)');
-    expect(s.some((x) => x.startsWith('CREATE OR REPLACE VIEW "idx_x"."_insights_full"'))).toBe(true);
+    const view = s.find((x) => x.startsWith('CREATE OR REPLACE VIEW "idx_x"."_insights_full"'))!;
+    expect(view).toContain('_labels');
+    expect(view).not.toContain('classified_at');
   });
 });

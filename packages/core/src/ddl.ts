@@ -206,8 +206,14 @@ export function buildControlTables(schema: string): string[] {
 // their hot-path shape, and "not classified yet" is simply "no row". Keyed
 // like the event rows, so any event table joins on (block_number, log_index).
 // The model's answer is a function of the sentence and the model, so it is
-// stored once per (sentence, model) — model '' for ruled rows — and every row
-// points at it.
+// stored once per (sentence, model) — model '' for ruled rows — and every
+// label points at it.
+// The rest of a row's answer (lane_p, ruled, protocol, facts, sentence) is
+// stored once per distinct tuple in _labels, and an _insights row keeps only
+// its key, its lane and a label id: measured on Arc mainnet, 108,981 lane rows
+// held just 517 distinct label tuples, and facts text[] alone cost 33 B/row.
+// UNIQUE NULLS NOT DISTINCT makes a NULL lane_p / protocol compare equal, so a
+// label is one row; it needs PostgreSQL 15+.
 export function buildInsightsTables(schema: string): string[] {
   const s = q(schema);
   return [
@@ -218,16 +224,21 @@ export function buildInsightsTables(schema: string): string[] {
   probabilities jsonb,
   UNIQUE (sentence, model)
 )`,
-    `CREATE TABLE IF NOT EXISTS ${s}.${q('_insights')} (
-  block_number bigint NOT NULL,
-  log_index integer NOT NULL,
+    `CREATE TABLE IF NOT EXISTS ${s}._labels (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   lane text NOT NULL,
   lane_p real,
   ruled boolean NOT NULL,
   protocol text,
   facts text[] NOT NULL,
   sentence_id integer NOT NULL,
-  classified_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE NULLS NOT DISTINCT (lane, lane_p, ruled, protocol, facts, sentence_id)
+)`,
+    `CREATE TABLE IF NOT EXISTS ${s}.${q('_insights')} (
+  block_number bigint NOT NULL,
+  log_index integer NOT NULL,
+  lane text NOT NULL,
+  label_id integer NOT NULL,
   PRIMARY KEY (block_number, log_index)
 ) PARTITION BY RANGE (block_number)`,
     // serves "the latest rows of a lane"
@@ -237,10 +248,12 @@ export function buildInsightsTables(schema: string): string[] {
   last_block bigint NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )`,
-    // for plain SQL: each row with its sentence and the answer behind its lane
+    // for plain SQL: each row with its label, sentence and the answer behind its lane
     `CREATE OR REPLACE VIEW ${s}.${q('_insights_full')} AS
-SELECT i.block_number, i.log_index, i.lane, i.lane_p, i.ruled, i.protocol, i.facts, i.sentence_id,
-       s.sentence, NULLIF(s.model, '') AS model, s.probabilities, i.classified_at
-FROM ${s}.${q('_insights')} i JOIN ${s}._sentences s ON s.id = i.sentence_id`,
+SELECT i.block_number, i.log_index, i.lane, l.lane_p, l.ruled, l.protocol, l.facts, l.sentence_id,
+       s.sentence, NULLIF(s.model, '') AS model, s.probabilities
+FROM ${s}.${q('_insights')} i
+JOIN ${s}._labels l ON l.id = i.label_id
+JOIN ${s}._sentences s ON s.id = l.sentence_id`,
   ];
 }

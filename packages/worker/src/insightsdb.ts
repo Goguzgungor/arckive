@@ -146,6 +146,63 @@ async function sentenceIds(client: pg.PoolClient, schema: string, rows: InsightR
   return new Map(r.rows.map((x) => [key(x.sentence, x.model), Number(x.id)]));
 }
 
+// Label ids for a round, like sentences: one insert of the new label tuples
+// and one select of all of them. lane_p and protocol may be NULL; the unique
+// constraint treats NULLs as equal and the select matches them with IS NOT
+// DISTINCT FROM, so a NULL-carrying label still resolves to one id. facts
+// cannot travel through unnest as an array of arrays (unnest flattens them):
+// each label's facts go as one comma-joined string, split in SQL. Fact names
+// are identifiers and never contain commas.
+async function labelIds(
+  client: pg.PoolClient, schema: string, rows: InsightRow[], sentenceIdOf: Map<string, number>,
+): Promise<Map<string, number>> {
+  // lane_p is a real column: pg prints float4 with the shortest decimal that
+  // round-trips (0.9), which parses to a different double than the float32 we
+  // sent, so keys fround both the sent value and the value read back.
+  const key = (lane: string, p: number | null, ruled: boolean, protocol: string | null, f: string, sid: number) =>
+    JSON.stringify([lane, p, ruled, protocol, f, sid]);
+  const unique = new Map<string, { lane: string; p: number | null; ruled: boolean; protocol: string | null; f: string; sid: number }>();
+  for (const r of rows) {
+    const sid = sentenceIdOf.get(`${r.model ?? ''}\u0000${r.sentence}`)!;
+    const p = r.laneP === null ? null : Math.fround(r.laneP);
+    const protocol = r.protocol || null;
+    const f = r.facts.join(',');
+    unique.set(key(r.lane, p, r.ruled, protocol, f, sid), { lane: r.lane, p, ruled: r.ruled, protocol, f, sid });
+  }
+  const all = [...unique.values()];
+  const args = [
+    all.map((x) => x.lane), all.map((x) => x.p), all.map((x) => x.ruled),
+    all.map((x) => x.protocol), all.map((x) => x.f), all.map((x) => x.sid),
+  ];
+  const input = 'unnest($1::text[], $2::real[], $3::boolean[], $4::text[], $5::text[], $6::integer[]) AS u(lane, p, ruled, protocol, f, sid)';
+  const facts = (f: string) => `(CASE WHEN ${f} = '' THEN '{}'::text[] ELSE string_to_array(${f}, ',') END)`;
+  const l = `${q(schema)}._labels`;
+  // Only tuples that do not exist yet: an identity value is consumed before
+  // ON CONFLICT is checked, so re-inserting known labels would burn ids.
+  await client.query(
+    `INSERT INTO ${l} (lane, lane_p, ruled, protocol, facts, sentence_id)
+     SELECT u.lane, u.p, u.ruled, u.protocol, ${facts('u.f')}, u.sid FROM ${input}
+     WHERE NOT EXISTS (SELECT 1 FROM ${l} x WHERE x.lane = u.lane AND x.lane_p IS NOT DISTINCT FROM u.p
+       AND x.ruled = u.ruled AND x.protocol IS NOT DISTINCT FROM u.protocol
+       AND x.facts = ${facts('u.f')} AND x.sentence_id = u.sid)
+     ON CONFLICT (lane, lane_p, ruled, protocol, facts, sentence_id) DO NOTHING`,
+    args,
+  );
+  const r = await client.query(
+    `SELECT l.id, l.lane, l.lane_p, l.ruled, l.protocol, array_to_string(l.facts, ',') AS f, l.sentence_id
+     FROM ${l} l JOIN ${input}
+       ON l.lane = u.lane AND l.lane_p IS NOT DISTINCT FROM u.p AND l.ruled = u.ruled
+      AND l.protocol IS NOT DISTINCT FROM u.protocol AND l.facts = ${facts('u.f')} AND l.sentence_id = u.sid`,
+    args,
+  );
+  const ids = new Map(r.rows.map((x) => [key(x.lane, x.lane_p === null ? null : Math.fround(x.lane_p), x.ruled, x.protocol, x.f, x.sentence_id), Number(x.id)]));
+  return new Map(rows.map((row) => {
+    const sid = sentenceIdOf.get(`${row.model ?? ''}\u0000${row.sentence}`)!;
+    const k = key(row.lane, row.laneP === null ? null : Math.fround(row.laneP), row.ruled, row.protocol || null, row.facts.join(','), sid);
+    return [`${row.blockNumber}:${row.logIndex}`, ids.get(k)!] as const;
+  }));
+}
+
 // Rows and cursor in one transaction, like commitBatch: a round is either all
 // written or not at all. Returns the lanes of the rows actually inserted.
 export async function commitInsights(
@@ -158,28 +215,18 @@ export async function commitInsights(
     for (const p of planned) await client.query(p.sql);
     let inserted: string[] = [];
     if (rows.length) {
-      const ids = await sentenceIds(client, schema, rows);
-      // facts cannot travel through unnest as an array of arrays (unnest
-      // flattens them): each row's facts go as one comma-joined string, split
-      // here. Fact names are identifiers and never contain commas.
+      const sids = await sentenceIds(client, schema, rows);
+      const labels = await labelIds(client, schema, rows, sids);
       const res = await client.query(
-        `INSERT INTO ${q(schema)}._insights
-           (block_number, log_index, lane, lane_p, ruled, protocol, facts, sentence_id)
-         SELECT b, l, lane, p, ruled, protocol,
-                CASE WHEN f = '' THEN '{}'::text[] ELSE string_to_array(f, ',') END, sid
-         FROM unnest($1::bigint[], $2::integer[], $3::text[], $4::real[], $5::boolean[], $6::text[], $7::text[], $8::integer[])
-              AS u(b, l, lane, p, ruled, protocol, f, sid)
+        `INSERT INTO ${q(schema)}._insights (block_number, log_index, lane, label_id)
+         SELECT * FROM unnest($1::bigint[], $2::integer[], $3::text[], $4::integer[])
          ON CONFLICT (block_number, log_index) DO NOTHING
          RETURNING lane`,
         [
           rows.map((r) => r.blockNumber.toString()),
           rows.map((r) => r.logIndex),
           rows.map((r) => r.lane),
-          rows.map((r) => r.laneP),
-          rows.map((r) => r.ruled),
-          rows.map((r) => r.protocol || null),
-          rows.map((r) => r.facts.join(',')),
-          rows.map((r) => ids.get(`${r.model ?? ''}\u0000${r.sentence}`)!),
+          rows.map((r) => labels.get(`${r.blockNumber}:${r.logIndex}`)!),
         ],
       );
       inserted = res.rows.map((x) => x.lane as string);

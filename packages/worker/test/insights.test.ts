@@ -173,8 +173,36 @@ describe('insights', () => {
     expect(ruled).toHaveLength(2);
     expect(ruled[0].sentence_id).toBe(ruled[1].sentence_id);
     for (const r of ruled) expect(r).toMatchObject({ model: null, probabilities: null });
-    const raw = await pool.query(`SELECT protocol FROM ${SCHEMA}._insights WHERE ruled`);
+    const raw = await pool.query(`SELECT protocol FROM ${SCHEMA}._labels WHERE ruled`);
     expect(raw.rows.some((r) => r.protocol === '')).toBe(false);
+  });
+
+  it('stores each label once, NULL protocol and lane_p included', async () => {
+    // tx(2) and tx(4) share the same plain context: same ruled label
+    await commitBatch(pool, store, [transferRow(100, 1, 5_000_000n), transferRow(101, 2, 0n), transferRow(103, 4, 0n)], [], 103n);
+    await runInsightsOnce(deps, 'laya-test');
+    const rows = await insights();
+    const ruled = rows.filter((r) => r.ruled);
+    expect(ruled).toHaveLength(2);
+    const labels = await pool.query(`SELECT count(*)::int AS n FROM ${SCHEMA}._labels`);
+    expect(labels.rows[0].n).toBe(2); // one answered label, one ruled label shared by two rows
+    const raw = await pool.query(`SELECT label_id FROM ${SCHEMA}._insights ORDER BY block_number`);
+    expect(raw.rows[1].label_id).toBe(raw.rows[2].label_id);
+  });
+
+  it('seeing the same labels again burns no label ids', async () => {
+    const row = (logIndex: number, over: Partial<InsightRow> = {}): InsightRow => ({
+      blockNumber: 100n, logIndex, lane: 'swap', laneP: 0.9, ruled: false,
+      protocol: 'Uniswap', facts: ['swap', 'bridge'], probabilities: { swap: 0.9 }, sentence: 'same sentence', model: 'm', ...over,
+    });
+    const ruled = (logIndex: number) => row(logIndex, { lane: 'spam', laneP: null, ruled: true, protocol: '', facts: [], probabilities: null, model: '' });
+    for (let i = 1; i <= 3; i++) await commitInsights(pool, SCHEMA, deps.partitions, [row(i), ruled(i + 10)], 100n);
+    // a burned value shows only in the next id actually handed out
+    await commitInsights(pool, SCHEMA, deps.partitions, [row(4, { lane: 'bridge' })], 100n);
+    const r = await pool.query(`SELECT max(id)::int AS m, count(*)::int AS n FROM ${SCHEMA}._labels`);
+    expect(r.rows[0]).toEqual({ m: 3, n: 3 });
+    const full = await pool.query(`SELECT lane_p, protocol, facts FROM ${SCHEMA}._insights_full WHERE log_index = 1`);
+    expect(full.rows[0]).toMatchObject({ protocol: 'Uniswap', facts: ['swap', 'bridge'] });
   });
 
   it('an answered sentence keeps its probabilities behind a ruled row with the same sentence', async () => {

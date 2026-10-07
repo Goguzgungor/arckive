@@ -47,6 +47,7 @@ describe('buildInsightsTables', () => {
     const sql = buildInsightsTables('idx_demo').join('\n');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"."_insights"');
     expect(sql).toContain('PRIMARY KEY (block_number, log_index)');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"._labels');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS "idx_demo"."_insights_cursor"');
     expect(sql).toContain('CHECK (id = 1)');
   });
