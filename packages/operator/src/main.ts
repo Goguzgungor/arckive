@@ -3,6 +3,7 @@ import { pino } from 'pino';
 import { K8s } from 'kubernetes-fluent-client';
 import { Indexer } from './kinds.js';
 import { createKubeApi } from './kube.js';
+import { connectionFromKubeConfig, createKubeHttp } from './kubehttp.js';
 import { reconcile, type ReconcileDeps } from './reconcile.js';
 import { ReconcileGate } from './gate.js';
 
@@ -14,7 +15,10 @@ async function main(): Promise<void> {
   const resyncMs = Number(process.env['RESYNC_INTERVAL_MS'] ?? 300_000);
   const healthPort = Number(process.env['HEALTH_PORT'] ?? 8080);
 
-  const deps: ReconcileDeps = { kube: createKubeApi(), workerImage, log };
+  // one keep-alive client for every get/apply/patch (kubehttp.ts); the
+  // fluent client below is used only for the watch
+  const kubeHttp = createKubeHttp(await connectionFromKubeConfig());
+  const deps: ReconcileDeps = { kube: createKubeApi(kubeHttp), workerImage, log };
 
   const safeReconcile = async (cr: Indexer): Promise<boolean> => {
     try {
@@ -57,6 +61,7 @@ async function main(): Promise<void> {
     log.info('shutdown signal received');
     clearInterval(resync);
     watcher.close();
+    kubeHttp.close();
     health.close();
   };
   process.on('SIGTERM', shutdown);
