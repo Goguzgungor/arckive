@@ -34,7 +34,8 @@ read from the code:
   changes `currentBlock`/`headBlock`, every patch is a watch event, and the
   operator runs a full reconcile (2–3 GETs + 5 server-side applies) for every
   watch event that is not a delete. Three Indexers → one reconcile per 3.3 s.
-  Why memory grows by roughly 0.5 MB per reconcile is not known yet.
+  Memory grows because the Kubernetes client library opens a new
+  connection for every request and keeps it for ten minutes (§6).
 - **Lanes would start at block 0.** The insights cursor is bootstrapped at
   the indexer's own start (`initialCursor`). The explorer's Indexer reads the
   whole mainnet history (~25M blocks since 2026-05-15); its insight loop would
@@ -232,16 +233,31 @@ cost a reconcile at all:
   whose reconcile is still running is kept as the one pending rerun (the
   latest object wins) instead of starting a second reconcile beside it.
 
-**The leak itself** is root-caused before it is fixed
-(superpowers:systematic-debugging): run the operator with
-`--heapsnapshot-signal`, take heap snapshots after warm-up and after a few
-hundred reconciles against a real API server, and find what retains memory
-per reconcile. Candidates to check first: per-request HTTP agents or
-dispatchers in kubernetes-fluent-client's `Apply`/`Get`, and the watch's
-internal state. The fix follows the evidence; if the leak is in the
-library, the fix is a version change or reusing one client, not a
-workaround in our code. This needs a cluster: the k3d `arckive` cluster is
-stopped and is restarted only with the user's go-ahead.
+**The leak.** Read in kubernetes-fluent-client 3.11.7 (ours) and 3.12.4
+(latest): every `Get`, `Apply` and `PatchStatus` goes through `k8sCfg`, which
+loads the kubeconfig afresh and builds a **new undici `Agent` with
+`keepAliveTimeout: 600000`** for that one request, never closed. Each
+request therefore leaves a TLS connection open for up to ten minutes. A
+reconcile is ~8 requests; at one reconcile per 3.3 s that is ~145 requests a
+minute and ~1,450 connections alive at once, each with its socket and TLS
+buffers — enough to fill 256 Mi in the ~15 min between the observed
+OOMKills. The generation filter alone would cut this ~50×, but connections
+would still grow with the number of Indexers and with every resync.
+
+Before the fix, the hypothesis is confirmed without a cluster: a local
+HTTPS server and a temporary kubeconfig, N `K8s(kind.ConfigMap).Get()`
+calls, N server-side connections. Then the operator gets its own small
+Kubernetes client (`operator/src/kubehttp.ts`) for `Get`, server-side
+apply, status patch and list: one keep-alive `https.Agent` for the
+process, TLS and the server from `@kubernetes/client-node`'s `KubeConfig`
+(already in the tree through fluent-client; loaded once, in-cluster or from
+a kubeconfig), the auth header fetched per request so a rotated
+service-account token is picked up. kubernetes-fluent-client stays for the
+watch only — one long-lived connection. Server-side apply keeps
+`force=true` and its field manager becomes `arckive-operator`
+(fluent-client used `pepr`); the first apply after the upgrade moves field
+ownership over, and since the operator applies the same objects no field is
+dropped. Goal 5 in the real test is the proof.
 
 ### 7. `storage.addressIndexes`
 
@@ -296,6 +312,9 @@ Unit (vitest, no network):
 - Operator: `MODIFIED` with an unchanged generation does not reconcile; a new
   generation does; resync always does; overlapping events for one Indexer run
   one reconcile and one rerun with the latest object.
+- Operator `kubehttp`, against a local HTTP server: each `KubeApi` method
+  sends the right method, path, query and content type; 404 on a get is
+  `null`, other errors throw with the status; 50 calls use one connection.
 - Core: CRD↔zod parity for both new fields; `renderWorkerConfig` carries
   them; `insights.rpc` refuses ws and more than 8 entries.
 
