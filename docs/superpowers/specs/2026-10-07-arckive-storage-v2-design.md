@@ -52,8 +52,8 @@ Arc node, and migrating existing v1 schemas in place.
 `_meta` gains the row `layout = '2'`, written at bootstrap. A schema that
 already has a `_cursor` but no `layout = '2'` row is a v1 schema: bootstrap
 raises `LayoutError` ("schema idx_x uses storage layout 1; drop the schema or
-rename the Indexer to re-index") and the worker reports it as `Degraded`
-like any other bootstrap failure. There is no in-place migration: the data is
+rename the Indexer to re-index") and the worker exits with it, like any
+other bootstrap failure (the pod's log and CrashLoopBackOff show it). There is no in-place migration: the data is
 derived from the chain, rewriting text to bytea on a large table is slower
 than re-indexing it, and the API is still `v1alpha1`.
 
@@ -168,7 +168,12 @@ _insights  (block_number bigint, log_index integer, lane text NOT NULL,
   any event table. `protocol` is `NULL` instead of `''`.
 - The lane index becomes `(lane, block_number)`, which serves "latest swaps".
 - Sentence ids are resolved per round with one `INSERT … ON CONFLICT DO
-  NOTHING` plus one `SELECT`, behind a bounded in-process cache.
+  NOTHING` plus one `SELECT`.
+- A view `_insights_full` joins each row with its sentence, model (`NULL`
+  for `''`) and probabilities, for plain SQL.
+- `facts` cannot travel through `unnest` as an array of arrays (unnest
+  flattens them), so each row's facts are sent as one comma-joined string
+  and split in SQL; fact names never contain commas.
 
 ### 9. Native USDC
 
