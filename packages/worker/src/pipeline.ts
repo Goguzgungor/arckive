@@ -8,7 +8,8 @@ import {
 import {
   bootstrap, commitBatch, contractMeta, getCursor, initCursor, type DeadLetterEntry, type Store,
 } from './db.js';
-import { fetchLogs, getBlockTimes, getFinalizedBlockNumber } from './rpc.js';
+import { blockTimesFromLogs, fetchLogs, getBlockTimes, getFinalizedBlockNumber, isRangeCapError } from './rpc.js';
+import type { RangeSizer } from './rangesizer.js';
 import type { Metrics } from './metrics.js';
 import type { HeadSignal } from './signal.js';
 import type { PhaseTracker } from './status.js';
@@ -27,6 +28,8 @@ export interface PipelineDeps {
   // Called after every committed range; the insight loop waits on it so it
   // follows ingest without polling. The only thing ingest knows about insights.
   onCommitted?: () => void;
+  // the working getLogs span; absent = always cfg.polling.batchBlocks
+  sizer?: RangeSizer;
 }
 
 // startBlock is resolved to a concrete number in main.ts (undefined -> head),
@@ -65,7 +68,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   metrics.blocksBehind.set(Number(finalized - cursor));
   phase.setBlocks(cursor, finalized);
 
-  const range = planRange(cursor, finalized, cfg.polling.batchBlocks);
+  const range = planRange(cursor, finalized, deps.sizer?.size ?? cfg.polling.batchBlocks);
   if (!range) {
     phase.set('Live');
     return false;
@@ -83,23 +86,32 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   // seen is committed and the rest goes to the next round.
   let logs;
   let safeTo = range.toBlock;
-  if (signalHead && finalized === signalHead.number) {
-    const [fetched, queryHead] = await Promise.all([
-      fetchLogs(client, addresses, range.fromBlock, range.toBlock),
-      getFinalizedBlockNumber(client, cfg.network.finalityTag),
-    ]);
-    if (queryHead < range.fromBlock) return false; // node too far behind — skip this round
-    safeTo = queryHead < range.toBlock ? queryHead : range.toBlock;
-    logs = fetched.filter((l) => l.blockNumber! <= safeTo);
-  } else {
-    logs = await fetchLogs(client, addresses, range.fromBlock, range.toBlock);
+  try {
+    if (signalHead && finalized === signalHead.number) {
+      const [fetched, queryHead] = await Promise.all([
+        fetchLogs(client, addresses, range.fromBlock, range.toBlock),
+        getFinalizedBlockNumber(client, cfg.network.finalityTag),
+      ]);
+      if (queryHead < range.fromBlock) return false; // node too far behind — skip this round
+      safeTo = queryHead < range.toBlock ? queryHead : range.toBlock;
+      logs = fetched.filter((l) => l.blockNumber! <= safeTo);
+    } else {
+      logs = await fetchLogs(client, addresses, range.fromBlock, range.toBlock);
+    }
+  } catch (err) {
+    // A provider cap is not an outage: retry at once with half the span
+    // instead of going Degraded and backing off for 30 s.
+    const before = deps.sizer?.size;
+    if (deps.sizer && isRangeCapError(err) && deps.sizer.shrink()) {
+      deps.log.warn({ from: before, to: deps.sizer.size }, 'getLogs range capped by the provider — shrinking the span');
+      return true;
+    }
+    throw err;
   }
   // the cache fed from the newHeads payload answers with zero RTT in tail mode
-  const times = await getBlockTimes(
-    client,
-    logs.map((l) => l.blockNumber!),
-    deps.headSignal.blockTimes(),
-  );
+  const times =
+    blockTimesFromLogs(logs) ??
+    (await getBlockTimes(client, logs.map((l) => l.blockNumber!), deps.headSignal.blockTimes()));
 
   const rows: DecodedRow[] = [];
   const dead: DeadLetterEntry[] = [];
@@ -124,6 +136,7 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   const inserted = await commitBatch(pool, deps.store, rows, dead, safeTo);
   end();
   deps.onCommitted?.();
+  if (deps.sizer?.succeeded()) deps.log.info({ size: deps.sizer.size }, 'getLogs span grown');
 
   metrics.eventsIngested.inc(inserted);
   metrics.deadLetters.inc(dead.length);

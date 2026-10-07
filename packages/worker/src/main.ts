@@ -7,6 +7,7 @@ import {
 import { createStore } from './db.js';
 import { createMetrics } from './metrics.js';
 import { bootstrapIndexer, runLoop, type PipelineDeps } from './pipeline.js';
+import { RangeSizer } from './rangesizer.js';
 import { createRpc, filterHealthyRpcs, getFinalizedBlockNumber, splitRpcUrls } from './rpc.js';
 import { resolveContractAbi } from './abi.js';
 import { resolveStartBlock } from './blocks.js';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
     phase,
     headSignal,
     log,
+    sizer: new RangeSizer(cfg.polling.batchBlocks),
   };
   await bootstrapIndexer(deps);
 

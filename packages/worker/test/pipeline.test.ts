@@ -11,6 +11,7 @@ import { extractEventDefs, parseWorkerConfig, type WorkerConfig } from '@arckive
 import { createStore, getCursor } from '../src/db.js';
 import { createMetrics } from '../src/metrics.js';
 import { bootstrapIndexer, runLoop, runOnce, type PipelineDeps } from '../src/pipeline.js';
+import { RangeSizer } from '../src/rangesizer.js';
 import { createRpc, getBlockTimes } from '../src/rpc.js';
 import { HeadSignal } from '../src/signal.js';
 import { PhaseTracker } from '../src/status.js';
@@ -238,5 +239,35 @@ describe('pipeline', () => {
     await wallet.waitForTransactionReceipt({ hash: txHash });
     while (await runOnce(withHook)) { /* catch up */ }
     expect(calls).toBeGreaterThan(before);
+  });
+
+  it('a provider range cap shrinks the span without going Degraded, and every event still lands', async () => {
+    const real = deps.client;
+    const capped = {
+      ...real,
+      getLogs: (args: { fromBlock: bigint; toBlock: bigint }) =>
+        args.toBlock - args.fromBlock + 1n > 2n
+          ? Promise.reject(new Error('ranges over 10000 blocks are not supported on free plan'))
+          : real.getLogs(args as never),
+    } as unknown as PipelineDeps['client'];
+    const schema = 'idx_capped';
+    const sizer = new RangeSizer(1000);
+    const d: PipelineDeps = {
+      ...deps,
+      client: capped,
+      schema,
+      store: createStore(schema, deps.defs, 1_000_000),
+      cfg: { ...deps.cfg, polling: { ...deps.cfg.polling, batchBlocks: 1000 } },
+      phase: new PhaseTracker(),
+      sizer,
+    };
+    await bootstrapIndexer(d);
+    let rounds = 0;
+    while ((await runOnce(d)) && rounds++ < 200) {
+      expect(d.phase.phase).not.toBe('Degraded');
+    }
+    const r = await pool.query(`SELECT count(*)::int AS c FROM ${schema}.emitter_ping`);
+    expect(r.rows[0].c).toBeGreaterThanOrEqual(5);
+    expect(sizer.size).toBeLessThanOrEqual(2);
   });
 });

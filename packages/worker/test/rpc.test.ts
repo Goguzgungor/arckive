@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  createRpc, fetchLogs, filterHealthyRpcs, getBlockTimes, getFinalizedBlockNumber, splitRpcUrls,
+  blockTimesFromLogs, createRpc, fetchLogs, filterHealthyRpcs, getBlockTimes, getFinalizedBlockNumber, isRangeCapError, splitRpcUrls,
 } from '../src/rpc.js';
 import { startAnvil, type AnvilHandle } from './helpers/anvil.js';
 
@@ -60,5 +60,44 @@ describe('rpc', () => {
       client, ['0x0000000000000000000000000000000000000001'], 0n, 0n,
     );
     expect(logs).toEqual([]);
+  });
+});
+
+describe('blockTimesFromLogs', () => {
+  it('reads every block time from the logs when all carry blockTimestamp', () => {
+    const times = blockTimesFromLogs([
+      { blockNumber: 5n, blockTimestamp: 1_700_000_000n },
+      { blockNumber: 6n, blockTimestamp: 1_700_000_001n },
+    ]);
+    expect(times?.get(5n)?.toISOString()).toBe('2023-11-14T22:13:20.000Z');
+    expect(times?.size).toBe(2);
+  });
+
+  it('gives up for the whole batch if any log lacks it', () => {
+    expect(blockTimesFromLogs([{ blockNumber: 5n, blockTimestamp: 1n }, { blockNumber: 6n }])).toBeNull();
+    expect(blockTimesFromLogs([{ blockNumber: 5n, blockTimestamp: null }])).toBeNull();
+  });
+
+  it('an empty batch needs no times', () => {
+    expect(blockTimesFromLogs([])?.size).toBe(0);
+  });
+});
+
+describe('isRangeCapError', () => {
+  it('recognises provider range and result caps', () => {
+    expect(isRangeCapError(new Error('ranges over 10000 blocks are not supported on free plan'))).toBe(true);
+    expect(isRangeCapError(new Error('query returned more than 10000 results'))).toBe(true);
+    expect(isRangeCapError(new Error('block range is too large'))).toBe(true);
+    expect(isRangeCapError(new Error('Log response size exceeded.'))).toBe(true);
+    expect(isRangeCapError(Object.assign(new Error('RPC Request failed.'), { details: 'exceed maximum block range: 2000' }))).toBe(true);
+    expect(isRangeCapError(Object.assign(new Error('Invalid parameters were provided to the RPC method.'), { details: 'invalid params: block range too large (max 1000 blocks per eth_getLogs)' }))).toBe(true);
+    expect(isRangeCapError(new Error('outer', { cause: new Error('ranges over 100 blocks') }))).toBe(true);
+  });
+
+  it('a rate limit is not a cap, however it is worded', () => {
+    expect(isRangeCapError(new Error('Too many requests, try again later'))).toBe(false);
+    expect(isRangeCapError(new Error('rate limit exceeded'))).toBe(false);
+    expect(isRangeCapError(new Error('HTTP request failed. Status: 429'))).toBe(false);
+    expect(isRangeCapError(new Error('fetch failed'))).toBe(false);
   });
 });
