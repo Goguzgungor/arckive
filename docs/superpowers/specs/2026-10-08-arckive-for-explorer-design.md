@@ -94,8 +94,9 @@ changes.
 ### 1. `Live` means caught up
 
 `runOnce` sets `Backfilling` only when the planned range cannot reach the
-head in one round (`range.toBlock < finalized`). A range that reaches the
-head leaves the phase as it is, and the commit that reaches the head sets
+head in one round (`range.toBlock < finalized`) or the worker is not `Live`
+yet (starting, or recovering from `Degraded`). A `Live` worker whose range
+reaches the head stays `Live`, and the commit that reaches the head sets
 `Live` as today. A live tail one block behind therefore stays `Live`; a
 worker that starts behind, or falls behind by more than one batch, reports
 `Backfilling` until it catches up. `blocks_behind`, `lag` and the status
