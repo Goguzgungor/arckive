@@ -89,6 +89,8 @@ export interface DeadLetterEntry {
 
 export interface PlannedPartition {
   key: string;
+  table: string;
+  n: bigint;
   sql: string;
 }
 
@@ -111,10 +113,12 @@ export class Partitions {
     for (const table of tables) {
       for (const n of ns) {
         const key = `${table}:${n}`;
-        if (!this.made.has(key)) out.push({ key, sql: partitionDdl(this.schema, table, n, this.size) });
+        if (!this.made.has(key)) out.push({ key, table, n, sql: partitionDdl(this.schema, table, n, this.size) });
       }
     }
-    return out;
+    // One lock order for every writer: concurrent transactions that each take
+    // parent locks for their partition DDL must not cross (deadlock).
+    return out.sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
   }
 
   remember(planned: readonly PlannedPartition[]): void {

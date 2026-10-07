@@ -136,7 +136,9 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
   const inserted = await commitBatch(pool, deps.store, rows, dead, safeTo);
   end();
   deps.onCommitted?.();
-  if (deps.sizer?.succeeded()) deps.log.info({ size: deps.sizer.size }, 'getLogs span grown');
+  // Each span change is logged once at warn with both sizes (spec §7), like the shrink.
+  const spanBefore = deps.sizer?.size;
+  if (deps.sizer?.succeeded()) deps.log.warn({ from: spanBefore, to: deps.sizer.size }, 'getLogs span grown');
 
   metrics.eventsIngested.inc(inserted);
   metrics.deadLetters.inc(dead.length);

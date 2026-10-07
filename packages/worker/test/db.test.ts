@@ -3,7 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildControlTables, extractEventDefs, type DecodedRow } from '@arckive/core';
 import {
-  LayoutError, bootstrap, commitBatch, contractMeta, createStore, getCursor, initCursor, type Store,
+  LayoutError, Partitions, bootstrap, commitBatch, contractMeta, createStore, getCursor, initCursor, type Store,
 } from '../src/db.js';
 
 const ADDR = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -126,6 +126,13 @@ describe('db (storage layout 2)', () => {
     expect(r.rows[0].from).toEqual(hex('0x' + '1'.repeat(40)));
     const blocks = await pool.query(`SELECT block_number, block_hash FROM ${SCHEMA}._blocks`);
     expect(blocks.rows).toEqual([{ block_number: '10', block_hash: hex('0x' + 'a'.repeat(64)) }]);
+  });
+
+  it('plans partitions sorted by table then partition number', () => {
+    const planned = new Partitions(SCHEMA, 10n).plan(['b_t', 'a_t'], [35n, 5n, 15n]);
+    expect(planned.map((p) => [p.table, p.n])).toEqual([
+      ['a_t', 0n], ['a_t', 1n], ['a_t', 3n], ['b_t', 0n], ['b_t', 1n], ['b_t', 3n],
+    ]);
   });
 
   it('sends the same number of statements for 2 rows and for 200', async () => {
