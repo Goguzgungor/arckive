@@ -22,7 +22,7 @@ from .signatures import (
 )
 from .types import DECIMALS, USDC, ZERO, Item, TxContext
 
-EXPLORER = "https://explorer.arc.io/tx/"
+EXPLORER = "https://explorer.arckive.org/tx/"
 _PLAIN_SELECTORS = {"0x", "0xa9059cbb", "0x23b872dd"}  # empty input, transfer, transferFrom
 
 # Facts that describe who sent a transaction or what it cost, not what it did.

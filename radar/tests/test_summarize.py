@@ -46,7 +46,7 @@ def test_okx_swap_leg():
     assert s["facts"] == ["swap", "fee"]
     assert s["amount"] == 49.88
     assert s["id"] == f"{TX}:3"
-    assert s["url"] == f"https://explorer.arc.io/tx/{TX}"
+    assert s["url"] == f"https://explorer.arckive.org/tx/{TX}"
     assert s["story"] == ("USDC moved from a wallet to a contract, amount 1 to 100 USDC (a small amount). "
                           "In the same transaction: tokens were swapped on an exchange; a fee was taken. "
                           "Protocol: OKX DEX.")
