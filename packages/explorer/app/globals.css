@@ -63,7 +63,9 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .home { grid-template-columns: 1fr 330px; gap: 40px; padding: 26px 0 40px; }
 .waiting { font: 500 11px var(--sans); letter-spacing: .08em; color: var(--sheet); background: var(--ink); padding: 2px 8px; border-radius: 10px; text-transform: none; }
 .tape { height: 640px; overflow: hidden; }
-.row { display: grid; grid-template-columns: 74px 128px 1fr minmax(132px, auto); gap: 14px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--hair); animation: enter .45s ease; }
+.row { display: grid; grid-template-columns: 74px 128px 1fr minmax(132px, auto); gap: 14px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--hair); }
+/* only rows that arrive while the page is open; the first paint is still */
+.row.fresh { animation: enter .45s ease; }
 .row:hover, .row:focus-visible { background: var(--sheet); outline: none; }
 @keyframes enter { from { opacity: 0; background: color-mix(in srgb, var(--lane) 14%, transparent); } }
 .time { font: 12px var(--mono); color: var(--faint); }

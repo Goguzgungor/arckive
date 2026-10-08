@@ -21,11 +21,12 @@ interface Row extends Move {
   key: string;
   n: number;
   t: number;
+  fresh: boolean; // arrived while the page was open: it runs the enter animation
 }
 
-const rowsOf = (b: BlockMsg): Row[] => b.moves.map((m) => ({ ...m, key: `${b.n}:${m.li}`, n: b.n, t: b.t }));
-// newest first, as the tape shows them
-const newestFirst = (blocks: BlockMsg[]): Row[] => blocks.flatMap(rowsOf).reverse().slice(0, TAPE_ROWS);
+const rowsOf = (b: BlockMsg, fresh: boolean): Row[] => b.moves.map((m) => ({ ...m, key: `${b.n}:${m.li}`, n: b.n, t: b.t, fresh }));
+// newest first, as the tape shows them; the history a page opens with does not animate
+const newestFirst = (blocks: BlockMsg[]): Row[] => blocks.flatMap((b) => rowsOf(b, false)).reverse().slice(0, TAPE_ROWS);
 
 // Rows are links already: names here are text, not nested links.
 function Who({ address, name }: { address: string; name?: string }) {
@@ -37,10 +38,14 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
   const [stats, setStats] = useState<StatsMsg | null>(initial.stats);
   const [open, setOpen] = useState(true);
   const [waiting, setWaiting] = useState(0);
-  const [now, setNow] = useState(initialNow) // the server's clock: hydration must render what the server did;
+  // the server's clock: hydration must render what the server did
+  const [now, setNow] = useState(initialNow);
   const pacer = useRef(new Pacer<Row>());
   const offset = useRef(0); // server clock − browser clock
   const newest = useRef<{ n: number; t: number } | null>(initial.blocks.at(-1) ?? null);
+  // the pointer and keyboard focus pause the tape separately: leaving with the
+  // mouse must not restart a tape a focused row still holds, nor the reverse
+  const hold = useRef({ hover: false, focus: false });
 
   useEffect(() => {
     const stop = openStream({
@@ -55,7 +60,7 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
         // a resumed stream never repeats a block, but a hello may overlap the buffer
         if (newest.current && b.n <= newest.current.n) return;
         newest.current = { n: b.n, t: b.t };
-        pacer.current.push(rowsOf(b), performance.now());
+        pacer.current.push(rowsOf(b, true), performance.now());
       },
       stats: (s) => {
         offset.current = s.now - Date.now();
@@ -65,8 +70,9 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
     });
     let raf = 0;
     const tick = (): void => {
-      const due = pacer.current.take(performance.now());
-      if (due.length) setRows((cur) => [...due.reverse(), ...cur].slice(0, TAPE_ROWS));
+      // reversed here, not in the updater: StrictMode runs updaters twice
+      const due = pacer.current.take(performance.now()).reverse();
+      if (due.length) setRows((cur) => [...due, ...cur].slice(0, TAPE_ROWS));
       setWaiting(pacer.current.isPaused ? pacer.current.waiting : 0);
       raf = requestAnimationFrame(tick);
     };
@@ -82,8 +88,11 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
   // The newest block received, not the newest shown: a viewer hovering the
   // tape has paused it, the network has not fallen behind.
   const state = liveState(newest.current?.t ?? null, now + offset.current, open);
-  const pause = (): void => pacer.current.pause();
-  const resume = (): void => pacer.current.resume(performance.now());
+  const holdTape = (why: 'hover' | 'focus', on: boolean): void => {
+    hold.current[why] = on;
+    if (hold.current.hover || hold.current.focus) pacer.current.pause();
+    else pacer.current.resume(performance.now());
+  };
   const paused = lanesPaused(stats);
 
   return (
@@ -106,15 +115,21 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
           </h2>
           <div
             className="tape"
-            onMouseEnter={pause}
-            onMouseLeave={resume}
-            onFocus={pause}
+            onMouseEnter={() => holdTape('hover', true)}
+            onMouseLeave={() => holdTape('hover', false)}
+            onFocus={() => holdTape('focus', true)}
             onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) resume();
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) holdTape('focus', false);
             }}
           >
             {rows.map((r) => (
-              <Link key={r.key} href={`/tx/${r.tx}`} prefetch={false} className="row" style={{ '--lane': laneMeta(r.lane).ink } as CSSProperties}>
+              <Link
+                key={r.key}
+                href={`/tx/${r.tx}`}
+                prefetch={false}
+                className={r.fresh ? 'row fresh' : 'row'}
+                style={{ '--lane': laneMeta(r.lane).ink } as CSSProperties}
+              >
                 <span className="time">{fmtTime(r.t)}</span>
                 <LaneTag lane={r.lane} />
                 <span className="who">
