@@ -74,9 +74,9 @@ function makeFake(
 }
 
 describe('reconcile', () => {
-  it('happy path: applies 5 resources + Provisioned=True', async () => {
+  it('happy path: applies 5 resources + Provisioned=True, and is ok', async () => {
     const kube = makeFake();
-    await reconcile({ kube, workerImage: 'w:test', log }, makeCr());
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, makeCr())).toBe('ok');
     expect(kube.applied).toEqual([
       'ServiceAccount/arckive-demo',
       'Role/arckive-demo-status',
@@ -93,9 +93,9 @@ describe('reconcile', () => {
     });
   });
 
-  it('missing ABI ConfigMap: no apply, Provisioned=False/MissingAbiConfigMap', async () => {
+  it('missing ABI ConfigMap: no apply, Provisioned=False/MissingAbiConfigMap, waiting', async () => {
     const kube = makeFake({ cms: {} });
-    await reconcile({ kube, workerImage: 'w:test', log }, makeCr());
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, makeCr())).toBe('waiting');
     expect(kube.applied).toEqual([]);
     expect(kube.statusPatches[0]!.conditions?.[0]).toMatchObject({
       status: 'False',
@@ -105,23 +105,23 @@ describe('reconcile', () => {
 
   it('ABI ConfigMap exists but the key is missing: Provisioned=False', async () => {
     const kube = makeFake({ cms: { 'emitter-abi': { 'other.json': '[]' } } });
-    await reconcile({ kube, workerImage: 'w:test', log }, makeCr());
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, makeCr())).toBe('waiting');
     expect(kube.applied).toEqual([]);
     expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('MissingAbiConfigMap');
   });
 
-  it('missing DSN Secret: Provisioned=False/MissingDsnSecret', async () => {
+  it('missing DSN Secret: Provisioned=False/MissingDsnSecret, waiting', async () => {
     const kube = makeFake({ secrets: {} });
-    await reconcile({ kube, workerImage: 'w:test', log }, makeCr());
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, makeCr())).toBe('waiting');
     expect(kube.applied).toEqual([]);
     expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('MissingDsnSecret');
   });
 
-  it('missing insights header Secret: Provisioned=False/MissingInsightsSecret', async () => {
+  it('missing insights header Secret: Provisioned=False/MissingInsightsSecret, waiting', async () => {
     const kube = makeFake();
     const cr = makeCr();
     cr.spec!.insights = { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate', key: 'header' } } };
-    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, cr)).toBe('waiting');
     expect(kube.applied).toEqual([]);
     expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('MissingInsightsSecret');
   });
@@ -130,15 +130,15 @@ describe('reconcile', () => {
     const kube = makeFake({ secrets: { 'pg-dsn': { url: 'ZHNu' }, 'laya-gate': { header: 'eA==' } } });
     const cr = makeCr();
     cr.spec!.insights = { laya: { url: 'https://laya-gate.example', headerSecretRef: { name: 'laya-gate', key: 'header' } } };
-    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, cr)).toBe('ok');
     expect(kube.applied).toHaveLength(5);
   });
 
-  it('invalid spec: Provisioned=False/InvalidSpec', async () => {
+  it('invalid spec: Provisioned=False/InvalidSpec, ok (only a spec change, a new generation, fixes it)', async () => {
     const kube = makeFake();
     const cr = makeCr();
     (cr.spec as { contracts: unknown }).contracts = [];
-    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, cr)).toBe('ok');
     expect(kube.applied).toEqual([]);
     expect(kube.statusPatches[0]!.conditions?.[0]!.reason).toBe('InvalidSpec');
   });
@@ -197,7 +197,7 @@ describe('reconcile', () => {
         },
       ],
     };
-    await reconcile({ kube, workerImage: 'w:test', log }, cr);
+    expect(await reconcile({ kube, workerImage: 'w:test', log }, cr)).toBe('waiting');
     expect(kube.statusPatches).toEqual([]);
   });
 

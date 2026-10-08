@@ -5,7 +5,7 @@ import { Indexer } from './kinds.js';
 import { createKubeApi } from './kube.js';
 import { connectionFromKubeConfig, createKubeHttp } from './kubehttp.js';
 import { reconcile, type ReconcileDeps } from './reconcile.js';
-import { ReconcileGate } from './gate.js';
+import { ReconcileGate, type ReconcileResult } from './gate.js';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -20,13 +20,12 @@ async function main(): Promise<void> {
   const kubeHttp = createKubeHttp(await connectionFromKubeConfig());
   const deps: ReconcileDeps = { kube: createKubeApi(kubeHttp), workerImage, log };
 
-  const safeReconcile = async (cr: Indexer): Promise<boolean> => {
+  const safeReconcile = async (cr: Indexer): Promise<ReconcileResult> => {
     try {
-      await reconcile(deps, cr);
-      return true;
+      return await reconcile(deps, cr);
     } catch (err) {
       log.error({ err, indexer: cr.metadata?.name }, 'reconcile error');
-      return false;
+      return 'failed';
     }
   };
   const gate = new ReconcileGate(safeReconcile);
@@ -60,6 +59,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     log.info('shutdown signal received');
     clearInterval(resync);
+    gate.close(); // pending waiting-retries (gate.ts)
     watcher.close();
     kubeHttp.close();
     health.close();

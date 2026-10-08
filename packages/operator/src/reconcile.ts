@@ -24,11 +24,19 @@ function condition(
   };
 }
 
-export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void> {
+// 'waiting': a Secret or ConfigMap the Indexer names does not exist (yet).
+// Creating it is no event on the Indexer, and the manifests are often applied
+// Indexer first, so the gate (gate.ts) asks again soon rather than at the
+// next resync. Everything else is 'ok' — an invalid spec included: only a
+// spec change fixes that, and a spec change is a new generation, an event of
+// its own.
+export type ReconcileOutcome = 'ok' | 'waiting';
+
+export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<ReconcileOutcome> {
   const name = cr.metadata?.name;
   const namespace = cr.metadata?.namespace;
   const uid = cr.metadata?.uid;
-  if (!name || !namespace || !uid) return;
+  if (!name || !namespace || !uid) return 'ok';
 
   // Do not re-patch an unchanged status: every patch produces a new watch
   // event and leads to a reconcile storm (self-feeding loop → OOM).
@@ -52,7 +60,7 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join('; ');
     await setCondition(condition('False', 'InvalidSpec', detail));
-    return;
+    return 'ok';
   }
   const spec = parsed.data;
 
@@ -64,7 +72,7 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
       await setCondition(
         condition('False', 'MissingAbiConfigMap', `ConfigMap ${ref.name}/${ref.key} not found`),
       );
-      return;
+      return 'waiting';
     }
   }
 
@@ -74,7 +82,7 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
     await setCondition(
       condition('False', 'MissingDsnSecret', `Secret ${dsnRef.name}/${dsnRef.key} not found`),
     );
-    return;
+    return 'waiting';
   }
 
   const headerRef = spec.insights?.laya.headerSecretRef;
@@ -84,7 +92,7 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
       await setCondition(
         condition('False', 'MissingInsightsSecret', `Secret ${headerRef.name}/${headerRef.key} not found`),
       );
-      return;
+      return 'waiting';
     }
   }
 
@@ -101,4 +109,5 @@ export async function reconcile(deps: ReconcileDeps, cr: Indexer): Promise<void>
   await deps.kube.applyDeployment(desired.deployment);
   await setCondition(condition('True', 'Reconciled'));
   deps.log.info({ indexer: name, namespace, hash: desired.hash }, 'reconcile done');
+  return 'ok';
 }

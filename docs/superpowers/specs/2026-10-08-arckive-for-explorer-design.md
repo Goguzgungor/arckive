@@ -228,8 +228,19 @@ cost a reconcile at all:
   generation the operator reconciled for that uid (status writes do not bump
   `generation` on a CRD with the status subresource). A `DELETED` event
   drops the uid from the map. The periodic resync reconciles every Indexer
-  regardless, so Secrets and ConfigMaps created after their Indexer are
-  still picked up within `RESYNC_INTERVAL_MS`, as today.
+  regardless.
+- **Waiting on a Secret or ConfigMap.** A reconcile that finds the DSN
+  Secret, an ABI ConfigMap or the insights header Secret missing returns
+  `waiting` (an invalid spec does not: only a spec change, a new
+  generation, fixes it). The generation is kept, so status events still cost
+  nothing, and the gate reruns the latest object it has seen for that
+  Indexer after 5 s, doubling per consecutive wait up to 60 s. A successful
+  reconcile, a `DELETED` event, or a newer event that reconciles anyway (its
+  own wait starts the backoff over) ends it. Creating the missing object is
+  no event on the Indexer, and manifests are often applied Indexer first —
+  the kind e2e applies its Indexer before its Secret and waits 300 s for
+  `Live`, as long as the first resync — so without the retry it would wait
+  for `RESYNC_INTERVAL_MS`; the resync still covers anything longer.
 - **One reconcile per Indexer at a time.** A watch event for an Indexer
   whose reconcile is still running is kept as the one pending rerun (the
   latest object wins) instead of starting a second reconcile beside it.
@@ -314,7 +325,9 @@ Unit (vitest, no network):
   the head sets `Backfilling`.
 - Operator: `MODIFIED` with an unchanged generation does not reconcile; a new
   generation does; resync always does; overlapping events for one Indexer run
-  one reconcile and one rerun with the latest object.
+  one reconcile and one rerun with the latest object; a `waiting` reconcile
+  reruns after 5 s, doubling to 60 s, and stops on success, `DELETED` or a
+  newer event.
 - Operator `kubehttp`, against a local HTTP server: each `KubeApi` method
   sends the right method, path, query and content type; 404 on a get is
   `null`, other errors throw with the status; 50 calls use one connection.
