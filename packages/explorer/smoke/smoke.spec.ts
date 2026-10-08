@@ -79,10 +79,11 @@ for (const [w, h] of [[1440, 1000], [390, 844]] as const) {
 // columns used to overflow
 test('pages fit at 600 px without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 900 });
-  for (const path of ['/', `/tx/${SWAP_TX}`, `/address/${BUSY}`]) {
+  for (const [name, path] of [['home', '/'], ['tx', `/tx/${SWAP_TX}`], ['address', `/address/${BUSY}`]] as const) {
     await page.goto(path);
     await expect(page.locator('h1')).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    expect(overflow, `${path} scrolls sideways at 600 px`).toBeLessThanOrEqual(0);
+    expect(overflow, `${name} scrolls sideways at 600 px`).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: `${SHOTS}${name}-600.png`, fullPage: true, animations: 'disabled' });
   }
 });
