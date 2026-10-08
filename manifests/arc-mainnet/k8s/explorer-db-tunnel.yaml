@@ -1,0 +1,51 @@
+# The explorer database's way out: a Cloudflare tunnel from inside the
+# cluster to pg-explorer:5432, for an explorer that runs elsewhere (Dokploy;
+# manifests/arc-mainnet/dokploy/docker-compose.yml connects through it with
+# `cloudflared access tcp`). The tunnel's hostname must sit behind a
+# Cloudflare Access application with a service-token policy: without it,
+# anyone who knows the hostname reaches the Postgres port.
+#
+# The tunnel and its DNS record are made once from a machine with
+# cloudflared's cert.pem (pass --config /dev/null so a default config.yml
+# naming another tunnel is not used):
+#   cloudflared tunnel create explorer-db
+#   cloudflared --config /dev/null tunnel route dns <tunnel-id> explorer-db.<zone>
+# and the Secret by hand, never committed:
+#   kubectl create secret generic explorer-db-tunnel \
+#     --from-file=credentials.json=$HOME/.cloudflared/<tunnel-id>.json \
+#     --from-file=config.yml=<file below>
+# with config.yml:
+#   tunnel: <tunnel-id>
+#   credentials-file: /etc/cloudflared/credentials.json
+#   no-autoupdate: true
+#   ingress:
+#     - hostname: explorer-db.<zone>
+#       service: tcp://pg-explorer:5432
+#     - service: http_status:404
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: explorer-db-tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: explorer-db-tunnel }
+  template:
+    metadata:
+      labels: { app: explorer-db-tunnel }
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.10.0
+          args: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--metrics", "0.0.0.0:2000", "run"]
+          volumeMounts: [{ name: tunnel, mountPath: /etc/cloudflared, readOnly: true }]
+          livenessProbe:
+            httpGet: { path: /ready, port: 2000 }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: tunnel
+          secret: { secretName: explorer-db-tunnel }

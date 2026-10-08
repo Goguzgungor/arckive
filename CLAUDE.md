@@ -451,7 +451,12 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   `docker build --target explorer -t arckive-explorer:dev .` and import it
   (`k3d image import arckive-explorer:dev -c arckive`) for
   `manifests/arc-mainnet/k8s/explorer-app.yaml`. CI still lints, builds and
-  tests `packages/explorer` with the rest of the workspace.
+  tests `packages/explorer` with the rest of the workspace. Dokploy can
+  instead build it from `manifests/arc-mainnet/dokploy/docker-compose.yml`
+  (explorer + a `cloudflared access tcp` client), reaching the cluster's
+  database through `manifests/arc-mainnet/k8s/explorer-db-tunnel.yaml`; the
+  tunnel's hostname must stay behind a Cloudflare Access service-token
+  policy.
 - Arc Radar: the `radar` job in `ci.yml` runs `pytest` and `docker build` in
   `radar/`; `.github/workflows/radar-deploy.yml` (push to `main` touching
   `radar/**`) triggers the Dokploy deploy through the
