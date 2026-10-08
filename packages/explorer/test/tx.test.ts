@@ -69,6 +69,8 @@ describe('transactions', () => {
 
   it('explains ruled and unsure lanes', () => {
     expect(laneWhy('issuance', true)).toMatch(/^Ruled: USDC was minted or burned/);
+    // core rules spam on a zero-value transfer with only incidental facts
+    expect(laneWhy('spam', true)).toBe('Ruled: no USDC moved and nothing else recognisable happened.');
     expect(laneWhy('uncertain', false)).toMatch(/not sure enough/);
     expect(laneWhy('payment', false)).toBe('A plain direct transfer, with nothing else happening.');
   });

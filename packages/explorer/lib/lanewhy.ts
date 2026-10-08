@@ -3,7 +3,8 @@ import { LANES, UNCERTAIN_BELOW } from '@arckive/core';
 // What a ruled lane was ruled by (core's insights rules), in the page's words.
 const RULED: Readonly<Record<string, string>> = {
   issuance: 'Ruled: USDC was minted or burned — the zero address is a party.',
-  spam: 'Ruled: less than a cent moved and nothing else happened.',
+  // core: a transfer of value 0 with only incidental facts beside it
+  spam: 'Ruled: no USDC moved and nothing else recognisable happened.',
   uncertain: 'Ruled: the transfer gave too little to read.',
   no_transfer: 'Ruled: nothing was transferred in this transaction.',
 };
