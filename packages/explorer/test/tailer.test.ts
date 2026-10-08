@@ -94,6 +94,28 @@ describe('tailer (lanes on)', () => {
     expect(tailer.window.stats(0).count).toBe(count);
   });
 
+  it('does not reload while the insights cursor lags far behind: only the worker cursor going back is a rewind', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    await db.admin.query(`UPDATE ${db.t.insightsCursor} SET last_block = 0`);
+    await db.admin.query(`UPDATE ${db.t.blocks} SET _ingested_at = now()`);
+    try {
+      const hub = new Hub(10);
+      // everything is fresh and held, and the insights cursor is 0: the release target is far below lastReleased
+      const tailer = new Tailer({ pool: db.explorer, t: db.t, hub, holdMs: 600_000, lanes: () => true, log });
+      tailer.lastReleased = R.CURSOR;
+      const viewer = collector();
+      hub.subscribe(viewer, null);
+      const hellos = hellosIn(viewer.got).length;
+      await tailer.cycle();
+      expect(hellosIn(viewer.got)).toHaveLength(hellos);
+      expect(warn).not.toHaveBeenCalled();
+      expect(tailer.lastReleased).toBe(R.CURSOR);
+    } finally {
+      warn.mockRestore();
+      await db.admin.query(`UPDATE ${db.t.insightsCursor} SET last_block = $1`, [R.INSIGHTS_CURSOR]);
+    }
+  });
+
   it('warns when a read returns as many rows as its limit (the rest of the range is not on the tape)', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {

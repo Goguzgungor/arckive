@@ -102,7 +102,7 @@ export class Tailer {
     return { msgs, win };
   }
 
-  async #target(): Promise<number | null> {
+  async #target(): Promise<{ to: number | null; cursor: number | null }> {
     const { t, pool, holdMs } = this.d;
     const lanes = this.d.lanes();
     const r = await pool.query<{ cursor: string | null; icursor: string | null; held: string | null }>(
@@ -114,7 +114,8 @@ export class Tailer {
     );
     const row = r.rows[0]!;
     const num = (v: string | null): number | null => (v === null ? null : Number(v));
-    return releaseTo({ cursor: num(row.cursor), insightsCursor: lanes ? num(row.icursor) : undefined, heldThrough: num(row.held) });
+    const cursor = num(row.cursor);
+    return { to: releaseTo({ cursor, insightsCursor: lanes ? num(row.icursor) : undefined, heldThrough: num(row.held) }), cursor };
   }
 
   // The buffer and the rolling minute from the database: the last ~minute of
@@ -122,7 +123,7 @@ export class Tailer {
   // nor under-counts the headline. Viewers who connected while the server was
   // booting got an empty hello; the reseed greets them again.
   async init(): Promise<void> {
-    const to = await this.#target();
+    const { to } = await this.#target();
     if (to === null || to < 0) return;
     await this.#reseed(to);
   }
@@ -140,13 +141,17 @@ export class Tailer {
     const started = performance.now();
     try {
       if (this.lastReleased === null) return await this.init();
-      const to = await this.#target();
+      const { to, cursor } = await this.#target();
       if (to === null) return;
-      if (to < this.lastReleased - this.maxGap) {
+      // Judged by the worker's own cursor, not the release target: with lanes
+      // on, a quiet cycle targets the insights cursor, which is legitimately
+      // far behind while the Laya gate is down. Release never passes _cursor,
+      // so only a real rewind puts it that far below what was released.
+      if (cursor !== null && cursor < this.lastReleased - this.maxGap) {
         // The worker's cursor went back: its schema was recreated and it is
         // indexing again from an earlier block. Start over as at boot, with a
         // new rolling minute; the old one counts blocks that no longer exist.
-        this.d.log.warn({ released: this.lastReleased, cursor: to }, 'the worker cursor went back; reloading the tape');
+        this.d.log.warn({ released: this.lastReleased, cursor }, 'the worker cursor went back; reloading the tape');
         this.window = new RollingWindow();
         this.lastReleased = null;
         return await this.init();
