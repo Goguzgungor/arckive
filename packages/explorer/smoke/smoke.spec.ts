@@ -20,6 +20,8 @@ test('hovering the tape pauses it and leaving drains it', async ({ page }) => {
   const tape = page.locator('.tape');
   await expect(tape.locator('.row').first()).toBeVisible();
   await tape.hover();
+  // rows wait: the pause has taken hold, so the row read next stays on top
+  await expect(page.locator('.waiting')).toBeVisible();
   const held = await tape.locator('.row').first().getAttribute('href');
   await page.waitForTimeout(3000);
   expect(await tape.locator('.row').first().getAttribute('href')).toBe(held);
@@ -62,8 +64,25 @@ for (const [w, h] of [[1440, 1000], [390, 844]] as const) {
       if (name === 'home') await expect(page.locator('.tape .row').first()).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, `${name} scrolls sideways at ${w} px`).toBeLessThanOrEqual(0);
-      if (name === 'home' && w < 520) await expect(page.locator('.tape .row .who').first()).toBeHidden();
-      await page.screenshot({ path: `${SHOTS}${name}-${w}.png`, fullPage: true });
+      // shown on desktop, so that hidden on a phone is not true of an empty tape
+      if (name === 'home') {
+        const who = page.locator('.tape .row .who').first();
+        if (w < 520) await expect(who).toBeHidden();
+        else await expect(who).toBeVisible();
+      }
+      await page.screenshot({ path: `${SHOTS}${name}-${w}.png`, fullPage: true, animations: 'disabled' });
     }
   });
 }
+
+// between the phone and the two-column layouts, where the history's six
+// columns used to overflow
+test('pages fit at 600 px without sideways scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 900 });
+  for (const path of ['/', `/tx/${SWAP_TX}`, `/address/${BUSY}`]) {
+    await page.goto(path);
+    await expect(page.locator('h1')).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow, `${path} scrolls sideways at 600 px`).toBeLessThanOrEqual(0);
+  }
+});
