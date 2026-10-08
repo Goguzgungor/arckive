@@ -19,6 +19,15 @@ function simulate(p: Pacer<number>, arrivals: Array<[number, number]>, until: nu
 const pauses = (times: number[]): number[] => times.slice(1).map((t, i) => t - times[i]!);
 
 describe('Pacer', () => {
+  it('starts afresh after clear(): a push right after is not joined to a stale arrival', () => {
+    const p = new Pacer<string>();
+    p.push(['a', 'b', 'c', 'd', 'e', 'f'], 0);
+    p.push(['g', 'h'], 1000); // queued behind a: its base is well ahead of the clock
+    p.clear();
+    p.push(['x'], 1010); // within 50 ms of nothing now, base = now
+    expect(p.take(1010)).toEqual(['x']);
+  });
+
   it("spreads a block's rows over the expected gap", () => {
     const p = new Pacer<string>();
     p.push(['a', 'b', 'c', 'd', 'e'], 0); // no gaps seen yet: 500 ms

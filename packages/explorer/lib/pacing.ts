@@ -108,6 +108,9 @@ export class Pacer<T> {
   }
 
   clear(): void {
+    // the arrival too: a push right after a hello must not join an arrival
+    // whose base is still up to 3 s ahead
+    this.#arrival = null;
     this.#q = [];
     this.#skipped = 0;
   }
