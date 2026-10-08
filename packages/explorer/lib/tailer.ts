@@ -47,11 +47,12 @@ export interface TailerDeps {
 
 // One loop per process: every 250 ms it reads the worker's cursors, decides
 // how far to release (release.ts), reads the released blocks' transfers with
-// their lanes and addresses, publishes one `block` message per block and
-// folds them into the rolling minute; stats go out once a second.
+// their lanes and addresses, publishes one `block` message per block (one
+// chunk per cycle) and folds them into the rolling minute; stats go out once
+// a second.
 export class Tailer {
   lastReleased: number | null = null;
-  readonly window = new RollingWindow();
+  window = new RollingWindow();
   private maxGap = MAX_GAP;
   readonly #timings: number[] = [];
 
@@ -105,17 +106,24 @@ export class Tailer {
 
   // The buffer and the rolling minute from the database: the last ~minute of
   // released blocks, so a restart neither greets viewers with an empty tape
-  // nor under-counts the headline.
+  // nor under-counts the headline. Viewers who connected while the server was
+  // booting got an empty hello; the reseed greets them again.
   async init(): Promise<void> {
     const to = await this.#target();
     if (to === null || to < 0) return;
+    await this.#reseed(to);
+  }
+
+  // The last CATCHUP blocks up to `to` as the hub's buffer and a fresh hello
+  // to every open stream; they are folded into the rolling minute.
+  async #reseed(to: number): Promise<void> {
     const r = await this.d.pool.query<MoveRow>(
       this.#movesSql('x.block_number > $1 AND x.block_number <= $2', 'x.block_number, x.log_index'),
       [to - CATCHUP, to],
     );
     const { msgs, win } = this.#group(r.rows);
     for (const b of win) this.window.add(b);
-    this.d.hub.seed(msgs, to);
+    this.d.hub.reseed(msgs, to);
     this.lastReleased = to;
   }
 
@@ -124,17 +132,27 @@ export class Tailer {
     try {
       if (this.lastReleased === null) return await this.init();
       const to = await this.#target();
-      if (to === null || to <= this.lastReleased) return;
-      const from = to - this.lastReleased > this.maxGap ? to - CATCHUP : this.lastReleased;
+      if (to === null) return;
+      if (to < this.lastReleased - this.maxGap) {
+        // The worker's cursor went back: its schema was recreated and it is
+        // indexing again from an earlier block. Start over as at boot, with a
+        // new rolling minute; the old one counts blocks that no longer exist.
+        this.d.log.warn({ released: this.lastReleased, cursor: to }, 'the worker cursor went back; reloading the tape');
+        this.window = new RollingWindow();
+        this.lastReleased = null;
+        return await this.init();
+      }
+      if (to <= this.lastReleased) return;
+      // Far behind (a stall, a restart): the last CATCHUP blocks as a fresh
+      // hello rather than the gap replayed at viewers.
+      if (to - this.lastReleased > this.maxGap) return await this.#reseed(to);
       const r = await this.d.pool.query<MoveRow>(
         this.#movesSql('x.block_number > $1 AND x.block_number <= $2', 'x.block_number, x.log_index'),
-        [from, to],
+        [this.lastReleased, to],
       );
       const { msgs, win } = this.#group(r.rows);
-      msgs.forEach((m, i) => {
-        this.window.add(win[i]!);
-        this.d.hub.publishBlock(m);
-      });
+      for (const b of win) this.window.add(b);
+      this.d.hub.publishBlocks(msgs);
       this.lastReleased = to;
     } finally {
       this.#timings.push(performance.now() - started);

@@ -13,7 +13,6 @@ const HEADERS = {
 // and reconnects with ?last=.
 export function streamResponse(hub: Hub, req: Request): Response {
   const last = parseLastEventId(req.headers.get('last-event-id'), new URL(req.url).searchParams.get('last'));
-  const enc = new TextEncoder();
   const sub: { off: (() => void) | null } = { off: null };
   const stream = new ReadableStream<Uint8Array>(
     {
@@ -21,7 +20,7 @@ export function streamResponse(hub: Hub, req: Request): Response {
         const sink: Sink = {
           send(chunk) {
             if ((controller.desiredSize ?? 1) <= 0) return false;
-            controller.enqueue(enc.encode(chunk));
+            controller.enqueue(chunk);
             return true;
           },
           close() {

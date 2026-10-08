@@ -6,10 +6,15 @@ import { log } from '../lib/log.js';
 import { nameOf } from '../lib/names.js';
 import { Tailer } from '../lib/tailer.js';
 
+const dec = new TextDecoder();
 function collector(): Sink & { got: string[] } {
-  return { got: [], send(c) { this.got.push(c); return true; }, close() {} };
+  return { got: [], send(c) { this.got.push(dec.decode(c)); return true; }, close() {} };
 }
-const blocksIn = (got: string[]) => got.filter((c) => c.includes('event: block')).map((c) => JSON.parse(c.split('data: ')[1]!));
+// every frame of a kind across the chunks (one tailer cycle is one chunk)
+const framesIn = (got: string[], event: string) => got.join('').split('\n\n')
+  .filter((f) => f.includes(`event: ${event}\n`)).map((f) => JSON.parse(f.split('data: ')[1]!));
+const blocksIn = (got: string[]) => framesIn(got, 'block');
+const hellosIn = (got: string[]) => framesIn(got, 'hello');
 
 describe('tailer (lanes on)', () => {
   let db: TestDb;
@@ -53,8 +58,40 @@ describe('tailer (lanes on)', () => {
     await tailer.cycle();
     const first = blocksIn(viewer.got)[0];
     expect(first.n).toBe(24787775);
+    // the whole cycle went out as one chunk
+    expect(viewer.got.filter((c) => c.includes('event: block'))).toHaveLength(1);
     expect(first.moves[2]).toMatchObject({ from: R.ROUTER, to: R.POOLMANAGER, toName: 'Uniswap v4 Pools', lane: 'swap', value: '476.9325', tx: R.SWAP_TX, li: 4 });
     expect(first.moves[2].fromName).toBe(nameOf(R.ROUTER));
+  });
+
+  it('skips far ahead with a fresh hello to open streams, not a replay of the gap', async () => {
+    const hub = new Hub(10);
+    const tailer = new Tailer({ pool: db.explorer, t: db.t, hub, holdMs: 0, lanes: () => true, log });
+    const viewer = collector();
+    hub.subscribe(viewer, null);
+    tailer.lastReleased = 24787774;
+    await tailer.cycle();
+    expect(tailer.lastReleased).toBe(R.CURSOR);
+    expect(blocksIn(viewer.got)).toEqual([]);
+    expect(viewer.got.at(-1)).toMatch(new RegExp(`^id: ${R.CURSOR}\nevent: hello\n`));
+    expect(hellosIn(viewer.got).at(-1).blocks.at(-1).n).toBe(R.CURSOR);
+  });
+
+  it('starts over with a fresh hello when the worker cursor goes back (its schema was recreated)', async () => {
+    const hub = new Hub(10);
+    const tailer = new Tailer({ pool: db.explorer, t: db.t, hub, holdMs: 0, lanes: () => true, log });
+    await tailer.init();
+    const count = tailer.window.stats(0).count;
+    expect(count).toBeGreaterThan(0);
+    const viewer = collector();
+    hub.subscribe(viewer, null);
+    tailer.lastReleased = R.CURSOR + 10_000;
+    await tailer.cycle();
+    expect(tailer.lastReleased).toBe(R.CURSOR);
+    expect(hellosIn(viewer.got)).toHaveLength(2); // on subscribe, and on the reload
+    expect(hellosIn(viewer.got)[1].blocks.at(-1).n).toBe(R.CURSOR);
+    // the rolling minute was rebuilt, not folded a second time
+    expect(tailer.window.stats(0).count).toBe(count);
   });
 
   it('publishes stats on its timer and stops cleanly', async () => {
@@ -78,8 +115,15 @@ describe('tailer (lanes not on yet)', () => {
   it('releases up to the worker cursor at once, without lanes', async () => {
     const hub = new Hub(10);
     const tailer = new Tailer({ pool: db.explorer, t: db.t, hub, holdMs: 8000, lanes: () => false, log });
+    // a viewer who connected while the server was booting
+    const early = collector();
+    hub.subscribe(early, null);
     await tailer.init();
     expect(tailer.lastReleased).toBe(R.CURSOR);
+    const hellos = hellosIn(early.got);
+    expect(hellos).toHaveLength(2);
+    expect(hellos[0].blocks).toEqual([]);
+    expect(hellos[1].blocks.at(-1).n).toBe(R.CURSOR);
     const moves = hub.hello().blocks.flatMap((b) => b.moves);
     expect(moves.length).toBeGreaterThan(0);
     expect(moves.every((m) => m.lane === null)).toBe(true);

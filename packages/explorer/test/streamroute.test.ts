@@ -36,8 +36,7 @@ describe('GET /api/stream', () => {
   it('resumes from Last-Event-ID or ?last=', async () => {
     const hub = new Hub(5);
     hub.seed([block(1)], 1);
-    hub.publishBlock(block(2));
-    hub.publishBlock(block(3));
+    hub.publishBlocks([block(2), block(3)]);
     for (const req of [
       new Request('http://x/api/stream', { headers: { 'Last-Event-ID': '2' } }),
       new Request('http://x/api/stream?last=2'),
@@ -57,5 +56,26 @@ describe('GET /api/stream', () => {
     expect(busy.headers.get('retry-after')).toBe('5');
     await open.body!.cancel();
     expect(streamResponse(hub, new Request('http://x/api/stream')).status).toBe(200);
+  });
+  it('keeps a viewer through a cycle of 150 blocks and delivers every one of them', async () => {
+    const hub = new Hub(5);
+    hub.seed([block(1)], 1);
+    const res = streamResponse(hub, new Request('http://x/api/stream'));
+    const reader = res.body!.getReader();
+    // a stall or a backfill round releases many blocks in one tailer cycle
+    hub.publishBlocks(Array.from({ length: 150 }, (_, i) => block(2 + i)));
+    hub.publishBlocks([block(152)]);
+    expect(hub.size).toBe(1);
+    const dec = new TextDecoder();
+    let text = '';
+    while (!text.includes('id: 152\n')) {
+      const r = await reader.read();
+      if (r.done) break;
+      text += dec.decode(r.value);
+    }
+    const ids = [...text.matchAll(/^id: (\d+)\nevent: block$/gm)].map((m) => Number(m[1]));
+    expect(ids).toEqual(Array.from({ length: 151 }, (_, i) => 2 + i));
+    expect(hub.size).toBe(1);
+    await reader.cancel();
   });
 });

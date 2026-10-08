@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fmtAmount, fmtTime, shortAddr } from '../lib/format.js';
-import { homeHeadline, laneShares, lanesPaused } from '../lib/homestory.js';
+import { helloPlan, homeHeadline, laneShares, lanesPaused } from '../lib/homestory.js';
 import { laneMeta } from '../lib/lanes.js';
 import { liveState } from '../lib/live.js';
 import { Pacer } from '../lib/pacing.js';
@@ -45,9 +45,10 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
   useEffect(() => {
     const stop = openStream({
       hello: (h) => {
+        const plan = helloPlan(h, pacer.current.isPaused);
         pacer.current.clear();
-        setRows(newestFirst(h.blocks));
-        newest.current = h.blocks.at(-1) ?? newest.current;
+        newest.current = plan.newest;
+        if (plan.replace) setRows(newestFirst(h.blocks));
         if (h.stats) setStats(h.stats);
       },
       block: (b) => {

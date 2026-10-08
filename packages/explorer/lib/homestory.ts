@@ -1,7 +1,7 @@
 import { fmtInt, fmtWhole, pct } from './format.js';
 import { LANES_ALWAYS, LANE_ORDER, laneMeta } from './lanes.js';
 import type { Part } from './parts.js';
-import type { StatsMsg } from './types.js';
+import type { Hello, StatsMsg } from './types.js';
 
 const laned = (s: StatsMsg): number => Object.values(s.lanes).reduce((a, b) => a + b, 0);
 
@@ -34,4 +34,19 @@ export function laneShares(s: StatsMsg | null): LaneShare[] {
     const m = laneMeta(lane);
     return { lane, label: m.label, ink: m.ink, pct: pct(s?.lanes[lane] ?? 0, total) };
   });
+}
+
+export interface HelloPlan {
+  newest: { n: number; t: number } | null; // blocks after this one are new
+  replace: boolean; // show the hello's rows in place of the tape's
+}
+
+// What a hello does to the tape. The newest block becomes the hello's, even a
+// lower one (a restarted server, a rewound worker): keeping the old one would
+// drop every block below it for good. An empty hello (a server still booting)
+// clears it and leaves the rows on screen; a paused tape — a pointer resting
+// on the row it is about to click — keeps its rows too.
+export function helloPlan(h: Hello, paused: boolean): HelloPlan {
+  const last = h.blocks.at(-1);
+  return { newest: last ? { n: last.n, t: last.t } : null, replace: !!last && !paused };
 }

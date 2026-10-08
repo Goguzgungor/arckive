@@ -8,9 +8,16 @@ const block = (n: number, moves = 1): BlockMsg => ({
 });
 const STATS: StatsMsg = { count: 1, usdc: '1', perSec: 1, lanes: {}, largest: [], now: 5 };
 
-function sink(accept = true): Sink & { got: string[]; closed: boolean } {
-  return { got: [], closed: false, send(c) { if (!accept) return false; this.got.push(c); return true; }, close() { this.closed = true; } };
+const dec = new TextDecoder();
+// got: the decoded chunks; raw: the bytes the hub handed over, to check they are shared
+function sink(accept = true): Sink & { got: string[]; raw: Uint8Array[]; closed: boolean } {
+  return {
+    got: [], raw: [], closed: false,
+    send(c) { if (!accept) return false; this.raw.push(c); this.got.push(dec.decode(c)); return true; },
+    close() { this.closed = true; },
+  };
 }
+const helloIn = (chunk: string): { blocks: BlockMsg[] } => JSON.parse(chunk.split('data: ')[1]!);
 
 describe('SSE framing', () => {
   it('writes id, event and one data line', () => {
@@ -42,7 +49,7 @@ describe('Hub', () => {
   it('resumes a viewer from Last-Event-ID while the buffer still holds what came after', () => {
     const hub = new Hub(10);
     hub.seed([block(10)], 10);
-    for (const n of [11, 12, 13]) hub.publishBlock(block(n));
+    hub.publishBlocks([11, 12, 13].map((n) => block(n)));
     hub.publishStats(STATS);
     const s = sink();
     hub.subscribe(s, 11);
@@ -52,7 +59,7 @@ describe('Hub', () => {
   it('sends a fresh hello when the buffer moved past the viewer', () => {
     const hub = new Hub(10, 2);
     hub.seed([block(10)], 10);
-    for (const n of [11, 12, 13, 14]) hub.publishBlock(block(n));
+    hub.publishBlocks([11, 12, 13, 14].map((n) => block(n)));
     const s = sink();
     hub.subscribe(s, 10);
     expect(s.got[1]).toMatch(/event: hello/);
@@ -65,7 +72,7 @@ describe('Hub', () => {
     hub.subscribe(a, null);
     hub.subscribe(slow, null);
     slow.send = () => false;
-    hub.publishBlock(block(1));
+    hub.publishBlocks([block(1)]);
     expect(a.got.at(-1)).toBe(frame('block', block(1), 1));
     expect(slow.closed).toBe(true);
     expect(hub.size).toBe(1);
@@ -89,7 +96,7 @@ describe('Hub', () => {
     hub.subscribe(bad, null);
     hub.subscribe(good, null);
     bad.send = () => { throw new Error('stream closed'); };
-    expect(() => hub.publishBlock(block(1))).not.toThrow();
+    expect(() => hub.publishBlocks([block(1)])).not.toThrow();
     expect(bad.closed).toBe(true);
     expect(good.got.at(-1)).toBe(frame('block', block(1), 1));
     expect(hub.size).toBe(1);
@@ -116,7 +123,59 @@ describe('Hub', () => {
     hub.subscribe(bad2, null);
     bad2.send = () => false;
     bad2.close = () => { throw new Error('already closed'); };
-    expect(() => hub.publishBlock(block(1))).not.toThrow();
+    expect(() => hub.publishBlocks([block(1)])).not.toThrow();
     expect(hub.size).toBe(0);
+  });
+  it('sends a cycle of blocks as one chunk per viewer, encoded once', () => {
+    const hub = new Hub(10);
+    const a = sink();
+    const b = sink();
+    hub.subscribe(a, null);
+    hub.subscribe(b, null);
+    const blocks = Array.from({ length: 150 }, (_, i) => block(100 + i));
+    hub.publishBlocks(blocks);
+    expect(a.got).toHaveLength(3); // retry, hello, the cycle
+    expect(a.got[2]).toBe(blocks.map((x) => frame('block', x, x.n)).join(''));
+    expect(b.raw[2]).toBe(a.raw[2]);
+    expect(hub.newest()).toBe(249);
+    expect(hub.hello().blocks.flatMap((x) => x.moves)).toHaveLength(40);
+  });
+
+  it('greets every open viewer again on reseed', () => {
+    const hub = new Hub(10);
+    const s = sink();
+    hub.subscribe(s, null);
+    expect(helloIn(s.got[1]!).blocks).toEqual([]);
+    hub.reseed([block(7), block(8)], 8);
+    expect(s.got[2]).toMatch(/^id: 8\nevent: hello\n/);
+    expect(helloIn(s.got[2]!).blocks.map((b) => b.n)).toEqual([7, 8]);
+    expect(hub.newest()).toBe(8);
+  });
+
+  it('greets a viewer that is ahead of the buffer instead of resuming it with nothing', () => {
+    const hub = new Hub(10);
+    hub.seed([block(10), block(11)], 11);
+    const ahead = sink();
+    hub.subscribe(ahead, 500); // it saw block 500 from a server whose buffer this one never had
+    expect(ahead.got[1]).toMatch(/^id: 11\nevent: hello\n/);
+    const empty = new Hub(10);
+    const early = sink();
+    empty.subscribe(early, 3); // the buffer is empty while the server boots
+    expect(early.got[1]).toMatch(/event: hello/);
+  });
+
+  it('serialises the hello once until the next publish', () => {
+    const hub = new Hub(10);
+    hub.seed([block(1)], 1);
+    const a = sink();
+    const b = sink();
+    hub.subscribe(a, null);
+    hub.subscribe(b, null);
+    expect(b.raw[1]).toBe(a.raw[1]);
+    hub.publishStats(STATS);
+    const c = sink();
+    hub.subscribe(c, null);
+    expect(c.raw[1]).not.toBe(a.raw[1]);
+    expect(c.got[1]).toContain('"stats":{"count":1');
   });
 });
