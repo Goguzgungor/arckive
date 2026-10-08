@@ -32,6 +32,11 @@ describe('SSE framing', () => {
     expect(parseLastEventId('x', null)).toBeNull();
     expect(parseLastEventId(null, null)).toBeNull();
   });
+  it('reads ?last= when the header is there but empty', () => {
+    expect(parseLastEventId('', '43')).toBe(43);
+    expect(parseLastEventId('  ', '43')).toBe(43);
+    expect(parseLastEventId('', null)).toBeNull();
+  });
 });
 
 describe('Hub', () => {
@@ -111,6 +116,15 @@ describe('Hub', () => {
     expect(hub.size).toBe(0);
     expect(bad.closed).toBe(true);
     expect(hub.subscribe(sink(), null)).not.toBeNull();
+  });
+
+  it('refuses a stream whose first send fails, so the route can answer 503', () => {
+    const hub = new Hub(10);
+    const thrower = sink();
+    thrower.send = () => { throw new Error('stream closed'); };
+    expect(hub.subscribe(sink(false), null)).toBeNull();
+    expect(hub.subscribe(thrower, null)).toBeNull();
+    expect(hub.size).toBe(0);
   });
 
   it('removes a sink whose close throws', () => {

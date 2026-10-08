@@ -9,8 +9,9 @@ export const HEARTBEAT = ': hb\n\n';
 export const RETRY = 'retry: 3000\n\n';
 
 // The browser resends the last id as a header on its own reconnects; the
-// client's own reconnects (after a 503) pass it as ?last=.
+// client's own reconnects (after a 503) pass it as ?last=. An empty header (a
+// proxy or a client that sends it blank) falls through to the query.
 export function parseLastEventId(header: string | null, query: string | null): number | null {
-  const v = (header ?? query ?? '').trim();
+  const v = header?.trim() || query?.trim() || '';
   return /^\d{1,15}$/.test(v) ? Number(v) : null;
 }

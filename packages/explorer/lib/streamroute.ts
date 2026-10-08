@@ -39,8 +39,10 @@ export function streamResponse(hub: Hub, req: Request): Response {
     },
     new CountQueuingStrategy({ highWaterMark: 64 }),
   );
+  // Refused (MAX_STREAMS) or failed on its first send: the same answer, as
+  // the viewer cannot tell them apart and its client retries either way.
   if (!sub.off) {
-    return new Response('Too many viewers right now; the page retries on its own.', {
+    return new Response('Stream unavailable; the page retries on its own.', {
       status: 503,
       headers: { 'Retry-After': '5', 'Cache-Control': 'no-store' },
     });

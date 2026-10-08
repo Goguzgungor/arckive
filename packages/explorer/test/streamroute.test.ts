@@ -54,6 +54,7 @@ describe('GET /api/stream', () => {
     const busy = streamResponse(hub, new Request('http://x/api/stream'));
     expect(busy.status).toBe(503);
     expect(busy.headers.get('retry-after')).toBe('5');
+    expect(await busy.text()).toBe('Stream unavailable; the page retries on its own.');
     await open.body!.cancel();
     expect(streamResponse(hub, new Request('http://x/api/stream')).status).toBe(200);
   });
