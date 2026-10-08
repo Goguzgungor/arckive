@@ -36,8 +36,9 @@ h1 .mono { font: 400 34px var(--mono); letter-spacing: -.02em; }
 .sub .addr .mono { font-family: var(--serif); font-weight: 500; color: var(--ink); }
 .crumb { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 26px 0 10px; }
 .crumb a { color: var(--dim); }
-h2 { font: 500 12px var(--sans); letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--ink); display: flex; justify-content: space-between; gap: 12px; }
-h2 span { color: var(--faint); letter-spacing: .04em; text-transform: none; font-weight: 400; }
+h2 { font: 500 12px var(--sans); letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--ink); display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+/* the title may wrap in a narrow aside; the note beside it stays on one line */
+h2 span { color: var(--faint); letter-spacing: .04em; text-transform: none; font-weight: 400; white-space: nowrap; }
 h2.gap { margin-top: 32px; }
 .fig { font: italic 14px var(--serif); color: var(--dim); margin: 10px 0 0; }
 .note { font-size: 13px; color: var(--late); margin: 14px 0 0; }
@@ -69,6 +70,7 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .row:hover, .row:focus-visible { background: var(--sheet); outline: none; }
 @keyframes enter { from { opacity: 0; background: color-mix(in srgb, var(--lane) 14%, transparent); } }
 .time { font: 12px var(--mono); color: var(--faint); }
+.tape .empty { margin: 0; padding: 18px 0; font: 12.5px var(--mono); color: var(--faint); }
 .who { font: 12.5px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .who b { font-family: var(--sans); font-weight: 500; color: var(--ink); }
 .amt { text-align: right; font: 18px var(--serif); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -144,6 +146,20 @@ svg.chart text { font: 11px var(--mono); fill: var(--faint); }
 
 footer { border-top: 1px solid var(--ink); padding: 14px 0 30px; color: var(--faint); font-size: 12px; display: flex; justify-content: space-between; gap: 16px; }
 
+/* The six-column history row needs ~700 px of main column; with the 340 px
+   aside that is a 1100 px viewport and up (at 901–1014 px it overlapped the
+   aside). Below that, and in the one-column layout, two lines, nothing hidden. */
+@media (max-width: 1100px) {
+  /* six columns overflow sideways below ~630 px: two lines, nothing hidden */
+  .hist .hrow { grid-template-columns: 46px auto 1fr auto; grid-template-areas: "dir who who a" ". t tag x"; row-gap: 3px; }
+  .hist .t { grid-area: t; }
+  .hist .dir { grid-area: dir; }
+  .hist .hrow .who { grid-area: who; }
+  .hist .hrow .tag { grid-area: tag; }
+  .hist .a { grid-area: a; }
+  .hist .x { grid-area: x; }
+}
+
 @media (max-width: 900px) {
   .mast { grid-template-columns: 1fr auto; padding: 12px 0; row-gap: 10px; }
   .mast .search { grid-column: 1 / -1; order: 3; }
@@ -153,14 +169,6 @@ footer { border-top: 1px solid var(--ink); padding: 14px 0 30px; color: var(--fa
   h1 .mono { font-size: 20px; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .stats > div:nth-child(3) { border-left: 0; padding-left: 0; }
-  /* six columns overflow sideways below ~630 px: two lines, nothing hidden */
-  .hist .hrow { grid-template-columns: 46px auto 1fr auto; grid-template-areas: "dir who who a" ". t tag x"; row-gap: 3px; }
-  .hist .t { grid-area: t; }
-  .hist .dir { grid-area: dir; }
-  .hist .hrow .who { grid-area: who; }
-  .hist .hrow .tag { grid-area: tag; }
-  .hist .a { grid-area: a; }
-  .hist .x { grid-area: x; }
 }
 @media (max-width: 520px) {
   .wrap { padding: 0 16px; }

@@ -75,15 +75,26 @@ for (const [w, h] of [[1440, 1000], [390, 844]] as const) {
   });
 }
 
-// between the phone and the two-column layouts, where the history's six
-// columns used to overflow
-test('pages fit at 600 px without sideways scrolling', async ({ page }) => {
-  await page.setViewportSize({ width: 600, height: 900 });
-  for (const [name, path] of [['home', '/'], ['tx', `/tx/${SWAP_TX}`], ['address', `/address/${BUSY}`]] as const) {
-    await page.goto(path);
-    await expect(page.locator('h1')).toBeVisible();
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    expect(overflow, `${name} scrolls sideways at 600 px`).toBeLessThanOrEqual(0);
-    await page.screenshot({ path: `${SHOTS}${name}-600.png`, fullPage: true, animations: 'disabled' });
-  }
-});
+// between the phone and the wide layouts, where the history's six columns
+// used to overflow (600 px) or run under the aside (901-1014 px)
+for (const w of [600, 901, 960, 1024]) {
+  test(`pages fit at ${w} px without sideways scrolling or overlap`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    for (const [name, path] of [['home', '/'], ['tx', `/tx/${SWAP_TX}`], ['address', `/address/${BUSY}`]] as const) {
+      await page.goto(path);
+      await expect(page.locator('h1')).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `${name} scrolls sideways at ${w} px`).toBeLessThanOrEqual(0);
+      if (name === 'address' && w > 900) {
+        // the history's rows end where the aside begins, not under it
+        await expect(page.locator('.hist .hrow').first()).toBeVisible();
+        const over = await page.evaluate(() => {
+          const aside = document.querySelector('aside')?.getBoundingClientRect().left ?? Infinity;
+          return [...document.querySelectorAll('.hist .hrow *')].reduce((m, el) => Math.max(m, el.getBoundingClientRect().right - aside), -Infinity);
+        });
+        expect(over, `history runs under the aside at ${w} px`).toBeLessThanOrEqual(0);
+      }
+      if (w === 600 || w === 960) await page.screenshot({ path: `${SHOTS}${name}-${w}.png`, fullPage: true, animations: 'disabled' });
+    }
+  });
+}
