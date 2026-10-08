@@ -2,7 +2,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ROLE, addInsightsTables, startDb, type TestDb } from './fixture/db.ts';
 import { createPool, tables } from '../lib/db.js';
-import { SchemaError, checkSchema, hasInsights } from '../lib/schema.js';
+import { SchemaError, checkSchema, hasAddressIndexes, hasInsights } from '../lib/schema.js';
 import { ensureExplorerSchema } from '../lib/explorer-schema.js';
 
 const cfg = { schema: 'idx_arc_explorer', usdcTable: 'usdc_transfer', poolPrefix: 'poolmanager_' };
@@ -90,6 +90,15 @@ describe('explorer database role (lanes switched on later)', () => {
     await addInsightsTables(db.admin);
     expect(await hasInsights(db.explorer, db.t)).toBe(true);
     await expect(db.explorer.query(`SELECT count(*) FROM ${db.t.insightsFull}`)).resolves.toBeDefined();
+  });
+
+  it('reads whether the worker built ordered address indexes (_meta address_indexes)', async () => {
+    // core's DDL alone writes no _meta rows: like a schema from before the key
+    expect(await hasAddressIndexes(db.explorer, db.t)).toBe(false);
+    await db.admin.query(`INSERT INTO "idx_arc_explorer"._meta (key, value) VALUES ('address_indexes', 'true')`);
+    expect(await hasAddressIndexes(db.explorer, db.t)).toBe(true);
+    await db.admin.query(`UPDATE "idx_arc_explorer"._meta SET value = 'false' WHERE key = 'address_indexes'`);
+    expect(await hasAddressIndexes(db.explorer, db.t)).toBe(false);
   });
 
   it('connects with the DSN shape the Secret holds', async () => {

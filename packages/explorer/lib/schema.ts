@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { Tables } from './db.js';
+import { q, type Tables } from './db.js';
 
 export class SchemaError extends Error {}
 
@@ -61,4 +61,16 @@ export async function checkSchema(pool: pg.Pool, t: Tables): Promise<void> {
 // shows rows without lanes and never names the _insights tables in a query.
 export async function hasInsights(pool: pg.Pool, t: Tables): Promise<boolean> {
   return gaps(await columns(pool, t.schema), INSIGHTS).length === 0;
+}
+
+// storage.addressIndexes gives every address column an index ordered by
+// block and log, which an address page's history and counterparties read by
+// keyset; without it they read every row of the address. The worker records
+// the choice in _meta (a schema from before the key has none: 'false').
+export async function hasAddressIndexes(pool: pg.Pool, t: Tables): Promise<boolean> {
+  const meta = `${q(t.schema)}."_meta"`;
+  const r = await pool.query<{ ok: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ok', [meta]);
+  if (!r.rows[0]!.ok) return false;
+  const v = await pool.query<{ value: string }>(`SELECT value FROM ${meta} WHERE key = 'address_indexes'`);
+  return v.rows[0]?.value === 'true';
 }

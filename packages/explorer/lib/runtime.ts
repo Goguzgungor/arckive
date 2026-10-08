@@ -5,7 +5,7 @@ import { ensureExplorerSchema } from './explorer-schema.js';
 import { Hub } from './hub.js';
 import { errText, log } from './log.js';
 import { Rollup } from './rollup.js';
-import { SchemaError, checkSchema, hasInsights } from './schema.js';
+import { SchemaError, checkSchema, hasAddressIndexes, hasInsights } from './schema.js';
 import { Tailer } from './tailer.js';
 import { Tokens, rpcTokenReader, type TokenReader } from './tokens.js';
 import { loadInsightsInfo, type InsightsInfo } from './tx.js';
@@ -100,6 +100,12 @@ export async function bootRuntime(rt: Runtime, exit: (code: number) => void = (c
     if (stopped) return;
     try {
       await checkSchema(rt.jobs, rt.t);
+      if (!(await hasAddressIndexes(rt.jobs, rt.t))) {
+        log.warn(
+          { schema: rt.t.schema },
+          'the worker did not build ordered address indexes (_meta address_indexes is not true): address pages will read every row of an address; set storage.addressIndexes on the Indexer',
+        );
+      }
       await ensureExplorerSchema(rt.jobs);
       await refresh(rt);
       break;
