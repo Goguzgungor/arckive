@@ -207,8 +207,10 @@ client retries with backoff.
   contracts by name), amount. Rows enter at the top.
 - **Pacing.** A `block` message's rows are spread evenly over the time until
   the next one is expected (the median gap of the last 20 blocks, ~0.5 s), so
-  the tape flows instead of jumping. A backlog over 3 s is drained faster
-  rather than delayed further.
+  the tape flows instead of jumping. Blocks that land less than 50 ms apart
+  (one worker commit covers 2–3 blocks) count as one arrival, timed and
+  spread together. A backlog over 3 s is drained faster rather than delayed
+  further.
 - **Hover pauses.** While the pointer is on the tape no row enters, so the
   row under it can be clicked; a "12 new" marker counts what waits, and the
   backlog drains on leave. Keyboard focus on a row does the same.

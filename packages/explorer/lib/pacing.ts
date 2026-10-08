@@ -6,19 +6,40 @@ export interface PacerOptions {
   maxBacklogMs: number;
   drainMs: number;
   maxQueue: number;
+  coalesceMs: number;
 }
 
-export const PACING: PacerOptions = { gapsKept: 20, minGapMs: 100, maxGapMs: 2000, defaultGapMs: 500, maxBacklogMs: 3000, drainMs: 1000, maxQueue: 128 };
+export const PACING: PacerOptions = {
+  gapsKept: 20, minGapMs: 100, maxGapMs: 2000, defaultGapMs: 500, maxBacklogMs: 3000, drainMs: 1000, maxQueue: 128, coalesceMs: 50,
+};
 
-// Spreads each block's rows over the time until the next block is expected
+interface Entry<T> {
+  item: T;
+  due: number;
+  arrival: number; // the arrival it came in
+  idx: number; // its place in that arrival
+}
+
+interface Arrival {
+  id: number;
+  start: number; // its first push
+  last: number; // its latest push
+  base: number; // when its first row is due
+  count: number; // rows in all its pushes
+}
+
+// Spreads each arrival's rows over the time until the next one is expected
 // (the median gap of the last 20, ~0.5 s on Arc), so the tape flows instead
-// of jumping. A backlog over 3 s is drained within a second rather than
-// delayed further; while paused (the pointer or focus on the tape) nothing
-// enters and the rows wait.
+// of jumping. An arrival is every push less than 50 ms after the one before:
+// the worker commits every ~1 s covering 2–3 blocks, which land within
+// milliseconds of each other, and timing those as gaps of their own would
+// collapse the interval to its floor and run the tape in jumps. A backlog
+// over 3 s is drained within a second rather than delayed further; while
+// paused (the pointer or focus on the tape) nothing enters and the rows wait.
 export class Pacer<T> {
-  #q: Array<{ item: T; due: number }> = [];
+  #q: Array<Entry<T>> = [];
   #gaps: number[] = [];
-  #last: number | null = null;
+  #arrival: Arrival | null = null;
   #paused = false;
   #skipped = 0;
 
@@ -33,15 +54,23 @@ export class Pacer<T> {
   }
 
   push(items: readonly T[], now: number): void {
-    if (this.#last !== null) {
-      this.#gaps.push(now - this.#last);
-      if (this.#gaps.length > this.o.gapsKept) this.#gaps.shift();
+    let a = this.#arrival;
+    if (a && now - a.last < this.o.coalesceMs) {
+      a.last = now;
+    } else {
+      if (a) {
+        this.#gaps.push(now - a.start);
+        if (this.#gaps.length > this.o.gapsKept) this.#gaps.shift();
+      }
+      a = { id: (a?.id ?? 0) + 1, start: now, last: now, base: Math.max(now, this.#q.at(-1)?.due ?? now), count: 0 };
+      this.#arrival = a;
     }
-    this.#last = now;
     if (!items.length) return;
-    const step = this.interval() / items.length;
-    const start = Math.max(now, this.#q.at(-1)?.due ?? now);
-    items.forEach((item, i) => this.#q.push({ item, due: start + step * i }));
+    for (const item of items) this.#q.push({ item, due: 0, arrival: a.id, idx: a.count++ });
+    // all of the arrival's rows over one interval from its start; the ones
+    // already shown keep their place, the rest close up
+    const step = this.interval() / a.count;
+    for (let i = this.#q.length - 1; i >= 0 && this.#q[i]!.arrival === a.id; i--) this.#q[i]!.due = a.base + step * this.#q[i]!.idx;
     // A hidden tab runs no animation frames while the stream keeps delivering,
     // and a parked pointer pauses the tape: the tape shows 32 rows, so keep
     // only the newest few multiples of that and count the rest as skipped.
