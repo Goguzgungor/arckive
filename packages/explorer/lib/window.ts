@@ -19,12 +19,14 @@ export class RollingWindow {
   #moves: Held[] = [];
   #newest = 0;
   #first: number | null = null;
+  #head: number | null = null; // newest block time that carried a movement, kept
 
   constructor(private readonly spanSec = 60) {}
 
   add(b: WindowBlock): void {
     for (const m of b.moves) this.#moves.push({ ...m, n: b.n, t: b.t });
     this.#newest = Math.max(this.#newest, b.t);
+    if (b.moves.length) this.#head = Math.max(this.#head ?? 0, b.t);
     this.#first ??= b.t;
     const floor = this.#newest - this.spanSec;
     let drop = 0;
@@ -53,6 +55,6 @@ export class RollingWindow {
       });
     const seen = this.#first === null ? 1 : this.#newest - this.#first;
     const span = Math.max(1, Math.min(this.spanSec, seen));
-    return { count: this.#moves.length, usdc: unitsToDecimal(sum), perSec: Math.round((this.#moves.length / span) * 10) / 10, lanes, largest, now };
+    return { count: this.#moves.length, usdc: unitsToDecimal(sum), perSec: Math.round((this.#moves.length / span) * 10) / 10, lanes, largest, headT: this.#head, now };
   }
 }

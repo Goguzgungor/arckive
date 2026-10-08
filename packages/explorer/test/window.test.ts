@@ -18,6 +18,17 @@ describe('RollingWindow', () => {
     expect(s).toMatchObject({ count: 3, usdc: '10', lanes: { payment: 1, swap: 1 } });
   });
 
+  it('keeps the newest block time that carried a movement, past the minute it counts', () => {
+    const w = new RollingWindow();
+    expect(w.stats(0).headT).toBeNull();
+    w.add({ n: 1, t: 1000, moves: [mv('0x1', 0, 5, 'swap')] });
+    expect(w.stats(0).headT).toBe(1000);
+    w.add({ n: 2, t: 1500, moves: [] });
+    expect(w.stats(0).headT).toBe(1000);
+    w.add({ n: 3, t: 1600, moves: [mv('0x3', 0, 1, null)] });
+    expect(w.stats(0)).toMatchObject({ headT: 1600, count: 1 });
+  });
+
   it('lists the five largest movements, one per transaction', () => {
     const w = new RollingWindow();
     w.add({ n: 1, t: 1, moves: [mv('0xa', 0, 100, 'swap'), mv('0xa', 1, 90, 'swap'), mv('0xb', 0, 50, null)] });

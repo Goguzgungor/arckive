@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fmtAmount, fmtTime, shortAddr } from '../lib/format.js';
 import { helloPlan, homeHeadline, laneShares, lanesPaused } from '../lib/homestory.js';
 import { laneMeta } from '../lib/lanes.js';
-import { liveState } from '../lib/live.js';
+import { liveState, newestTime } from '../lib/live.js';
 import { Pacer } from '../lib/pacing.js';
 import { openStream } from '../lib/stream-client.js';
 import type { BlockMsg, Hello, Move, StatsMsg } from '../lib/types.js';
@@ -87,7 +87,10 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
 
   // The newest block received, not the newest shown: a viewer hovering the
   // tape has paused it, the network has not fallen behind.
-  const state = liveState(newest.current?.t ?? null, now + offset.current, open);
+  // A backfilling archive sends few blocks, so the stats' headT (the newest
+  // released block that carried a movement) keeps the state honest between them.
+  const head = newestTime(newest.current?.t, stats?.headT);
+  const state = liveState(head, now + offset.current, open);
   const holdTape = (why: 'hover' | 'focus', on: boolean): void => {
     hold.current[why] = on;
     if (hold.current.hover || hold.current.focus) pacer.current.pause();
@@ -101,7 +104,7 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
       <Dateline date={date} />
       <div className="head">
         <h1>
-          <Parts parts={homeHeadline(stats, state.kind === 'behind' ? (newest.current?.t ?? null) : null)} />
+          <Parts parts={homeHeadline(stats, state.kind === 'behind' ? head : null)} />
         </h1>
         <p className="fig">Fig. 1 — the tape below is every USDC movement as it lands, each filed under the lane Laya read in its transaction.</p>
       </div>
@@ -117,11 +120,20 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
             className="tape"
             onMouseEnter={() => holdTape('hover', true)}
             onMouseLeave={() => holdTape('hover', false)}
-            onFocus={() => holdTape('focus', true)}
+            // only keyboard focus: a cmd- or middle-clicked row keeps focus
+            // after the pointer leaves, and must not hold the tape
+            onFocus={(e) => {
+              if (e.target.matches(':focus-visible')) holdTape('focus', true);
+            }}
             onBlur={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node | null)) holdTape('focus', false);
             }}
           >
+            {rows.length === 0 && (
+              <p className="empty">
+                {state.kind === 'behind' ? 'The archive is catching up; movements appear as they are indexed.' : 'Waiting for the next USDC movement…'}
+              </p>
+            )}
             {rows.map((r) => (
               <Link
                 key={r.key}

@@ -43,6 +43,14 @@ describe('tailer (lanes on)', () => {
     expect(tailer.lastReleased).toBe(R.busyBlock(25));
   });
 
+  it("carries the newest released block's time in its stats", async () => {
+    const tailer = new Tailer({ pool: db.explorer, t: db.t, hub: new Hub(10), holdMs: 0, lanes: () => true, log });
+    expect(tailer.window.stats(0).headT).toBeNull();
+    await tailer.init();
+    const row = await db.admin.query(`SELECT extract(epoch FROM block_time)::int AS t FROM ${db.t.blocks} WHERE block_number = $1`, [R.CURSOR]);
+    expect(tailer.window.stats(0).headT).toBe(row.rows[0].t);
+  });
+
   it('names known contracts and attaches lanes', async () => {
     const hub = new Hub(10);
     const tailer = new Tailer({ pool: db.explorer, t: db.t, hub, holdMs: 0, lanes: () => true, log });

@@ -6,7 +6,7 @@ import type { BlockMsg, StatsMsg } from '../lib/types.js';
 const block = (n: number, moves = 1): BlockMsg => ({
   n, t: 1000 + n, moves: Array.from({ length: moves }, (_, li) => ({ tx: `0x${n}`, li, from: '0xa', to: '0xb', value: '1', lane: null })),
 });
-const STATS: StatsMsg = { count: 1, usdc: '1', perSec: 1, lanes: {}, largest: [], now: 5 };
+const STATS: StatsMsg = { count: 1, usdc: '1', perSec: 1, lanes: {}, largest: [], headT: null, now: 5 };
 
 const dec = new TextDecoder();
 // got: the decoded chunks; raw: the bytes the hub handed over, to check they are shared

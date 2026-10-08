@@ -28,6 +28,7 @@ export interface StatsMsg {
   perSec: number;
   lanes: Record<string, number>;
   largest: Largest[];
+  headT: number | null; // block time of the newest released block that carried a movement
   now: number; // server clock, ms — the browser's offset for "n s behind"
 }
 
