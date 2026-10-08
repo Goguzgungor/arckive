@@ -221,8 +221,9 @@ client retries with backoff.
   **161** movements; **123** of them were swaps."), "Largest this minute" and
   "By lane" are rendered from `stats`.
 - The masthead's "● Arc mainnet, live" turns grey with "reconnecting" while
-  the stream is down, and "n s behind" when the newest block shown is more
-  than 15 s old.
+  the stream is down, and "n s / min / h / days behind" when the newest
+  released block (received, or reported by `stats.headT`) is more than 15 s
+  old; the headline then reads "In the minute to HH:MM UTC …".
 - Phone width: one column; the tape hides `from → to` below 520 px.
 
 ## Transaction page: `/tx/[hash]`
@@ -300,9 +301,9 @@ Times in UTC, labelled.
 - Database unreachable: pages answer 503 in the same design ("The archive is
   not answering; the tape will resume on its own"); the tailer retries every
   second; streams stay open and the tailer keeps sending stats, so the
-  masthead reads "n s behind" ("reconnecting" means the stream itself is
+  masthead reads "… behind" ("reconnecting" means the stream itself is
   down).
-- Worker behind or stopped: the tape shows "n s behind"; pages work on what
+- Worker behind or stopped: the masthead shows how far behind; pages work on what
   is there.
 - Insights down: rows are released after the hold without lanes; the "By
   lane" panel says "lanes paused" when more than half of the last minute has
@@ -366,3 +367,38 @@ done with the user's go-ahead.
 - **Hold vs. freshness.** If lanes lag more than the hold, rows go out
   without them. The hold is one env var; the metric to watch is A2's
   `insights_blocks_behind`.
+
+## Measured (k3d, 2026-10-08)
+
+The explorer ran in the k3d cluster next to `pg-explorer`, as
+`manifests/arc-mainnet/k8s/explorer-app.yaml` deploys it (image built from
+`feat/explorer`, role from `explorer-role.sql`), while the explorer's Indexer
+was still backfilling on the public endpoint's quota: archive at block
+13,761,861 of ~24.8M (2026-08-01), 937,192 USDC transfers, 2,343 v4 swaps,
+295 MB; lanes not switched on. Latencies through `kubectl port-forward` from
+the Mac, so they include the forward.
+
+| Target | Goal | Measured |
+|---|---|---|
+| `/tx/[hash]`, 200 requests over 50 sampled transactions | < 150 ms p95 | 13 ms p95 (TTFB 10 ms); max 291 ms (first request) |
+| `/address/[address]`, the 20 busiest (up to 244,507 movements), first page + a `?before=` page, 200 requests | < 300 ms p95 | 20 ms p95 (TTFB 13 ms) |
+| Tailer cycle (`/api/health`) | < 50 ms | 4.1 ms p95 |
+| 500 concurrent streams for 2 minutes | < 1 core, < 300 MB | 500/500 open, none dropped, 1 `stats`/s each; pod 57–105 m CPU, 131–133 MiB |
+| Tape latency (block time → row) | ≤ `LANE_HOLD_MS` + 1 s | not measurable yet: the archive is 67 days behind the head |
+
+Query plans (EXPLAIN on the real tables): an address page's history is two
+backward index scans on `(from_id | to_id, block_number, log_index)` per
+partition under an ordered Append that stops at the page size; a
+transaction lookup is one `tx_hash` index probe per partition per table.
+
+Found and fixed during the real test: token reads on
+`rpc.mainnet.arc.io` all got 429 (the worker's ingest spends its per-minute
+quota) → the manifest points `ARC_RPC` at dRPC; v4 pools paired with the
+ERC-20 face of USDC (`0x3600…0000`, 6 decimals) were not read as USDC; the
+home page said "live" while the archive was 67 days behind (no `block`
+messages arrive during sparse reseeds) → `stats.headT`; the lag is written
+in minutes, hours or days.
+
+Still to measure once the backfill reaches the head: tape latency, the
+tailer at ~14 movements a second, and the address pages for the busiest
+addresses of the dense months (Sep–Oct) over the full ~45M rows.
