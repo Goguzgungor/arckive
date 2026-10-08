@@ -5,6 +5,7 @@ import StarButton from "@/components/StarButton";
 
 const REPO = "https://github.com/Goguzgungor/arckive";
 const RADAR = "https://radar.arckive.org";
+const EXPLORER = "https://explorer.arckive.org";
 
 const LANES = ["swap", "bridge", "liquidity", "vault", "lending", "signed_payment", "payment", "no_transfer"];
 
@@ -44,6 +45,7 @@ export default function Page() {
             <a href="#how">How it works</a>
             <a href="#insights">Insights</a>
             <a href="#benchmarks">Benchmarks</a>
+            <a href={EXPLORER}>Explorer</a>
             <a href={RADAR}>Arc Radar</a>
             <a href={REPO}>GitHub</a>
           </nav>
@@ -313,10 +315,19 @@ export default function Page() {
                 Arc Radar — <em>every USDC transfer, sorted as it lands.</em>
               </h2>
               <p className="lede">Swap, bridge, liquidity, payment. Ask the stream a yes/no question and watch it re-sort.</p>
+              <p className="lede">
+                Every transfer opens in Arckive Explorer, built on Arckive’s own index of Arc mainnet: look up any
+                transaction or address.
+              </p>
             </div>
-            <a className="btn" href={RADAR}>
-              Open Arc Radar →
-            </a>
+            <div className="radar-actions">
+              <a className="btn" href={RADAR}>
+                Open Arc Radar →
+              </a>
+              <a className="btn-line" href={EXPLORER}>
+                Open the Explorer →
+              </a>
+            </div>
           </div>
         </div>
       </section>
@@ -390,6 +401,7 @@ export default function Page() {
               <a href="#how">How it works</a>
               <a href="#insights">Insights</a>
               <a href="#benchmarks">Benchmarks</a>
+              <a href={EXPLORER}>Explorer</a>
               <a href={RADAR}>Arc Radar</a>
             </div>
             <div>
