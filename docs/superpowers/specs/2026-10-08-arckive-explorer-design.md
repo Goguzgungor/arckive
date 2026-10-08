@@ -308,7 +308,7 @@ Times in UTC, labelled.
   lane" panel says "lanes paused" when more than half of the last minute has
   none.
 - Token metadata unreadable: short address instead of a symbol, raw amount
-  with "(decimals unknown)".
+  in raw units with 'decimals unknown' beside it.
 - Slow query: the 5 s statement timeout turns it into the 503 page, never a
   hung request.
 

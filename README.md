@@ -256,7 +256,7 @@ whole history (daily totals folded by the explorer itself).
 | `DATABASE_URL` | — | the `explorer` role's DSN (`manifests/arc-mainnet/k8s/explorer-role.sql`) |
 | `ARCKIVE_SCHEMA` | `idx_arc_explorer` | the Indexer's schema |
 | `USDC_TABLE` / `POOL_TABLE_PREFIX` | `usdc_transfer` / `poolmanager_` | its tables |
-| `ARC_RPC` | `https://rpc.mainnet.arc.io` | pool tokens' `symbol()` / `decimals()`, read once |
+| `ARC_RPC` | `https://rpc.mainnet.arc.io` | pool tokens' `symbol()` / `decimals()`, read once. The default is the public endpoint, whose per-minute quota a worker on it already spends; next to such a worker use a separate endpoint (the mainnet manifest sets dRPC) |
 | `LANE_HOLD_MS` | `8000` | how long a row waits for its lane |
 | `MAX_STREAMS` | `2000` | open live streams per process |
 | `LOG_LEVEL` | `info` | pino log level |

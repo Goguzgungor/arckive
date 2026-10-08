@@ -28,6 +28,10 @@ spec:
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: explorer-dsn, key: url } }
             - { name: ARCKIVE_SCHEMA, value: idx_arc_explorer }
+            # Token symbol()/decimals() reads. Not the public endpoint: its per-minute
+            # quota is spent by the worker's ingest, and in the k3d test every read
+            # got 429 while dRPC answered.
+            - { name: ARC_RPC, value: "https://rpc.drpc.mainnet.arc.io" }
             # kubelet sets HOSTNAME to the pod name, which would override the image's 0.0.0.0 and make Next bind to the pod IP only
             - { name: HOSTNAME, value: 0.0.0.0 }
           ports: [{ containerPort: 3000 }]
