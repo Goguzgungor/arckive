@@ -40,12 +40,17 @@ export interface ChartBar {
   x: number;
   inH: number;
   outH: number;
+  inValue: string; // the day's USDC in, exact decimal
+  outValue: string;
 }
 
 const DAY_MS = 86_400_000;
+// a history of one or two days must draw bars, not slabs
+const MAX_BAR = 24;
 
 // One slot per UTC day from the first to the last, empty days included;
-// heights on a square-root scale so a quiet day still shows beside a busy one.
+// heights on a square-root scale so a quiet day still shows beside a busy one,
+// and any nonzero day at least 1 px. Bars are centred in their slots.
 // Floats are fine here: these are pixels, not amounts.
 export function chartBars(daysIn: DayBar[], width = 840, half = 82): { bars: ChartBar[]; barWidth: number } {
   if (!daysIn.length) return { bars: [], barWidth: 0 };
@@ -55,13 +60,25 @@ export function chartBars(daysIn: DayBar[], width = 840, half = 82): { bars: Cha
   const slots = Math.round((end - start) / DAY_MS) + 1;
   const value = (s: string): number => Number(unitsToDecimal(s));
   const top = Math.max(...daysIn.flatMap((d) => [value(d.inValue), value(d.outValue)]), 0);
-  const scale = (v: number): number => (top > 0 ? Math.sqrt(v / top) * half : 0);
+  const scale = (v: number): number => (top > 0 && v > 0 ? Math.max(1, Math.sqrt(v / top) * half) : 0);
   const pitch = (width - 40) / slots;
-  const barWidth = Math.max(1, pitch - Math.min(2, pitch / 4));
+  const barWidth = Math.min(MAX_BAR, Math.max(1, pitch - Math.min(2, pitch / 4)));
   const bars = Array.from({ length: slots }, (_, i): ChartBar => {
     const day = new Date(start + i * DAY_MS).toISOString().slice(0, 10);
     const d = byDay.get(day);
-    return { day, x: 20 + i * pitch, inH: d ? scale(value(d.inValue)) : 0, outH: d ? scale(value(d.outValue)) : 0 };
+    return {
+      day,
+      x: 20 + i * pitch + (pitch - barWidth) / 2,
+      inH: d ? scale(value(d.inValue)) : 0,
+      outH: d ? scale(value(d.outValue)) : 0,
+      inValue: unitsToDecimal(d?.inValue ?? '0'),
+      outValue: unitsToDecimal(d?.outValue ?? '0'),
+    };
   });
   return { bars, barWidth };
+}
+
+// what a pointer resting on a day reads
+export function barTitle(b: ChartBar): string {
+  return `${b.day} · in ${fmtAmount(b.inValue)} USDC · out ${fmtAmount(b.outValue)} USDC`;
 }

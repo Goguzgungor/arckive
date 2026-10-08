@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addressHeadline, chartBars, netOf, topLane } from '../lib/addrstory.js';
+import { addressHeadline, barTitle, chartBars, netOf, topLane } from '../lib/addrstory.js';
 import type { AddressTotals } from '../lib/address.js';
 
 const T = (over: Partial<AddressTotals> = {}): AddressTotals => ({
@@ -49,5 +49,31 @@ describe('chartBars', () => {
   });
   it('draws nothing for no days', () => {
     expect(chartBars([]).bars).toEqual([]);
+  });
+
+  it('keeps a nonzero day visible, caps the bar width and centres bars in their slots', () => {
+    const { bars, barWidth } = chartBars([
+      { day: '2026-10-07', inValue: '2972070000000000000000', outValue: '1' },
+      { day: '2026-10-08', inValue: '0', outValue: '4127330000000000000000' },
+    ], 840, 82);
+    // two days: slots of 400 px must not draw 400 px slabs
+    expect(barWidth).toBe(24);
+    expect(bars[0]!.x).toBe(20 + (400 - 24) / 2);
+    expect(bars[1]!.x).toBe(20 + 400 + (400 - 24) / 2);
+    // one wei out still shows
+    expect(bars[0]!.outH).toBe(1);
+    expect(bars[1]!.inH).toBe(0);
+  });
+
+  it("titles a bar with the day's amounts in and out", () => {
+    const { bars } = chartBars([
+      { day: '2026-10-05', inValue: '2972070000000000000000', outValue: '4127330000000000000000' },
+      { day: '2026-10-07', inValue: '5', outValue: '0' },
+    ]);
+    expect(bars.map(barTitle)).toEqual([
+      '2026-10-05 · in 2,972.07 USDC · out 4,127.33 USDC',
+      '2026-10-06 · in 0.00 USDC · out 0.00 USDC',
+      '2026-10-07 · in <0.01 USDC · out 0.00 USDC',
+    ]);
   });
 });

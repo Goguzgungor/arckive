@@ -1,4 +1,4 @@
-import { chartBars } from '../lib/addrstory.js';
+import { barTitle, chartBars } from '../lib/addrstory.js';
 import type { DayBar } from '../lib/address.js';
 
 const W = 840;
@@ -14,7 +14,7 @@ export function DayChart({ days }: { days: DayBar[] }) {
       <line x1="0" x2={W} y1={MID} y2={MID} stroke="#15171b" strokeWidth="1" />
       {bars.map((b) => (
         <g key={b.day}>
-          <title>{b.day}</title>
+          <title>{barTitle(b)}</title>
           {b.inH > 0 && <rect x={b.x} y={MID - b.inH} width={barWidth} height={b.inH} fill="#1d8a57" />}
           {b.outH > 0 && <rect x={b.x} y={MID + 1} width={barWidth} height={b.outH} fill="#b2412f" opacity=".85" />}
         </g>
