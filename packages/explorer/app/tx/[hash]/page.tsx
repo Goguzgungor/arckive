@@ -92,7 +92,8 @@ export default async function TxPage({ params }: Props) {
         </section>
         <aside>
           <h2>Lane</h2>
-          <LanePanel hash={hash} initial={lane} />
+          {/* key: client-side navigation between transactions reuses the component, whose state is read once from `initial` */}
+          <LanePanel key={hash} hash={hash} initial={lane} />
           <h2 className="gap">Facts</h2>
           <dl className="facts">
             <dt>Transaction</dt>
