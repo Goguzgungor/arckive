@@ -122,7 +122,8 @@
   .op.low .sure b{color:var(--faint)}
   .op.flagged{border-left-color:var(--alarm);background:rgba(255,107,90,.08)}
   .op.flagged .text{color:var(--alarm)}
-  .op{cursor:pointer}
+  /* A row is a link to its transaction in Arckive Explorer. */
+  a.op{cursor:pointer;color:inherit;text-decoration:none}
   .head{
     display:grid;grid-template-columns:104px 112px 1fr auto 74px;gap:12px;
     align-items:center;
@@ -186,36 +187,6 @@
   footer b{color:var(--dim);font-weight:500}
   footer .warn{color:var(--alarm)}
 
-  /* Detail: the stream holds still while one transfer is read. */
-  .sheet{
-    position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
-    background:rgba(6,9,14,.72);padding:24px;
-  }
-  .sheet[hidden]{display:none!important}
-  .card{
-    background:var(--raised);border:1px solid var(--rule);border-left:3px solid var(--c);
-    border-radius:4px;max-width:640px;width:100%;max-height:100%;overflow:auto;
-    padding:20px 22px 22px;
-  }
-  .card h2{margin:0 0 3px;font-size:15px;font-weight:600;color:var(--c);letter-spacing:-.01em}
-  .card .full{
-    font-size:14px;color:var(--ink);line-height:1.5;margin:0 0 18px;
-    overflow-wrap:anywhere;
-  }
-  .card dl{display:grid;grid-template-columns:130px 1fr;gap:9px 16px;margin:0;font-size:12.5px}
-  .card dt{color:var(--faint)}
-  .card dd{margin:0;color:var(--dim);font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere}
-  .card dd.warn{color:var(--alarm)}
-  .card .foot{display:flex;gap:10px;align-items:center;margin-top:20px;flex-wrap:wrap}
-  .card .foot a,.card .foot button{
-    background:transparent;border:1px solid var(--rule);color:var(--dim);
-    font-family:var(--sans);font-size:13px;padding:8px 13px;border-radius:3px;
-    cursor:pointer;text-decoration:none;
-  }
-  .card .foot a:hover,.card .foot button:hover{color:var(--ink);border-color:var(--faint)}
-  .card .foot a:focus-visible,.card .foot button:focus-visible{outline:2px solid var(--bridge);outline-offset:1px}
-  .card .note{color:var(--faint);font-size:11.5px;margin-left:auto}
-
   @keyframes enter{
     from{opacity:0;transform:translateY(-14px);background:rgba(255,255,255,.07)}
     to{opacity:1;transform:none;background:transparent}
@@ -262,19 +233,6 @@
 <div class="head"><span>Lane</span><span>Protocol</span><span>Transfer</span><span></span>
   <span>Confidence</span><span class="ans" id="head-ans"></span></div>
 <main id="stream"><p class="empty">Waiting for the next block.</p></main>
-
-<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-lane">
-  <div class="card" id="card">
-    <h2 id="sheet-lane"></h2>
-    <p class="full" id="sheet-text"></p>
-    <dl id="sheet-rows"></dl>
-    <div class="foot">
-      <a id="sheet-link" href="#" target="_blank" rel="noopener">Open in Arc Explorer</a>
-      <button id="sheet-close" type="button">Close</button>
-      <span class="note" id="sheet-note"></span>
-    </div>
-  </div>
-</div>
 
 <footer>
   <span>Model <b id="f-model">connecting…</b></span>
@@ -332,7 +290,7 @@ const escapeHtml = (s) => s.replace(/[&<>"']/g, c =>
 // A link is HTML wherever it lands, so a URL is only ever trusted as an href
 // when it is obviously our own explorer -- anything else renders as plain
 // (escaped) text instead of a clickable link.
-const EXPLORER_PREFIX = "https://explorer.arc.io/tx/";
+const EXPLORER_PREFIX = "https://explorer.arckive.org/tx/";
 const isExplorer = (url) => typeof url === "string" && url.startsWith(EXPLORER_PREFIX);
 function explorerAnchor(url, inner, extraAttrs = "") {
   if (!isExplorer(url)) return inner;
@@ -344,9 +302,13 @@ function explorerAnchor(url, inner, extraAttrs = "") {
 const protocolOf = (op) => op.protocol || "unknown contract";
 
 function row(op, ruleActive) {
-  const el = document.createElement("article");
+  // The whole row opens the transaction in Arckive Explorer, in a new tab so
+  // the stream and any question asked of it stay put. Same rule as every other
+  // link here: a row whose URL is not obviously ours is not a link at all.
+  const link = isExplorer(op.url);
+  const el = document.createElement(link ? "a" : "article");
+  if (link) { el.href = op.url; el.target = "_blank"; el.rel = "noopener"; }
   el.className = "op fresh";
-  el.tabIndex = 0;
   el.dataset.family = op.family;
   el.style.setProperty("--c", `var(--${op.lane})`);
   if (op.lane_p < 0.35) el.classList.add("low");
@@ -374,7 +336,7 @@ function row(op, ruleActive) {
   el.innerHTML =
     `<span class="lane">${LABEL[op.lane] || op.lane}</span>` +
     `<span class="asset${op.protocol ? "" : " none"}">${escapeHtml(protocolOf(op))}</span>` +
-    `<span class="text">${explorerAnchor(op.url, escapeHtml(op.text))}</span>` +
+    `<span class="text">${escapeHtml(op.text)}</span>` +
     `<span class="rep" data-n="${op.count}"${op.count > 1 ? "" : ' hidden'}>${op.count}x</span>` +
     sure +
     (unread
@@ -390,8 +352,12 @@ function row(op, ruleActive) {
 // counters above keep reporting every transfer. The footer says which.
 let queue = [], ruleActive = false, shown = 0, arrived = 0;
 let held = false, heldSince = 0;
+// Rows are links and a new one is drawn every 55 ms, pushing the rest down:
+// while the mouse is over the stream, or a row has keyboard focus, nothing new
+// is drawn, so the row under the pointer is the one a click opens.
+let pointerIn = false, focusIn = false;
+const stopped = () => held || pointerIn || focusIn;
 const onScreen = new Map();   // family -> the row already showing it
-const detail = new WeakMap(); // row element -> the transfer it shows
 
 function bump(el, by) {
   const cell = el.querySelector(".rep");
@@ -404,7 +370,7 @@ function bump(el, by) {
 }
 
 setInterval(() => {
-  if (held) return;
+  if (stopped()) return;
   const op = queue.shift();
   if (!op) return;
   streamEl.querySelector(".empty")?.remove();
@@ -415,7 +381,6 @@ setInterval(() => {
   if (seen && seen.isConnected) { bump(seen, op.count); return; }
 
   const el = row(op, ruleActive);
-  detail.set(el, op);
   onScreen.set(op.family, el);
   streamEl.insertBefore(el, streamEl.firstChild);
   while (streamEl.childElementCount > MAX_ROWS) {
@@ -428,7 +393,7 @@ setInterval(() => {
 
 function enqueue(ops) {
   arrived += ops.length;
-  if (held) heldSince += ops.reduce((n, o) => n + o.count, 0);
+  if (stopped()) heldSince += ops.reduce((n, o) => n + o.count, 0);
   // A batch holds a few hundred transfers and about twenty-five of them fit
   // on screen before the next one lands. Which twenty-five is the whole
   // question. In arrival order they are whatever Arc happened to send, which
@@ -492,89 +457,32 @@ function setHeld(next) {
   holdBtn.appendChild(holdCount);
   holdBtn.classList.toggle("held", held);
   holdBtn.setAttribute("aria-pressed", String(held));
-  if (!held) { heldSince = 0; holdCount.textContent = ""; }
+  release();
+}
+// The count of what arrived meanwhile clears only once nothing holds the
+// stream any more: not the button, the pointer or a focused row.
+function release() {
+  if (!stopped()) { heldSince = 0; holdCount.textContent = ""; }
 }
 holdBtn.addEventListener("click", () => setHeld(!held));
 setInterval(() => {
-  if (held && heldSince) holdCount.textContent = `${heldSince.toLocaleString()} waiting`;
+  if (stopped() && heldSince) holdCount.textContent = `${heldSince.toLocaleString()} waiting`;
 }, 400);
 
-// ---- detail ----
-const sheet = document.getElementById("sheet");
-let resumeOnClose = false;
-
-// The term can be the viewer's own question, so it is escaped like the value.
-function field(term, value, warn) {
-  return `<dt>${escapeHtml(String(term))}</dt><dd${warn ? ' class="warn"' : ""}>${escapeHtml(String(value))}</dd>`;
-}
-
-function openDetail(el) {
-  const op = detail.get(el);
-  if (!op) return;
-  // Reading a transfer means stopping the stream; it would be gone otherwise.
-  if (!held) { setHeld(true); resumeOnClose = true; }
-
-  document.getElementById("card").style.setProperty("--c", `var(--${op.lane})`);
-  document.getElementById("sheet-lane").textContent = op.ruled
-    ? `${LABEL[op.lane] || op.lane} · read off the transfer`
-    : op.offline
-    ? `${LABEL[op.lane] || op.lane} · model offline`
-    : `${LABEL[op.lane] || op.lane} · confidence ${op.lane_p.toFixed(2)}`;
-  document.getElementById("sheet-text").textContent = op.text;
-
-  const count = Number(el.querySelector(".rep").dataset.n) || op.count;
-  let rows = field("What the lane was read from", op.shape);
-  if (op.story && op.story !== op.shape) rows += field("What questions read", op.story);
-  rows += field("Facts", op.facts.join(", ") || "—");
-  rows += field("Protocol", protocolOf(op));
-  rows += field("Amount", `${op.amount.toLocaleString(undefined, {maximumFractionDigits: 6})} USDC`);
-  rows += field("From", op.frm);
-  rows += field("To", op.to);
-  rows += field("Seen", count === 1 ? "once" : `${count.toLocaleString()} times`);
-  const mine = answerFor(op);
-  if (mine !== null) {
-    rows += field(currentRule || "Answer to your question",
-                  `${pct(mine)} (${mine >= myThreshold ? "yes" : "no"}; yes from ${pct(myThreshold)})`);
-  }
-  document.getElementById("sheet-rows").innerHTML = rows;
-
-  // Same rule as every other link on the page: only our own explorer is
-  // ever clickable, whatever the row claims its URL is.
-  const link = document.getElementById("sheet-link");
-  if (isExplorer(op.url)) { link.href = op.url; link.hidden = false; }
-  else { link.removeAttribute("href"); link.hidden = true; }
-  document.getElementById("sheet-note").textContent =
-    op.ruled && op.lane === "uncertain"
-      ? ((op.shape || "").endsWith("could not be read.")
-        ? "The transaction could not be read, so no lane is claimed."
-        : "Nothing in this transaction is recognised, so no lane is claimed: any lane would be a guess.")
-    : op.ruled ? "This lane is read off the transfer itself, not judged by the model."
-    : op.offline ? "The decision model was unreachable, so this transfer was not judged."
-    : op.lane_p < 0.35 ? "Below the confidence threshold, so it was not assigned a lane."
-    : "The label is the model's judgement, not a fact.";
-
-  sheet.hidden = false;
-  document.getElementById("sheet-close").focus();
-}
-
-function closeDetail() {
-  sheet.hidden = true;
-  if (resumeOnClose) { setHeld(false); resumeOnClose = false; }
-}
-
-streamEl.addEventListener("click", (e) => {
-  const el = e.target.closest(".op");
-  if (el) openDetail(el);
+// Only a mouse holds the stream: a touch "hover" sticks after the tap that
+// opened a row, and would leave the stream frozen on return.
+streamEl.addEventListener("pointerenter", (e) => {
+  if (e.pointerType === "mouse") pointerIn = true;
 });
-streamEl.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" && e.key !== " ") return;
-  const el = e.target.closest(".op");
-  if (el) { e.preventDefault(); openDetail(el); }
+streamEl.addEventListener("pointerleave", (e) => {
+  if (e.pointerType === "mouse") { pointerIn = false; release(); }
 });
-document.getElementById("sheet-close").addEventListener("click", closeDetail);
-sheet.addEventListener("click", (e) => { if (e.target === sheet) closeDetail(); });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !sheet.hidden) closeDetail();
+// Keyboard focus only: a clicked row keeps focus after the pointer leaves.
+streamEl.addEventListener("focusin", (e) => {
+  if (e.target.matches(":focus-visible")) focusIn = true;
+});
+streamEl.addEventListener("focusout", (e) => {
+  if (!streamEl.contains(e.relatedTarget)) { focusIn = false; release(); }
 });
 
 // A high score on its own means nothing: a question can score high on almost
