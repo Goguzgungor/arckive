@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startDb, type TestDb } from './fixture/db.ts';
 import * as R from './fixture/rows.ts';
 import { loadConfig } from '../lib/config.js';
@@ -23,9 +23,11 @@ describe('runtime', () => {
       expect(rt.insights).toEqual({ on: true, firstBlock: R.FIRST_LANE_BLOCK, firstTime: expect.any(Number) });
       expect(rt.head).toEqual({ block: R.CURSOR, time: Date.UTC(2026, 9, 8, 0, 0, 38) / 1000 });
       expect(rt.dbBytes).toBeGreaterThan(0);
-      await new Promise((r) => setTimeout(r, 1500));
-      expect(rt.hub.newest()).not.toBeNull();
-      expect(await rt.rollup.rolledTo()).toBe(R.CURSOR);
+      // the tailer seeds the hub and the rollup folds the fixture on their own timers
+      await vi.waitFor(async () => {
+        expect(rt.hub.newest()).not.toBeNull();
+        expect(await rt.rollup.rolledTo()).toBe(R.CURSOR);
+      }, { timeout: 30_000, interval: 100 });
     } finally {
       await rt.stop();
     }

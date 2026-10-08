@@ -112,10 +112,15 @@ describe('tailer (lanes on)', () => {
     const viewer = collector();
     hub.subscribe(viewer, null);
     const stop = tailer.start();
-    await new Promise((r) => setTimeout(r, 1500));
-    stop();
-    expect(viewer.got.some((c) => c.includes('event: stats'))).toBe(true);
-    expect(tailer.cycleStats().last).toEqual(expect.any(Number));
+    try {
+      // stats go out once a second; a loaded machine may take longer
+      await vi.waitFor(() => {
+        expect(viewer.got.some((c) => c.includes('event: stats'))).toBe(true);
+        expect(tailer.cycleStats().last).toEqual(expect.any(Number));
+      }, { timeout: 15_000, interval: 50 });
+    } finally {
+      stop();
+    }
   });
 });
 
