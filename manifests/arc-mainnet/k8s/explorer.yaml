@@ -8,11 +8,13 @@
 # (often address-poisoning spam) and ERC-20 self-transfers have no native twin
 # and are not indexed here; index 0x3600…0000 too if they must appear. Needs a Secret pg-dsn (see ../../arc-testnet/k8s/pg-dsn-secret.example.yaml).
 #
-# Lanes (spec.insights) are added later, once the backfill nears the head,
-# with an insights block whose startBlock is negative (e.g. -2000: lanes from
-# 2,000 blocks before the head when insights first run). Without it they
-# would start at the indexer's start — block 0 here — and classify the whole
-# history.
+# Lanes (spec.insights) start 100 blocks before the head when the insight loop
+# first runs: without a startBlock they would start at the indexer's start —
+# block 0 here — and classify the whole history. They are read by the Arc
+# Laya gate on the host (the one Arc Radar uses, reached as host.k3d.internal
+# from k3d), with its token in a Secret made by hand, never committed:
+#   kubectl create secret generic laya-gate \
+#     --from-literal=header="Authorization: Bearer $RADAR_TOKEN"
 apiVersion: arckive.org/v1alpha1
 kind: Indexer
 metadata:
@@ -33,6 +35,17 @@ spec:
   polling:
     batchBlocks: 2000
     intervalMs: 1000
+  insights:
+    laya:
+      url: http://host.k3d.internal:8921
+      headerSecretRef: { name: laya-gate }
+    # block + receipts reads at the head; kept off rpc.mainnet.arc.io, whose
+    # per-minute quota ingest already spends
+    rpc:
+      - https://rpc.blockdaemon.mainnet.arc.io
+      - https://rpc.beamrpc.com
+      - https://rpc.drpc.mainnet.arc.io
+    startBlock: -100
   contracts:
     - name: usdc
       address: "0xfffffffffffffffffffffffffffffffffffffffe"
