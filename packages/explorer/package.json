@@ -1,0 +1,30 @@
+{
+  "name": "@arckive/explorer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "test": "vitest run",
+    "smoke": "playwright test -c smoke/playwright.config.ts"
+  },
+  "dependencies": {
+    "@arckive/core": "workspace:*",
+    "next": "^15.5.27",
+    "pg": "^8.16.0",
+    "pino": "^9.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "viem": "^2.31.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@testcontainers/postgresql": "^11.0.3",
+    "@types/pg": "^8.15.4",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0"
+  }
+}
