@@ -97,7 +97,9 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .edge .log { font: 11px var(--mono); color: var(--faint); }
 .swapbox { margin-top: 26px; display: grid; grid-template-columns: 1fr 60px 1fr; align-items: center; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); padding: 18px 0; }
 .swapbox .k { font: 500 10.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
-.swapbox .n { font: 34px var(--serif); font-variant-numeric: tabular-nums; margin-top: 4px; overflow-wrap: anywhere; }
+.swapbox .n { font: 34px var(--serif); font-variant-numeric: tabular-nums; margin-top: 4px; overflow-wrap: normal; word-break: normal; }
+/* a raw integer (decimals unknown): smaller, wrapping only at its <wbr> after each comma */
+.swapbox .n.long { font-size: 24px; line-height: 1.25; }
 .swapbox .t { font: 12.5px var(--mono); color: var(--dim); }
 .swapbox .right { text-align: right; }
 .swapbox .arrow { text-align: center; font: 28px var(--serif); color: var(--faint); }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as R from './fixture/rows.ts';
 import type { TxData } from '../lib/tx.js';
 import {
-  eventRows, flowView, isChain, legsLabel, swapView, tokenAddresses, txFacts, txHeadline, txPath,
+  eventRows, flowCaption, flowView, isChain, legsLabel, swapView, tokenAddresses, txFacts, txHeadline, txPath,
 } from '../lib/txstory.js';
 
 const POOL = { id: R.SWAP_POOL, currency0: R.ZERO, currency1: R.SWAP_TOKEN, fee: 2500, tickSpacing: 50, hooks: R.ZERO };
@@ -26,8 +26,8 @@ describe('the known mainnet swap', () => {
   it('reads negative deltas as paid into the pool (mainnet tx 0x9a83…015a)', () => {
     expect(swapView(SWAP.swaps[0]!, POOL, TOKENS)).toEqual({
       li: 3, pool: R.SWAP_POOL, fee: '0.25%', known: true,
-      paid: { amount: '476.93', token: 'USDC (native)', tokenAddress: R.ZERO },
-      received: { amount: '13,763,833.33', token: 'PUMP', tokenAddress: R.SWAP_TOKEN },
+      paid: { amount: '476.93', token: 'USDC (native)', tokenAddress: R.ZERO, decimals: true, note: 'USDC (native)' },
+      received: { amount: '13,763,833.33', token: 'PUMP', tokenAddress: R.SWAP_TOKEN, decimals: true, note: 'PUMP' },
     });
   });
 
@@ -76,9 +76,15 @@ describe('other swaps', () => {
     const tx = base({ swaps: SWAP.swaps });
     expect(txHeadline(tx)).toEqual(['A swap on Uniswap v4.']);
     expect(swapView(SWAP.swaps[0]!, undefined, {})).toMatchObject({ known: false, paid: null, received: null });
-    expect(swapView(SWAP.swaps[0]!, POOL, { [R.SWAP_TOKEN]: { symbol: null, decimals: null } }).received).toEqual({
-      amount: '13,763,833,330,793,760,056,038,261 (decimals unknown)', token: '0x6e71…b777', tokenAddress: R.SWAP_TOKEN,
+    // the raw integer, grouped; what is unknown goes on the line under it
+    const unknown = { [R.SWAP_TOKEN]: { symbol: null, decimals: null } };
+    expect(swapView(SWAP.swaps[0]!, POOL, unknown).received).toEqual({
+      amount: '13,763,833,330,793,760,056,038,261', token: '0x6e71…b777', tokenAddress: R.SWAP_TOKEN,
+      decimals: false, note: 'token 0x6e71…b777 · decimals unknown',
     });
+    expect(txPath(SWAP, unknown).slice(-3)).toEqual([' It came back as ', { b: '13,763,833,330,793,760,056,038,261' }, ' (raw units) of 0x6e71…b777.']);
+    // a symbol without decimals
+    expect(swapView(SWAP.swaps[0]!, POOL, { [R.SWAP_TOKEN]: { symbol: 'PUMP', decimals: null } }).received?.note).toBe('PUMP · decimals unknown');
   });
 });
 
@@ -106,6 +112,12 @@ describe('transfers without a swap', () => {
     const tx = base({ transfers: [t(0, R.PAYER, R.PAYEE, 1), t(1, R.CHAIN[0]!, R.CHAIN[1]!, 2)] });
     expect(txHeadline(tx)).toEqual([{ b: '2' }, ' USDC movements in this transaction, ', { b: '3.00 USDC' }, ' in all.']);
     expect(flowView(tx.transfers)).toBeNull();
+  });
+
+  it('captions the flow, or the list below when there is no flow to draw', () => {
+    expect(flowCaption(true)).toMatch(/^Fig\. 1 — every USDC movement in this transaction, in log order\./);
+    expect(flowCaption(false)).toMatch(/^Fig\. 1 — the USDC movements are listed under Events, in log order;/);
+    for (const drawn of [true, false]) expect(flowCaption(drawn)).toContain('gas and other tokens are not shown');
   });
 
   it('draws no flow for a chain longer than six', () => {

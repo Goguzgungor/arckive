@@ -55,9 +55,11 @@ export function txHeadline(tx: TxData): Part[] {
 }
 
 export interface SwapSide {
-  amount: string;
+  amount: string; // with unknown decimals: the raw integer, grouped
   token: string;
   tokenAddress: string;
+  decimals: boolean; // whether the amount is scaled by the token's decimals
+  note: string; // the line under the amount: the token, and what is not known about it
 }
 
 export interface SwapView {
@@ -69,11 +71,15 @@ export interface SwapView {
   known: boolean;
 }
 
+// A token that does not answer decimals() shows its raw integer: scaling it
+// by a guess would print a wrong amount with confidence.
 function side(address: string, delta: bigint, meta: TokenMeta | undefined): SwapSide {
   const decimals = address === ZERO_ADDRESS ? 18 : (meta?.decimals ?? null);
-  const amount = decimals === null ? `${fmtInt(abs(delta))} (decimals unknown)` : fmtAmount(unitsToDecimal(abs(delta), decimals));
-  const token = address === ZERO_ADDRESS ? 'USDC (native)' : (meta?.symbol ?? shortAddr(address));
-  return { amount, token, tokenAddress: address };
+  const amount = decimals === null ? fmtInt(abs(delta)) : fmtAmount(unitsToDecimal(abs(delta), decimals));
+  const symbol = address === ZERO_ADDRESS ? 'USDC (native)' : (meta?.symbol ?? null);
+  const token = symbol ?? shortAddr(address);
+  const note = [symbol ?? `token ${token}`, ...(decimals === null ? ['decimals unknown'] : [])].join(' · ');
+  return { amount, token, tokenAddress: address, decimals: decimals !== null, note };
 }
 
 // Uniswap v4 logs Swap amounts as the swapper's balance deltas: negative was
@@ -107,10 +113,20 @@ export function txPath(tx: TxData, tokens: Record<string, TokenMeta>): Part[] {
   const s = tx.swaps[0];
   if (s) {
     const v = swapView(s, tx.pools[s.pool], tokens);
-    if (v.received && v.received.tokenAddress !== ZERO_ADDRESS) out.push(' It came back as ', { b: v.received.amount }, ` of ${v.received.token}.`);
-    else if (v.paid && v.paid.tokenAddress !== ZERO_ADDRESS) out.push(' It was paid for with ', { b: v.paid.amount }, ` of ${v.paid.token}.`);
+    const of = (x: SwapSide): string => `${x.decimals ? '' : ' (raw units)'} of ${x.token}.`;
+    if (v.received && v.received.tokenAddress !== ZERO_ADDRESS) out.push(' It came back as ', { b: v.received.amount }, of(v.received));
+    else if (v.paid && v.paid.tokenAddress !== ZERO_ADDRESS) out.push(' It was paid for with ', { b: v.paid.amount }, of(v.paid));
   }
   return out;
+}
+
+// Under "How the money moved": the figure's caption, or, when the movements
+// form no chain to draw, a pointer to the list that does show them.
+export function flowCaption(drawn: boolean): string {
+  const scope = 'Arckive indexes USDC and Uniswap v4 events only; gas and other tokens are not shown.';
+  return drawn
+    ? `Fig. 1 — every USDC movement in this transaction, in log order. ${scope}`
+    : `Fig. 1 — the USDC movements are listed under Events, in log order; they do not form one chain to draw. ${scope}`;
 }
 
 export interface FlowView {

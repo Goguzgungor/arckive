@@ -12,11 +12,12 @@ import { Status } from '../../../components/Status.js';
 import { SwapBox } from '../../../components/SwapBox.js';
 import { fmtDateLong, fmtDateTime, fmtInt, shortHash } from '../../../lib/format.js';
 import { liveState } from '../../../lib/live.js';
+import { errText, log } from '../../../lib/log.js';
 import { readyRuntime } from '../../../lib/runtime.js';
 import { decodeParam, parseTxHash } from '../../../lib/search.js';
 import { laneOrder, loadLane, loadTx } from '../../../lib/tx.js';
 import {
-  eventRows, flowView, legsLabel, swapView, tokenAddresses, txFacts, txHeadline, txPath, type EventRow,
+  eventRows, flowCaption, flowView, legsLabel, swapView, tokenAddresses, txFacts, txHeadline, txPath, type EventRow,
 } from '../../../lib/txstory.js';
 
 export const dynamic = 'force-dynamic';
@@ -40,7 +41,11 @@ export default async function TxPage({ params }: Props) {
   const tx = await loadTx(rt.pool, rt.t, hash);
   if (!tx) notFound();
   const [tokens, lane] = await Promise.all([
-    rt.tokens.get(tokenAddresses(tx)),
+    // symbols are decoration: a failed read shows the swap with unknown tokens, not an error page
+    rt.tokens.get(tokenAddresses(tx)).catch((err: unknown) => {
+      log.warn({ err: errText(err), tx: hash }, 'token metadata read failed');
+      return {};
+    }),
     loadLane(rt.pool, rt.t, rt.insights, tx.block, laneOrder(tx)),
   ]);
   const flow = flowView(tx.transfers);
@@ -66,9 +71,7 @@ export default async function TxPage({ params }: Props) {
                 How the money moved <span>{legsLabel(tx)}</span>
               </h2>
               {flow && <Flow flow={flow} />}
-              <p className="fig">
-                Fig. 1 — every USDC movement in this transaction, in log order. Arckive indexes USDC and Uniswap v4 events only; gas and other tokens are not shown.
-              </p>
+              <p className="fig">{flowCaption(flow !== null)}</p>
             </>
           )}
           {tx.swaps.map((s) => (
