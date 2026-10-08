@@ -394,7 +394,13 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   `usdc_transfer` into `explorer.address_daily` (rows and `rollup_cursor` in
   one transaction; a transaction-scoped advisory lock keeps one writer; a
   statement timeout halves the range). Address pages read totals from it,
-  never by scanning transfers.
+  never by scanning transfers. If the worker's schema is recreated, its
+  `_cursor` falls behind `explorer.rollup_cursor` and the address ids start
+  over: the rollup then folds nothing and logs an error once a minute until
+  the explorer's tables are reset by hand —
+  `TRUNCATE explorer.address_daily, explorer.rollup_cursor` (as the
+  `explorer` role); the rollup then folds the new schema from its start.
+  The tailer notices the same rewind on its own and reloads the tape.
 - **Database access** is the role from `manifests/arc-mainnet/k8s/explorer-role.sql`:
   `SELECT` on the worker's schema (default privileges cover tables added
   later), owner of schema `explorer`, `statement_timeout` 5 s. The explorer

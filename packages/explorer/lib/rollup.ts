@@ -10,13 +10,18 @@ export const MAX_SPAN = 50_000n;
 const MIN_SPAN = 500n;
 const QUERY_CANCELED = '57014';
 const IDLE_MS = 2000;
+const AHEAD_LOG_MS = 60_000;
 
-export type StepResult = 'more' | 'idle' | 'locked';
+// ahead: rollup_cursor is past the worker's _cursor; nothing is folded
+export type StepResult = 'more' | 'idle' | 'locked' | 'ahead';
 
 export interface RollupOptions {
   maxSpan?: bigint;
   // tests: runs after the fold and the cursor update, before COMMIT
   beforeCommit?: () => Promise<void>;
+  // tests: the clock for the "ahead" error's once a minute, and the idle wait
+  now?: () => number;
+  idleMs?: number;
 }
 
 const min = (a: bigint, b: bigint): bigint => (a < b ? a : b);
@@ -52,6 +57,8 @@ export class Rollup {
   #span: bigint;
   readonly #maxSpan: bigint;
   readonly #sql: string;
+  // the last step that found the rollup past the worker
+  #ahead: { rolledTo: string; cursor: string } | null = null;
 
   constructor(
     private readonly pool: pg.Pool,
@@ -91,7 +98,15 @@ export class Rollup {
       const cursor = BigInt(head.rows[0]!.n);
       const done = await c.query<{ n: string }>('SELECT block_number::text AS n FROM explorer.rollup_cursor WHERE id = 1');
       const from = done.rowCount ? BigInt(done.rows[0]!.n) : -1n;
-      if (from >= cursor) {
+      // The worker's cursor only moves forward. Behind the rollup, its schema
+      // was recreated: address ids and rows start over, and folding on would
+      // add new rows onto totals keyed by ids that now name other addresses.
+      if (from > cursor) {
+        await c.query('ROLLBACK');
+        this.#ahead = { rolledTo: from.toString(), cursor: cursor.toString() };
+        return 'ahead';
+      }
+      if (from === cursor) {
         await c.query('ROLLBACK');
         return 'idle';
       }
@@ -125,13 +140,25 @@ export class Rollup {
   }
 
   // Through the backfill range after range, then every 2 s on what is new.
+  // Ahead of the worker it folds nothing and says so once a minute: only an
+  // operator can reset the explorer's tables.
   start(logger: Logger): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const now = this.opts.now ?? Date.now;
+    let saidAt = -Infinity;
     const run = async (): Promise<void> => {
-      let wait = IDLE_MS;
+      let wait = this.opts.idleMs ?? IDLE_MS;
       try {
-        if ((await this.step()) === 'more') wait = 0;
+        const r = await this.step();
+        if (r === 'more') wait = 0;
+        if (r === 'ahead' && now() - saidAt >= AHEAD_LOG_MS) {
+          saidAt = now();
+          logger.error(
+            this.#ahead,
+            "the rollup is past the worker's cursor (its schema was recreated); address totals stop here until the explorer's tables are reset: TRUNCATE explorer.address_daily, explorer.rollup_cursor",
+          );
+        }
       } catch (err) {
         logger.warn({ err: errText(err), span: this.#span.toString() }, 'rollup range failed');
       }

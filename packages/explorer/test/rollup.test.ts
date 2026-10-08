@@ -1,9 +1,10 @@
 import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startDb, type TestDb } from './fixture/db.ts';
-import { BUSY, SELF } from './fixture/rows.ts';
+import { BUSY, CURSOR, SELF } from './fixture/rows.ts';
 import { tables } from '../lib/db.js';
 import { ensureExplorerSchema } from '../lib/explorer-schema.js';
+import type { Logger } from '../lib/log.js';
 import { ROLLUP_LOCK, Rollup } from '../lib/rollup.js';
 
 const T = tables({ schema: 'idx_arc_explorer', usdcTable: 'usdc_transfer', poolPrefix: 'poolmanager_' });
@@ -107,5 +108,27 @@ describe('rollup', () => {
     const r = new Rollup(db.explorer, T);
     await drain(r);
     expect(await r.step()).toBe('idle');
+  });
+
+  it('folds nothing, and says once a minute how to reset, when it is ahead of the worker (its schema was recreated)', async () => {
+    await db.admin.query('INSERT INTO explorer.rollup_cursor (id, block_number) VALUES (1, $1)', [CURSOR + 1000]);
+    let now = 0;
+    const r = new Rollup(db.explorer, T, { now: () => now, idleMs: 10 });
+    expect(await r.step()).toBe('ahead');
+    expect((await db.explorer.query('SELECT count(*)::int AS n FROM explorer.address_daily')).rows[0].n).toBe(0);
+    expect(await r.rolledTo()).toBe(CURSOR + 1000);
+    const errors: string[] = [];
+    const logger = { error: (_o: unknown, m: string) => errors.push(m), warn: () => undefined } as unknown as Logger;
+    const steps = vi.spyOn(r, 'step');
+    const stop = r.start(logger);
+    try {
+      await vi.waitFor(() => expect(steps.mock.calls.length).toBeGreaterThanOrEqual(5), { timeout: 15_000 });
+      expect(errors).toHaveLength(1);
+      now += 60_000;
+      await vi.waitFor(() => expect(errors).toHaveLength(2), { timeout: 15_000 });
+    } finally {
+      stop();
+    }
+    expect(errors[0]).toMatch(/TRUNCATE explorer\.address_daily, explorer\.rollup_cursor/);
   });
 });
