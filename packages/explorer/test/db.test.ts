@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ROLE, addInsightsTables, startDb, type TestDb } from './fixture/db.ts';
-import { tables } from '../lib/db.js';
+import { createPool, tables } from '../lib/db.js';
 import { SchemaError, checkSchema, hasInsights } from '../lib/schema.js';
 import { ensureExplorerSchema } from '../lib/explorer-schema.js';
 
@@ -27,6 +27,22 @@ describe('explorer database role (insights on)', () => {
   it('runs with a 5 s statement timeout', async () => {
     const r = await db.explorer.query('SHOW statement_timeout');
     expect(r.rows[0].statement_timeout).toBe('5s');
+  });
+
+  it('sets the 5 s statement timeout itself and stops waiting for a busy pool', async () => {
+    const pool = createPool({ databaseUrl: db.adminUrl }, { max: 1, connectionTimeoutMillis: 200 });
+    try {
+      // the owner role has no timeout of its own: this one is the client's
+      expect((await pool.query('SHOW statement_timeout')).rows[0].statement_timeout).toBe('5s');
+      const held = await pool.connect();
+      try {
+        await expect(pool.query('SELECT 1')).rejects.toThrow(/timeout/);
+      } finally {
+        held.release();
+      }
+    } finally {
+      await pool.end();
+    }
   });
 
   it('applies the role SQL again without error', async () => {

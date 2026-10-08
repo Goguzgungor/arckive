@@ -14,6 +14,10 @@ describe('runtime', () => {
   it('boots: checks the schema, creates its tables, starts the tailer and the rollup', async () => {
     const rt = createRuntime(loadConfig({ DATABASE_URL: db.explorerUrl }), reader);
     try {
+      // pages wait at most 3 s for a connection; the jobs have their own clients
+      expect(rt.pool).not.toBe(rt.jobs);
+      expect(rt.pool.options).toMatchObject({ max: 10, connectionTimeoutMillis: 3000, statement_timeout: 5000 });
+      expect(rt.jobs.options).toMatchObject({ max: 4, statement_timeout: 5000 });
       await bootRuntime(rt, () => { throw new Error('should not exit'); });
       expect(rt.ready).toBe(true);
       expect(rt.insights).toEqual({ on: true, firstBlock: R.FIRST_LANE_BLOCK, firstTime: expect.any(Number) });
@@ -23,9 +27,9 @@ describe('runtime', () => {
       expect(rt.hub.newest()).not.toBeNull();
       expect(await rt.rollup.rolledTo()).toBe(R.CURSOR);
     } finally {
-      rt.stop();
-      await rt.pool.end();
+      await rt.stop();
     }
+    expect(rt.pool.ended && rt.jobs.ended).toBe(true);
   });
 
   it('exits when the schema is not the one it reads', async () => {
@@ -36,8 +40,7 @@ describe('runtime', () => {
       expect(code).toBe(1);
       expect(rt.ready).toBe(false);
     } finally {
-      rt.stop();
-      await rt.pool.end();
+      await rt.stop();
     }
   });
 });

@@ -3,10 +3,23 @@ import type { Config } from './config.js';
 
 export const q = (id: string): string => `"${id}"`;
 
+export interface PoolOptions {
+  max: number;
+  // how long a query waits for a free client before it fails (the page's 503)
+  connectionTimeoutMillis?: number;
+}
+
 // pg returns bigint and numeric columns as strings, which is what amounts
-// need. The role's 5 s statement_timeout (explorer-role.sql) bounds every query.
-export function createPool(cfg: Pick<Config, 'databaseUrl'>): pg.Pool {
-  return new pg.Pool({ connectionString: cfg.databaseUrl, max: 10, application_name: 'arckive-explorer' });
+// need. Every query is bounded at 5 s by the client itself, not only by the
+// role (explorer-role.sql): a DSN for another role must not lift the bound.
+export function createPool(cfg: Pick<Config, 'databaseUrl'>, opts: PoolOptions): pg.Pool {
+  return new pg.Pool({
+    connectionString: cfg.databaseUrl,
+    max: opts.max,
+    connectionTimeoutMillis: opts.connectionTimeoutMillis,
+    statement_timeout: 5000,
+    application_name: 'arckive-explorer',
+  });
 }
 
 export interface Tables {

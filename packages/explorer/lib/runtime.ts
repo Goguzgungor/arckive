@@ -19,7 +19,8 @@ export interface Head {
 
 export interface Runtime {
   cfg: Config;
-  pool: pg.Pool;
+  pool: pg.Pool; // pages, routes and token writes
+  jobs: pg.Pool; // the tailer, the rollup, the refresh
   t: Tables;
   hub: Hub;
   tokens: Tokens;
@@ -30,52 +31,58 @@ export interface Runtime {
   head: Head | null;
   dbBytes: number | null;
   rolledTo: number | null;
-  stop(): void;
+  stop(): Promise<void>; // stops the jobs, closes the streams, ends both pools
 }
 
 const REFRESH_MS = 5000;
 // what stop() undoes: the boot loop, the tailer, the rollup, the refresh timer
 const STOPS = new WeakMap<Runtime, Array<() => void>>();
 
+// Two pools: a burst of page views must not take the tailer's or the
+// rollup's connections (the rollup holds one for up to 120 s), and a page
+// waiting for a connection gives up after 3 s instead of hanging.
 export function createRuntime(cfg: Config, reader: TokenReader = rpcTokenReader(cfg.arcRpc)): Runtime {
-  const pool = createPool(cfg);
+  const pool = createPool(cfg, { max: 10, connectionTimeoutMillis: 3000 });
+  // a database that stops answering connects must not freeze the tailer for minutes
+  const jobs = createPool(cfg, { max: 4, connectionTimeoutMillis: 10_000 });
   // an idle client's error (the database restarting) must not crash the process
-  pool.on('error', (err) => log.warn({ err: errText(err) }, 'idle database client failed'));
+  for (const p of [pool, jobs]) p.on('error', (err) => log.warn({ err: errText(err) }, 'idle database client failed'));
   const t = tables(cfg);
   const hub = new Hub(cfg.maxStreams);
   const stops: Array<() => void> = [];
   const rt: Runtime = {
-    cfg, pool, t, hub,
+    cfg, pool, jobs, t, hub,
     tokens: new Tokens(pool, reader),
     tailer: undefined as unknown as Tailer,
-    rollup: new Rollup(pool, t),
+    rollup: new Rollup(jobs, t),
     ready: false,
     insights: { on: false, firstBlock: null, firstTime: null },
     head: null,
     dbBytes: null,
     rolledTo: null,
-    stop() {
+    async stop() {
       for (const s of stops.splice(0)) s();
       hub.closeAll();
+      await Promise.all([pool.end(), jobs.end()]);
     },
   };
-  rt.tailer = new Tailer({ pool, t, hub, holdMs: cfg.laneHoldMs, lanes: () => rt.insights.on, log });
+  rt.tailer = new Tailer({ pool: jobs, t, hub, holdMs: cfg.laneHoldMs, lanes: () => rt.insights.on, log });
   STOPS.set(rt, stops);
   return rt;
 }
 
 async function refresh(rt: Runtime): Promise<void> {
-  const on = await hasInsights(rt.pool, rt.t);
+  const on = await hasInsights(rt.jobs, rt.t);
   // the first lane's block is read once it exists: older transactions predate lanes
-  if (on !== rt.insights.on || (on && rt.insights.firstBlock === null)) rt.insights = await loadInsightsInfo(rt.pool, rt.t, on);
-  const h = await rt.pool.query<{ n: string; t: string | null }>(
+  if (on !== rt.insights.on || (on && rt.insights.firstBlock === null)) rt.insights = await loadInsightsInfo(rt.jobs, rt.t, on);
+  const h = await rt.jobs.query<{ n: string; t: string | null }>(
     `SELECT c.last_block::text AS n,
             (SELECT extract(epoch from b.block_time)::bigint::text FROM ${rt.t.blocks} b
               WHERE b.block_number <= c.last_block ORDER BY b.block_number DESC LIMIT 1) AS t
      FROM ${rt.t.cursor} c WHERE c.id = 1`,
   );
   rt.head = h.rowCount && h.rows[0]!.t !== null ? { block: Number(h.rows[0]!.n), time: Number(h.rows[0]!.t) } : null;
-  const size = await rt.pool.query<{ b: string }>('SELECT pg_database_size(current_database())::text AS b');
+  const size = await rt.jobs.query<{ b: string }>('SELECT pg_database_size(current_database())::text AS b');
   rt.dbBytes = Number(size.rows[0]!.b);
   rt.rolledTo = await rt.rollup.rolledTo();
 }
@@ -92,8 +99,8 @@ export async function bootRuntime(rt: Runtime, exit: (code: number) => void = (c
   for (;;) {
     if (stopped) return;
     try {
-      await checkSchema(rt.pool, rt.t);
-      await ensureExplorerSchema(rt.pool);
+      await checkSchema(rt.jobs, rt.t);
+      await ensureExplorerSchema(rt.jobs);
       await refresh(rt);
       break;
     } catch (err) {

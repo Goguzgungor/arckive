@@ -398,7 +398,11 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
 - **Database access** is the role from `manifests/arc-mainnet/k8s/explorer-role.sql`:
   `SELECT` on the worker's schema (default privileges cover tables added
   later), owner of schema `explorer`, `statement_timeout` 5 s. The explorer
-  never writes to the worker's schema.
+  never writes to the worker's schema. Two pools (`lib/runtime.ts`):
+  `pool` for pages, routes and token writes (10 clients, a 3 s wait for a
+  free one), `jobs` for the tailer, the rollup and the refresh (4) — a page
+  spike must not starve the tailer. Both set `statement_timeout` 5 s in the
+  client config as well; the rollup's `SET LOCAL` raises its own.
 - **Client-safe modules**: client components import only `lib/format`,
   `lanes`, `names`, `search`, `types`, `parts`, `pacing`, `stream-client`,
   `homestory`, `live` and the components without database access — never

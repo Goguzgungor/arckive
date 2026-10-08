@@ -89,7 +89,8 @@ Arc RPCs ──▶ worker (Indexer arc-explorer) ──▶ Postgres 17 (k3d, PVC
   existing tables and views, and sets the worker role's default privileges
   (`ALTER DEFAULT PRIVILEGES FOR ROLE arckive IN SCHEMA idx_arc_explorer
   GRANT SELECT ON TABLES TO explorer`) for tables the worker adds later.
-  `statement_timeout` 5 s for the role; a pool of 10 connections.
+  `statement_timeout` 5 s for the role; a pool of 10 connections for pages
+  and a separate pool of 4 for the tailer, the rollup and the refresh.
 - **Configuration** (env, read with bracket notation, validated with zod at
   start): `DATABASE_URL`, `ARCKIVE_SCHEMA` (`idx_arc_explorer`),
   `USDC_TABLE` (`usdc_transfer`), `POOL_TABLE_PREFIX` (`poolmanager_`),
