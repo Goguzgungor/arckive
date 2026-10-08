@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { SearchBox } from './SearchBox.js';
+import { ThemeToggle } from './ThemeToggle.js';
 
 export function Masthead({ query = '', status }: { query?: string; status: ReactNode }) {
   return (
@@ -9,7 +10,10 @@ export function Masthead({ query = '', status }: { query?: string; status: React
         arckive <span>explorer</span>
       </Link>
       <SearchBox initial={query} />
-      <div className="net">{status}</div>
+      <div className="net">
+        {status}
+        <ThemeToggle />
+      </div>
     </header>
   );
 }

@@ -41,7 +41,7 @@ describe('lane shares', () => {
   it("lists the usual lanes in core's order, and others when present", () => {
     const shares = laneShares(S({ lanes: { swap: 123, payment: 30, uncertain: 8 } }));
     expect(shares.map((s) => s.lane)).toEqual(['swap', 'bridge', 'liquidity', 'vault', 'lending', 'signed_payment', 'payment', 'spam', 'issuance', 'uncertain']);
-    expect(shares[0]).toEqual({ lane: 'swap', label: 'Swap', ink: '#7442d1', pct: 76 });
+    expect(shares[0]).toEqual({ lane: 'swap', label: 'Swap', ink: 'var(--l-swap)', pct: 76 });
   });
 });
 

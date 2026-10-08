@@ -415,9 +415,15 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   client config as well; the rollup's `SET LOCAL` raises its own.
 - **Client-safe modules**: client components import only `lib/format`,
   `lanes`, `names`, `search`, `types`, `parts`, `pacing`, `stream-client`,
-  `homestory`, `live` and the components without database access — never
-  `pg`, `@arckive/core` or `lib/runtime`. Lane order and wording come from
-  core's `LANES`; `test/lanes.test.ts` holds `lib/lanes.ts` to it.
+  `homestory`, `live`, `theme` and the components without database access —
+  never `pg`, `@arckive/core` or `lib/runtime`. Lane order and wording come
+  from core's `LANES`; `test/lanes.test.ts` holds `lib/lanes.ts` to it.
+- **Themes**: day and night editions are CSS custom properties in
+  `app/globals.css` (the night block twice: under `prefers-color-scheme` and
+  under `:root[data-theme='dark']`); the masthead switch stores the reader's
+  pick in localStorage and `lib/theme.ts`'s head script applies it before
+  paint. Colours are never hard-coded in components: lane inks are
+  `var(--l-<lane>)`, and `test/lanes.test.ts` checks each edition sets every one.
 - **Amounts never pass through a float**: integer strings → `unitsToDecimal`
   → `fmtAmount`. Select dates as `::text` (pg parses `date` into local
   time) and block times as epoch seconds.
