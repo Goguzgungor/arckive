@@ -389,8 +389,12 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   250 ms) releases blocks up to the insights cursor, or once their
   `_ingested_at` is older than `LANE_HOLD_MS` (8 s) — never past `_cursor`
   (`lib/release.ts`) — and publishes one `block` message per block to the
-  hub; with no `_insights` tables (lanes not switched on) it releases at once
-  and never names them in SQL. The **rollup** (`lib/rollup.ts`) folds
+  hub, a cycle's blocks as one chunk per stream (`Hub.publishBlocks`: a
+  stream's queue counts chunks); with no `_insights` tables (lanes not
+  switched on) it releases at once and never names them in SQL. Its first
+  seed, a skip-ahead (more than 600 blocks behind) and a worker cursor that
+  went back replace the hub's buffer and greet every open stream with a fresh
+  `hello` (`Hub.reseed`). The **rollup** (`lib/rollup.ts`) folds
   `usdc_transfer` into `explorer.address_daily` (rows and `rollup_cursor` in
   one transaction; a transaction-scoped advisory lock keeps one writer; a
   statement timeout halves the range). Address pages read totals from it,

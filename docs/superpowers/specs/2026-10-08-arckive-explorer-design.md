@@ -198,7 +198,10 @@ transaction page has it.
 
 `id:` is the block number. A reconnect with `Last-Event-ID` gets the blocks
 after it from the 40-movement buffer when they are still in it, else a fresh
-`hello`. Beyond `MAX_STREAMS` open streams the server answers 503 and the
+`hello` (also when its id is newer than the buffer: a restarted server). A
+tailer cycle's blocks go out as one chunk per stream, and every open stream
+gets a fresh `hello` when the buffer is replaced: the first seed at start, a
+skip-ahead, a worker cursor that went back. Beyond `MAX_STREAMS` open streams the server answers 503 and the
 client retries with backoff.
 
 ### Client
@@ -296,7 +299,9 @@ Times in UTC, labelled.
 
 - Database unreachable: pages answer 503 in the same design ("The archive is
   not answering; the tape will resume on its own"); the tailer retries every
-  second; streams stay open and show "reconnecting".
+  second; streams stay open and the tailer keeps sending stats, so the
+  masthead reads "n s behind" ("reconnecting" means the stream itself is
+  down).
 - Worker behind or stopped: the tape shows "n s behind"; pages work on what
   is there.
 - Insights down: rows are released after the hold without lanes; the "By
