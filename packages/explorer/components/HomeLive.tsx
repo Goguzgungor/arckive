@@ -101,7 +101,7 @@ export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: 
       <Dateline date={date} />
       <div className="head">
         <h1>
-          <Parts parts={homeHeadline(stats)} />
+          <Parts parts={homeHeadline(stats, state.kind === 'behind' ? (newest.current?.t ?? null) : null)} />
         </h1>
         <p className="fig">Fig. 1 — the tape below is every USDC movement as it lands, each filed under the lane Laya read in its transaction.</p>
       </div>

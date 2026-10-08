@@ -15,6 +15,11 @@ describe('home headline', () => {
     expect(lanesPaused(S({ lanes: { swap: 3 } }))).toBe(true);
     expect(lanesPaused(S({}))).toBe(false);
   });
+  it('names the minute it counts when the tape is behind', () => {
+    const at = Date.UTC(2026, 9, 8, 14, 7, 42) / 1000; // the newest block's time
+    expect(homeHeadline(S({}), at).slice(0, 2)).toEqual(['In the minute to 14:07 UTC ', { b: '13,680 USDC' }]);
+    expect(homeHeadline(S({}), null)[0]).toBe('In the last minute ');
+  });
   it('waits for the first numbers', () => {
     expect(homeHeadline(null)).toEqual(['Listening to Arc…']);
     expect(homeHeadline(S({ count: 0, usdc: '0', lanes: {} }))).toEqual(['Listening to Arc…']);

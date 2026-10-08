@@ -1,4 +1,4 @@
-import { fmtInt, fmtWhole, pct } from './format.js';
+import { fmtInt, fmtTime, fmtWhole, pct } from './format.js';
 import { LANES_ALWAYS, LANE_ORDER, laneMeta } from './lanes.js';
 import type { Part } from './parts.js';
 import type { Hello, StatsMsg } from './types.js';
@@ -10,10 +10,14 @@ export function lanesPaused(s: StatsMsg | null): boolean {
   return !!s && s.count > 0 && laned(s) * 2 < s.count;
 }
 
-export function homeHeadline(s: StatsMsg | null): Part[] {
+// behindAt: the newest block's time while the tape is behind. The rolling
+// minute is the chain's last minute, not the clock's: a tape a minute behind
+// must not call it "the last minute".
+export function homeHeadline(s: StatsMsg | null, behindAt: number | null = null): Part[] {
   if (!s || s.count === 0) return ['Listening to Arc…'];
+  const lead = behindAt === null ? 'In the last minute ' : `In the minute to ${fmtTime(behindAt).slice(0, 5)} UTC `;
   const parts: Part[] = [
-    'In the last minute ', { b: `${fmtWhole(s.usdc)} USDC` }, ' moved across Arc in ', { b: fmtInt(s.count) },
+    lead, { b: `${fmtWhole(s.usdc)} USDC` }, ' moved across Arc in ', { b: fmtInt(s.count) },
     s.count === 1 ? ' movement' : ' movements',
   ];
   if (lanesPaused(s)) return [...parts, '.'];
