@@ -443,6 +443,11 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   branch (served at `arckive.org`).
 - `.github/workflows/verify-install.yml` (manual): applies the published
   `install.yaml` to a fresh kind cluster.
+- The explorer's image is not built by `release.yml`: build it locally with
+  `docker build --target explorer -t arckive-explorer:dev .` and import it
+  (`k3d image import arckive-explorer:dev -c arckive`) for
+  `manifests/arc-mainnet/k8s/explorer-app.yaml`. CI still lints, builds and
+  tests `packages/explorer` with the rest of the workspace.
 - Arc Radar: the `radar` job in `ci.yml` runs `pytest` and `docker build` in
   `radar/`; `.github/workflows/radar-deploy.yml` (push to `main` touching
   `radar/**`) triggers the Dokploy deploy through the

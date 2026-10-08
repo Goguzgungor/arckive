@@ -259,6 +259,7 @@ whole history (daily totals folded by the explorer itself).
 | `ARC_RPC` | `https://rpc.mainnet.arc.io` | pool tokens' `symbol()` / `decimals()`, read once |
 | `LANE_HOLD_MS` | `8000` | how long a row waits for its lane |
 | `MAX_STREAMS` | `2000` | open live streams per process |
+| `LOG_LEVEL` | `info` | pino log level |
 
 Run it against a database with `pnpm --filter @arckive/explorer dev`, or
 build the image with `docker build --target explorer -t arckive-explorer:dev .`
