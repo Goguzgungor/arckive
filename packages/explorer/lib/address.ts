@@ -113,21 +113,28 @@ export async function history(pool: pg.Pool, t: Tables, lanes: boolean, id: numb
   return { rows, older: r.rows.length > size && last ? `${last.block}-${last.li}` : null };
 }
 
-// Counterparties and lanes over the latest n movements, labelled so on the page.
+// Counterparties and lanes over the latest n movements, labelled so on the
+// page. A self-transfer is one of those movements but the address is never
+// its own counterparty; the one-row join keeps the total when every movement
+// is a self-transfer. Equal counts and sums fall back to the id, so a reload
+// does not reorder them.
 export async function recent(pool: pg.Pool, t: Tables, lanes: boolean, id: number, n = 1000): Promise<Recent> {
   const args = [id, MAX_BLOCK, MAX_LI, n];
-  const cps = await pool.query<{ a: Buffer; c: number; v: string; total: number }>(
-    `${latestSql(t, '$4')}
-     SELECT a.address AS a, x.c, x.v::text AS v, x.total FROM (
-       SELECT CASE WHEN to_id = $1 THEN from_id ELSE to_id END AS cp, count(*)::int AS c, sum(value) AS v,
-              sum(count(*)) OVER ()::int AS total
-       FROM page GROUP BY 1
-     ) x JOIN ${t.addresses} a ON a.id = x.cp ORDER BY x.c DESC, x.v DESC LIMIT 6`,
+  const cps = await pool.query<{ a: Buffer | null; c: number | null; v: string | null; total: number }>(
+    `${latestSql(t, '$4')},
+     cps AS (
+       SELECT CASE WHEN to_id = $1 THEN from_id ELSE to_id END AS cp, count(*)::int AS c, sum(value) AS v
+       FROM page WHERE from_id <> to_id GROUP BY 1
+     )
+     SELECT (SELECT count(*)::int FROM page) AS total, a.address AS a, x.c, x.v::text AS v
+     FROM (SELECT 1) one
+     LEFT JOIN (cps x JOIN ${t.addresses} a ON a.id = x.cp) ON true
+     ORDER BY x.c DESC, x.v DESC, x.cp LIMIT 6`,
     args,
   );
   const out: Recent = {
     total: cps.rows[0]?.total ?? 0,
-    counterparties: cps.rows.map((x) => ({ address: bytesToHex(x.a), count: x.c, value: x.v })),
+    counterparties: cps.rows.flatMap((x) => (x.a ? [{ address: bytesToHex(x.a), count: x.c!, value: x.v! }] : [])),
     lanes: {},
   };
   if (lanes) {

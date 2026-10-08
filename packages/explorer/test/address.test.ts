@@ -74,8 +74,15 @@ for (const lanes of [true, false]) {
       // ten movements each; ties go to the larger sum (CPS[2] 166.25, CPS[1] 156.25, CPS[0] 130.26 USDC)
       expect(r.counterparties.slice(0, 3).map((c) => [c.address, c.count])).toEqual([[R.CPS[2], 10], [R.CPS[1], 10], [R.CPS[0], 10]]);
       expect(r.counterparties[0]!.value).toBe('166250000000000000000');
+      // its self-transfer counts among the movements but never as a counterparty
+      expect(r.counterparties.map((c) => c.address)).toEqual([R.CPS[2], R.CPS[1], R.CPS[0]]);
       if (lanes) expect(r.lanes).toEqual({ payment: 10, signed_payment: 10 });
       else expect(r.lanes).toEqual({});
+    });
+
+    it('counts an address whose only movement is to itself, with no counterparty', async () => {
+      const self = (await addressId(db.explorer, db.t, R.SELF))!;
+      expect(await recent(db.explorer, db.t, lanes, self)).toMatchObject({ total: 1, counterparties: [] });
     });
   });
 }
