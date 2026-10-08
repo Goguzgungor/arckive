@@ -1,0 +1,43 @@
+# The explorer on Dokploy, reading the archive that stays in the Mac's k3d
+# cluster through a Cloudflare tunnel (../k8s/explorer-db-tunnel.yaml).
+#
+# Dokploy: a Compose service from this repository, branch main, compose
+# path ./manifests/arc-mainnet/dokploy/docker-compose.yml; a domain on the
+# `explorer` service, port 3000. Its Environment tab (never committed):
+#   DATABASE_URL=postgres://explorer:<password>@db-tunnel:5432/explorer
+#   DB_TUNNEL_HOSTNAME=explorer-db.<zone>
+#   CF_ACCESS_CLIENT_ID=<service token client id>
+#   CF_ACCESS_CLIENT_SECRET=<service token client secret>
+#   ARC_RPC=https://rpc.drpc.mainnet.arc.io   (optional; see the README)
+# The password is the explorer role's (explorer-role.sql); on the Mac:
+#   kubectl get secret explorer-dsn -o jsonpath='{.data.url}' | base64 -d | sed 's/@pg-explorer:/@db-tunnel:/'
+#
+# The service token belongs to a Cloudflare Access application on the
+# tunnel's hostname with a "Service Auth" policy: it is what keeps the
+# Postgres port closed to everyone else.
+services:
+  explorer:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: explorer
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      ARCKIVE_SCHEMA: idx_arc_explorer
+      ARC_RPC: ${ARC_RPC:-https://rpc.drpc.mainnet.arc.io}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOSTNAME: 0.0.0.0
+    expose: ["3000"]
+    depends_on: [db-tunnel]
+    restart: unless-stopped
+
+  # A local port for the tunnel's TCP hostname: the explorer connects to
+  # db-tunnel:5432 as if Postgres were next to it.
+  db-tunnel:
+    image: cloudflare/cloudflared:2026.10.0
+    command: ["access", "tcp", "--hostname", "${DB_TUNNEL_HOSTNAME}", "--url", "0.0.0.0:5432"]
+    environment:
+      TUNNEL_SERVICE_TOKEN_ID: ${CF_ACCESS_CLIENT_ID}
+      TUNNEL_SERVICE_TOKEN_SECRET: ${CF_ACCESS_CLIENT_SECRET}
+    expose: ["5432"]
+    restart: unless-stopped

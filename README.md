@@ -265,6 +265,14 @@ Run it against a database with `pnpm --filter @arckive/explorer dev`, or
 build the image with `docker build --target explorer -t arckive-explorer:dev .`
 and apply `manifests/arc-mainnet/k8s/explorer-app.yaml`.
 
+To serve it from another host while the archive stays in the cluster,
+`manifests/arc-mainnet/k8s/explorer-db-tunnel.yaml` opens a Cloudflare tunnel
+to the database (behind a Cloudflare Access service-token policy) and
+`manifests/arc-mainnet/dokploy/docker-compose.yml` runs the explorer next to
+a `cloudflared access tcp` client — both files say what to create by hand.
+Each query then crosses the tunnel (~0.1 s), so pages take a few tenths of
+a second instead of tens of milliseconds; the live tape is unaffected.
+
 ## Development
 
 ```bash

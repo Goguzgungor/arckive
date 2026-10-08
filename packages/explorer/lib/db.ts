@@ -12,11 +12,20 @@ export interface PoolOptions {
 // pg returns bigint and numeric columns as strings, which is what amounts
 // need. Every query is bounded at 5 s by the client itself, not only by the
 // role (explorer-role.sql): a DSN for another role must not lift the bound.
+//
+// Idle clients are kept for 5 minutes and probed with TCP keepalive: through
+// the Cloudflare tunnel (manifests/arc-mainnet/dokploy) a new connection
+// costs ~0.7 s, so pg's 10 s default would make the first page after a quiet
+// spell pay it; keepalive finds a connection the tunnel dropped before a
+// query does.
 export function createPool(cfg: Pick<Config, 'databaseUrl'>, opts: PoolOptions): pg.Pool {
   return new pg.Pool({
     connectionString: cfg.databaseUrl,
     max: opts.max,
     connectionTimeoutMillis: opts.connectionTimeoutMillis,
+    idleTimeoutMillis: 300_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     statement_timeout: 5000,
     application_name: 'arckive-explorer',
   });
