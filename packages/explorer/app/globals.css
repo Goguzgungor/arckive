@@ -55,20 +55,21 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .tag i { width: 7px; height: 7px; background: var(--lane, var(--faint)); display: inline-block; }
 .tag.none i { display: none; }
 
-/* home: headline, the tape, largest, by lane */
+/* home: headline, the tape, largest, by lane. Amounts never wrap: their
+   columns grow (minmax) and the parties' column gives way. */
 .head { padding: 34px 0 30px; border-bottom: 1px solid var(--hair); }
 .head h1 { font-size: 50px; line-height: 1.12; max-width: 1020px; margin: 0; }
 .head .fig { margin-top: 14px; font-size: 15px; }
 .home { grid-template-columns: 1fr 330px; gap: 40px; padding: 26px 0 40px; }
 .waiting { font: 500 11px var(--sans); letter-spacing: .08em; color: var(--sheet); background: var(--ink); padding: 2px 8px; border-radius: 10px; text-transform: none; }
 .tape { height: 640px; overflow: hidden; }
-.row { display: grid; grid-template-columns: 74px 128px 1fr 132px; gap: 14px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--hair); animation: enter .45s ease; }
+.row { display: grid; grid-template-columns: 74px 128px 1fr minmax(132px, auto); gap: 14px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--hair); animation: enter .45s ease; }
 .row:hover, .row:focus-visible { background: var(--sheet); outline: none; }
 @keyframes enter { from { opacity: 0; background: color-mix(in srgb, var(--lane) 14%, transparent); } }
 .time { font: 12px var(--mono); color: var(--faint); }
 .who { font: 12.5px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .who b { font-family: var(--sans); font-weight: 500; color: var(--ink); }
-.amt { text-align: right; font: 18px var(--serif); font-variant-numeric: tabular-nums; }
+.amt { text-align: right; font: 18px var(--serif); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .amt small { font: 10px var(--sans); letter-spacing: .1em; color: var(--faint); margin-left: 4px; }
 .largest a { display: grid; grid-template-columns: 1fr auto; padding: 10px 0; border-bottom: 1px solid var(--hair); }
 .largest a:hover { background: var(--sheet); }
@@ -98,9 +99,9 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .swapbox .t { font: 12.5px var(--mono); color: var(--dim); }
 .swapbox .right { text-align: right; }
 .swapbox .arrow { text-align: center; font: 28px var(--serif); color: var(--faint); }
-.events .ev { display: grid; grid-template-columns: 52px 104px 1fr 130px; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hair); align-items: baseline; font-size: 13px; }
+.events .ev { display: grid; grid-template-columns: 52px 104px 1fr minmax(130px, auto); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hair); align-items: baseline; font-size: 13px; }
 .events .li { font: 12px var(--mono); color: var(--faint); }
-.events .a { text-align: right; font: 17px var(--serif); font-variant-numeric: tabular-nums; }
+.events .a { text-align: right; font: 17px var(--serif); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .why { font: 17px/1.55 var(--serif); margin: 12px 0 18px; }
 .why em { color: var(--dim); }
 .conf { font: 12px var(--mono); color: var(--faint); }
@@ -120,13 +121,13 @@ dl.facts dd.parties .addr { display: table; margin-bottom: 4px; }
 .stats .n.out { color: var(--out); }
 svg.chart { display: block; width: 100%; height: auto; }
 svg.chart text { font: 11px var(--mono); fill: var(--faint); }
-.hist .hrow { display: grid; grid-template-columns: 124px 46px 1fr 140px 104px 92px; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--hair); align-items: baseline; font-size: 13px; }
+.hist .hrow { display: grid; grid-template-columns: 124px 46px 1fr 140px minmax(104px, auto) 92px; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--hair); align-items: baseline; font-size: 13px; }
 .hist .t { font: 12px var(--mono); color: var(--faint); }
 .hist .dir { font: 600 10.5px var(--sans); letter-spacing: .12em; }
 .hist .dir.in { color: var(--in); }
 .hist .dir.out { color: var(--out); }
 .hist .dir.self { color: var(--dim); }
-.hist .a { text-align: right; font: 17px var(--serif); font-variant-numeric: tabular-nums; }
+.hist .a { text-align: right; font: 17px var(--serif); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hist .x { font: 12px var(--mono); color: var(--faint); text-align: right; }
 .cp .cpr { display: grid; grid-template-columns: 1fr auto; padding: 10px 0; border-bottom: 1px solid var(--hair); }
 .cp .w { font: 12.5px var(--mono); }
@@ -145,20 +146,34 @@ footer { border-top: 1px solid var(--ink); padding: 14px 0 30px; color: var(--fa
   h1 .mono { font-size: 20px; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .stats > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  /* six columns overflow sideways below ~630 px: two lines, nothing hidden */
+  .hist .hrow { grid-template-columns: 46px auto 1fr auto; grid-template-areas: "dir who who a" ". t tag x"; row-gap: 3px; }
+  .hist .t { grid-area: t; }
+  .hist .dir { grid-area: dir; }
+  .hist .hrow .who { grid-area: who; }
+  .hist .hrow .tag { grid-area: tag; }
+  .hist .a { grid-area: a; }
+  .hist .x { grid-area: x; }
 }
 @media (max-width: 520px) {
   .wrap { padding: 0 16px; }
+  /* under 16 px iOS zooms the page on focus */
+  .search input { font-size: 16px; }
   .dateline span + span { display: none; }
   .head h1 { font-size: 28px; }
   .tape { height: 560px; }
-  .row { grid-template-columns: 62px 1fr 104px; }
+  .row { grid-template-columns: 62px 1fr minmax(104px, auto); }
   .row .who { display: none; }
   .swapbox { grid-template-columns: 1fr; gap: 14px; }
   .swapbox .arrow { display: none; }
   .swapbox .right { text-align: left; }
-  .events .ev { grid-template-columns: 36px 1fr auto; }
-  .events .ev .who { grid-column: 1 / -1; }
-  .hist .hrow { grid-template-columns: 40px 1fr auto; }
+  /* the amount stays on the tag's line; the parties take the line below */
+  .events .ev { grid-template-columns: 36px 1fr auto; grid-template-areas: "li tag a" "who who who"; }
+  .events .ev .li { grid-area: li; }
+  .events .ev .tag { grid-area: tag; }
+  .events .ev .a { grid-area: a; }
+  .events .ev .who { grid-area: who; }
+  .hist .hrow { grid-template-columns: 40px 1fr auto; grid-template-areas: "dir who a"; }
   .hist .t, .hist .hrow .tag, .hist .x { display: none; }
   footer { flex-direction: column; }
 }
