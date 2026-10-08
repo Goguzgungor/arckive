@@ -32,12 +32,12 @@ function Who({ address, name }: { address: string; name?: string }) {
   return name ? <b>{name}</b> : <>{shortAddr(address)}</>;
 }
 
-export function HomeLive({ initial, date }: { initial: Hello; date: string }) {
+export function HomeLive({ initial, date, initialNow }: { initial: Hello; date: string; initialNow: number }) {
   const [rows, setRows] = useState<Row[]>(() => newestFirst(initial.blocks));
   const [stats, setStats] = useState<StatsMsg | null>(initial.stats);
   const [open, setOpen] = useState(true);
   const [waiting, setWaiting] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(initialNow) // the server's clock: hydration must render what the server did;
   const pacer = useRef(new Pacer<Row>());
   const offset = useRef(0); // server clock − browser clock
   const newest = useRef<{ n: number; t: number } | null>(initial.blocks.at(-1) ?? null);

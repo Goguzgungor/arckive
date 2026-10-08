@@ -52,4 +52,22 @@ describe('Pacer', () => {
     p.push([3], 100);
     expect(p.take(5000)).toEqual([1, 2, 3]);
   });
+
+  it('bounds the queue: a long pause keeps the newest rows and counts the rest', () => {
+    const p = new Pacer<number>();
+    p.pause();
+    p.push(Array.from({ length: 300 }, (_, j) => j), 0);
+    expect(p.waiting).toBe(300);
+    p.resume(10_000);
+    const out = p.take(1_000_000);
+    expect(out).toHaveLength(PACING.maxQueue);
+    expect(out).toEqual(Array.from({ length: PACING.maxQueue }, (_, j) => 300 - PACING.maxQueue + j));
+    expect(p.waiting).toBe(0);
+  });
+
+  it('never queues more than maxQueue in a long unpaused burst', () => {
+    const p = new Pacer<number>();
+    for (let b = 0; b < 50; b++) p.push(Array.from({ length: 20 }, (_, j) => b * 20 + j), b);
+    expect(p.take(1_000_000).length).toBeLessThanOrEqual(PACING.maxQueue);
+  });
 });

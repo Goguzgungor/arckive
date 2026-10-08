@@ -14,5 +14,5 @@ export default function Home() {
   } catch {
     // no runtime yet: the stream fills the tape on its own
   }
-  return <HomeLive initial={initial} date={fmtDateLong(new Date())} />;
+  return <HomeLive initial={initial} date={fmtDateLong(new Date())} initialNow={Date.now()} />;
 }

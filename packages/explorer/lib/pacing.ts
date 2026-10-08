@@ -5,9 +5,10 @@ export interface PacerOptions {
   defaultGapMs: number;
   maxBacklogMs: number;
   drainMs: number;
+  maxQueue: number;
 }
 
-export const PACING: PacerOptions = { gapsKept: 20, minGapMs: 100, maxGapMs: 2000, defaultGapMs: 500, maxBacklogMs: 3000, drainMs: 1000 };
+export const PACING: PacerOptions = { gapsKept: 20, minGapMs: 100, maxGapMs: 2000, defaultGapMs: 500, maxBacklogMs: 3000, drainMs: 1000, maxQueue: 128 };
 
 // Spreads each block's rows over the time until the next block is expected
 // (the median gap of the last 20, ~0.5 s on Arc), so the tape flows instead
@@ -19,6 +20,7 @@ export class Pacer<T> {
   #gaps: number[] = [];
   #last: number | null = null;
   #paused = false;
+  #skipped = 0;
 
   constructor(private readonly o: PacerOptions = PACING) {}
 
@@ -40,6 +42,14 @@ export class Pacer<T> {
     const step = this.interval() / items.length;
     const start = Math.max(now, this.#q.at(-1)?.due ?? now);
     items.forEach((item, i) => this.#q.push({ item, due: start + step * i }));
+    // A hidden tab runs no animation frames while the stream keeps delivering,
+    // and a parked pointer pauses the tape: the tape shows 32 rows, so keep
+    // only the newest few multiples of that and count the rest as skipped.
+    if (this.#q.length > this.o.maxQueue) {
+      const drop = this.#q.length - this.o.maxQueue;
+      this.#q.splice(0, drop);
+      this.#skipped += drop;
+    }
     if (!this.#paused && this.#q.at(-1)!.due - now > this.o.maxBacklogMs) this.#respread(now);
   }
 
@@ -64,15 +74,17 @@ export class Pacer<T> {
   resume(now: number): void {
     if (!this.#paused) return;
     this.#paused = false;
+    this.#skipped = 0; // those rows are gone; the tape is live again
     if (this.#q.length) this.#respread(now);
   }
 
   clear(): void {
     this.#q = [];
+    this.#skipped = 0;
   }
 
   get waiting(): number {
-    return this.#q.length;
+    return this.#q.length + this.#skipped;
   }
 
   get isPaused(): boolean {
