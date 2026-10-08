@@ -1,0 +1,53 @@
+# The explorer: one replica — its tailer and rollup job run in-process (a
+# second replica would tail too; the rollup's advisory lock keeps one writer).
+# It reads idx_arc_explorer as the role from explorer-role.sql. The DSN
+# Secret is created by hand, never committed:
+#   kubectl create secret generic explorer-dsn \
+#     --from-literal=url=postgres://explorer:<password>@pg-explorer:5432/explorer
+# The image is built locally and imported:
+#   docker build --target explorer -t arckive-explorer:dev . && k3d image import arckive-explorer:dev -c arckive
+# Publishing it (a tunnel or host for a public hostname) is a separate step.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: explorer
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: explorer }
+  template:
+    metadata:
+      labels: { app: explorer }
+    spec:
+      containers:
+        - name: explorer
+          image: arckive-explorer:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: explorer-dsn, key: url } }
+            - { name: ARCKIVE_SCHEMA, value: idx_arc_explorer }
+            # Token symbol()/decimals() reads. Not the public endpoint: its per-minute
+            # quota is spent by the worker's ingest, and in the k3d test every read
+            # got 429 while dRPC answered.
+            - { name: ARC_RPC, value: "https://rpc.drpc.mainnet.arc.io" }
+            # kubelet sets HOSTNAME to the pod name, which would override the image's 0.0.0.0 and make Next bind to the pod IP only
+            - { name: HOSTNAME, value: 0.0.0.0 }
+          ports: [{ containerPort: 3000 }]
+          # Serving, not "database up": while the database is down the pages
+          # themselves say so, which a removed endpoint could not.
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: explorer
+spec:
+  selector: { app: explorer }
+  ports: [{ port: 80, targetPort: 3000 }]

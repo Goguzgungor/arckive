@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+.git
+.superpowers
+packages/explorer/smoke/screenshots
+packages/explorer/test-results

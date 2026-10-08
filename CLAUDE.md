@@ -34,6 +34,7 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 | `packages/core` | `@arckive/core` — pure logic shared by operator and worker: zod schemas (CRD spec + worker config), ABI→event extraction, DDL generation, log decoding, naming, range planning. **No Kubernetes, Postgres or RPC dependencies** (only `viem` + `zod`). |
 | `packages/operator` | `@arckive/operator` — watches `Indexer` CRs via `kubernetes-fluent-client` (the watch only), renders desired K8s resources, patches CR conditions. Gets, applies and status patches go through its own keep-alive client, `operator/src/kubehttp.ts`. |
 | `packages/worker` | `@arckive/worker` — one process per `Indexer`: resolves ABIs, bootstraps tables, runs the ingest loop, serves `/metrics` + `/healthz`, patches `.status`. Also hosts the benchmark and demo scripts under `scripts/`. |
+| `packages/explorer` | `@arckive/explorer` — the Arckive Explorer: a Next.js 15 app (standalone) over the explorer Indexer's schema (`manifests/arc-mainnet/k8s/explorer.yaml`): live tape home page over SSE, transaction and address pages, search. Reads the worker's schema as a read-only role and owns schema `explorer`. Depends on `@arckive/core` only. |
 | `e2e` | `@arckive/e2e` — kind-based end-to-end test (`kind.test.ts`) plus its fixtures/manifests. |
 | `charts/arckive` | Helm chart for the operator. `crds/indexer.yaml` is the CRD source of truth. |
 | `manifests/` | Example/demo manifests: `demo/` (anvil-based local demo), `arc-testnet/` (real Arc testnet, incl. the published `k8s/demo.yaml` bundle). |
@@ -42,8 +43,9 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 | `install.yaml` | **Generated** — Namespace + CRD + `helm template` output. Never edit by hand. |
 | `radar/` | **Arc Radar** — standalone Python app (not in the pnpm workspace): live wall of every USDC transfer on Arc mainnet (ERC-20 and native), lanes decided by the local Laya model via layad — except mint/burn, zero-value spam and unreadable transfers, which the transfer itself decides. Reads RPC directly; does not use the operator or worker. See `radar/README.md`. |
 
-Dependency direction is strictly `operator → core` and `worker → core`. The
-operator and the worker never import each other.
+Dependency direction is strictly `operator → core`, `worker → core` and
+`explorer → core`. The operator, the worker and the explorer never import
+each other (the explorer's test fixture builds its schema with core's DDL).
 
 ## Commands
 
@@ -62,6 +64,9 @@ pnpm demo:seed                     # deploy the Emitter fixture + emit 10 events
 pnpm arc:preflight                 # probe an Arc RPC endpoint (chainId, finality lag)
 pnpm bench                         # benchmark suite → docs/benchmarks/<date>/results.json
 pnpm bench:report                  # render report.html from results.json
+pnpm --filter @arckive/explorer dev     # the explorer on :3000 (needs DATABASE_URL, see its section below)
+pnpm --filter @arckive/explorer test    # its unit + database tests (Docker)
+pnpm --filter @arckive/explorer smoke   # local browser smoke (after `build`; `pnpm exec playwright install chromium` once)
 scripts/build-install.sh           # regenerate install.yaml from the chart
 cd radar && .venv/bin/pytest -q    # Arc Radar tests (Python)
 cd radar && .venv/bin/python scripts/eval.py   # Arc Radar accuracy on captured mainnet (needs layad)
@@ -375,6 +380,60 @@ instrumentation to product code — freshness is derived from
 `docs/benchmarks/<YYYY-MM-DD>/results.json` and are merged with same-day runs.
 Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
 
+### Explorer (`packages/explorer`)
+
+- **One process, two jobs.** `instrumentation.ts` starts the runtime
+  (`lib/runtime.ts`) once per process and keeps it on `globalThis`: Next
+  bundles instrumentation and each route separately, so a module-level
+  singleton would exist per bundle. The **tailer** (`lib/tailer.ts`, every
+  250 ms) releases blocks up to the insights cursor, or once their
+  `_ingested_at` is older than `LANE_HOLD_MS` (8 s) — never past `_cursor`
+  (`lib/release.ts`) — and publishes one `block` message per block to the
+  hub, a cycle's blocks as one chunk per stream (`Hub.publishBlocks`: a
+  stream's queue counts chunks); with no `_insights` tables (lanes not
+  switched on) it releases at once and never names them in SQL. Its first
+  seed, a skip-ahead (more than 600 blocks behind) and a worker cursor that
+  went back replace the hub's buffer and greet every open stream with a fresh
+  `hello` (`Hub.reseed`). The **rollup** (`lib/rollup.ts`) folds
+  `usdc_transfer` into `explorer.address_daily` (rows and `rollup_cursor` in
+  one transaction; a transaction-scoped advisory lock keeps one writer; a
+  statement timeout halves the range). Address pages read totals from it,
+  never by scanning transfers. If the worker's schema is recreated, its
+  `_cursor` falls behind `explorer.rollup_cursor` and the address ids start
+  over: the rollup then folds nothing and logs an error once a minute until
+  the explorer's tables are reset by hand —
+  `TRUNCATE explorer.address_daily, explorer.rollup_cursor` (as the
+  `explorer` role); the rollup then folds the new schema from its start.
+  The tailer notices the same rewind on its own and reloads the tape.
+- **Database access** is the role from `manifests/arc-mainnet/k8s/explorer-role.sql`:
+  `SELECT` on the worker's schema (default privileges cover tables added
+  later), owner of schema `explorer`, `statement_timeout` 5 s. The explorer
+  never writes to the worker's schema. Two pools (`lib/runtime.ts`):
+  `pool` for pages, routes and token writes (10 clients, a 3 s wait for a
+  free one), `jobs` for the tailer, the rollup and the refresh (4) — a page
+  spike must not starve the tailer. Both set `statement_timeout` 5 s in the
+  client config as well; the rollup's `SET LOCAL` raises its own.
+- **Client-safe modules**: client components import only `lib/format`,
+  `lanes`, `names`, `search`, `types`, `parts`, `pacing`, `stream-client`,
+  `homestory`, `live` and the components without database access — never
+  `pg`, `@arckive/core` or `lib/runtime`. Lane order and wording come from
+  core's `LANES`; `test/lanes.test.ts` holds `lib/lanes.ts` to it.
+- **Amounts never pass through a float**: integer strings → `unitsToDecimal`
+  → `fmtAmount`. Select dates as `::text` (pg parses `date` into local
+  time) and block times as epoch seconds.
+- **Names** (`lib/names.ts`) are only contracts verified on Arc's explorer
+  (Blockscout at explorer.arc.io); an address is never called a wallet or a
+  contract otherwise.
+- **SSE** (`/api/stream`): `hello` (the latest 40 movements + stats), `block`
+  (`id:` = block number), `stats` every second, a comment heartbeat every
+  15 s; a viewer whose queue fills is dropped and its client reconnects
+  (watchdog 45 s, backoff 1 s → 30 s, `?last=`); beyond `MAX_STREAMS` the
+  route answers 503.
+- Tests build the schema with core's DDL in PostgreSQL 17
+  (`test/fixture/`, around the real mainnet swap 0x9a83…015a); files under
+  `test/fixture/` and `smoke/` import each other with `.ts` because
+  `smoke/serve.ts` runs them under Node's type stripping.
+
 ## CI/CD
 
 - `.github/workflows/ci.yml` (push + PR): `pnpm lint` → `pnpm -r build` →
@@ -388,6 +447,11 @@ Prerequisite: `docker compose -f docker-compose.dev.yml up -d postgres anvil`.
   branch (served at `arckive.org`).
 - `.github/workflows/verify-install.yml` (manual): applies the published
   `install.yaml` to a fresh kind cluster.
+- The explorer's image is not built by `release.yml`: build it locally with
+  `docker build --target explorer -t arckive-explorer:dev .` and import it
+  (`k3d image import arckive-explorer:dev -c arckive`) for
+  `manifests/arc-mainnet/k8s/explorer-app.yaml`. CI still lints, builds and
+  tests `packages/explorer` with the rest of the workspace.
 - Arc Radar: the `radar` job in `ci.yml` runs `pytest` and `docker build` in
   `radar/`; `.github/workflows/radar-deploy.yml` (push to `main` touching
   `radar/**`) triggers the Dokploy deploy through the

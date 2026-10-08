@@ -3,3 +3,8 @@ dist/
 *.tsbuildinfo
 packages/worker/test/fixtures/emitter/out/
 packages/worker/test/fixtures/emitter/cache/
+.next/
+next-env.d.ts
+packages/explorer/smoke/screenshots/
+playwright-report/
+test-results/
