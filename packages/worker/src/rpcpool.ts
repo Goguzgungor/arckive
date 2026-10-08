@@ -4,6 +4,7 @@ import {
   createPublicClient, http, webSocket, type PublicClient,
 } from 'viem';
 import { Pacer, isRateLimited, type PaceLimits } from './pacer.js';
+import { RATE_LIMIT } from './rpc.js';
 
 // The insight loop's RPC reads, ported from Arc Radar's pool
 // (radar/radar/rpc.py), which keeps up with Arc mainnet on the same public
@@ -51,6 +52,27 @@ export function endpointLabel(index: number, url: string): string {
   }
 }
 
+// What a call is rejected with once no endpoint answered it — and what the
+// insight loop ends up logging. viem's messages carry `URL: <url>` (its
+// getUrl drops only user:pass), and an insight endpoint's path or query may
+// hold an API key. So the endpoint is named by its label, the text is viem's
+// shortMessage (which has no URL), and the original error is not kept as a
+// cause: pino's serializer would print its message, URL and all.
+export class InsightRpcError extends Error {
+  readonly endpoint: string;
+  readonly errorName: string; // the original error's name, e.g. HttpRequestError
+
+  constructor(endpoint: string, url: string, err: unknown) {
+    const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
+    const text = typeof short === 'string' ? short : err instanceof Error ? err.message : String(err);
+    // belt and braces: an error that is not viem's could quote the URL too
+    super(`${endpoint}: ${text.split(url).join(endpoint)}`);
+    this.name = 'InsightRpcError';
+    this.endpoint = endpoint;
+    this.errorName = err instanceof Error ? err.name : typeof err;
+  }
+}
+
 function walk(err: unknown, test: (e: unknown) => boolean): boolean {
   let e: unknown = err;
   for (let depth = 0; e && depth < 8; depth++) {
@@ -92,6 +114,17 @@ export class MalformedReplyError extends Error {
 
 const MAX_BODY_BYTES = 10_485_760; // viem's own cap
 
+// One object answering a whole batch is how some providers say "rate
+// limited" with a 200: a JSON-RPC error (-32005, or a code/message that says
+// so) or a bare {code, message}. Read as malformed it would only rest the
+// endpoint; as the 429 it means, the pacer backs off too.
+function readsAsRateLimit(got: unknown): boolean {
+  if (!got || typeof got !== 'object') return false;
+  const { error, code, message } = got as { error?: { code?: unknown; message?: unknown }; code?: unknown; message?: unknown };
+  const says = (c: unknown, m: unknown) => c === -32005 || c === 429 || (typeof m === 'string' && RATE_LIMIT.test(m));
+  return says(error?.code, error?.message) || says(code, message);
+}
+
 async function readCapped(res: Response): Promise<string> {
   if (!res.body) return '';
   const reader = res.body.getReader();
@@ -116,7 +149,8 @@ async function readCapped(res: Response): Promise<string> {
 // array that lost an id (the next call's result lands on the wrong call)
 // would reach us as wrong data or as errors that neither rest nor back off.
 // So the reply is checked before viem sees it: a status becomes the
-// HttpRequestError the classifiers know, and a body that is not exactly one
+// HttpRequestError the classifiers know, one object answering a batch with a
+// rate limit becomes a 429 too, and any other body that is not exactly one
 // answer per request id is a MalformedReplyError.
 export function checkedFetch(
   base: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
@@ -138,6 +172,7 @@ export function checkedFetch(
       throw new MalformedReplyError('not JSON');
     }
     const want = (Array.isArray(sent) ? sent : [sent]).map((r) => (r as { id?: unknown }).id);
+    if (Array.isArray(sent) && !Array.isArray(got) && readsAsRateLimit(got)) throw new HttpRequestError({ url, status: 429 });
     if (Array.isArray(sent) !== Array.isArray(got)) throw new MalformedReplyError('not shaped like the request');
     const have = (Array.isArray(got) ? got : [got]).map((r) => (r as { id?: unknown } | null)?.id);
     const same = have.length === want.length && want.every((id) => have.filter((h) => h === id).length === 1);
@@ -151,6 +186,7 @@ class Slot {
   restUntil = 0;
   constructor(
     readonly index: number,
+    readonly url: string, // may hold a key: never logged (see InsightRpcError)
     readonly label: string,
     readonly client: PublicClient,
     readonly shared: boolean,
@@ -171,7 +207,7 @@ export class RpcPool {
     this.#opts = opts;
     this.#now = opts.now ?? Date.now;
     this.#slots = endpoints.map(
-      (e, i) => new Slot(i, endpointLabel(i, e.url), e.client, e.shared, e.chunk, new Pacer(opts.pace, this.#now, opts.sleep)),
+      (e, i) => new Slot(i, e.url, endpointLabel(i, e.url), e.client, e.shared, e.chunk, new Pacer(opts.pace, this.#now, opts.sleep)),
     );
   }
 
@@ -214,7 +250,7 @@ export class RpcPool {
   }
 
   async #chunk<T>(calls: readonly Call<T>[], idx: number[], out: PromiseSettledResult<T>[]): Promise<void> {
-    const lastError = new Map<number, unknown>();
+    const lastError = new Map<number, InsightRpcError>();
     const tried = new Set<number>();
     let pending = idx;
     while (pending.length) {
@@ -232,7 +268,7 @@ export class RpcPool {
 
   // One request to one endpoint; returns the calls it did not answer.
   async #send<T>(
-    slot: Slot, calls: readonly Call<T>[], idx: number[], out: PromiseSettledResult<T>[], lastError: Map<number, unknown>,
+    slot: Slot, calls: readonly Call<T>[], idx: number[], out: PromiseSettledResult<T>[], lastError: Map<number, InsightRpcError>,
   ): Promise<number[]> {
     // started in one tick, so viem's batch scheduler sends them as one array;
     // the .then turns a Call that throws synchronously into a rejection
@@ -247,7 +283,9 @@ export class RpcPool {
         out[i] = r;
         return;
       }
-      lastError.set(i, r.reason);
+      // kept wrapped, as the call's rejection if no endpoint answers it;
+      // classified (below) on viem's own error, as before
+      lastError.set(i, new InsightRpcError(slot.label, slot.url, r.reason));
       if (isRateLimited(r.reason)) rateLimited = true;
       else if (isTooLarge(r.reason)) {
         big.push(i);

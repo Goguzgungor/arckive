@@ -388,32 +388,36 @@ describe('insights', () => {
       insights: { laya: { url: 'https://gate.example' }, ...(startBlock === undefined ? {} : { startBlock }) },
     });
 
-    it('resolves to a cursor, clamped to the ingest start, or to "this far behind the head"', () => {
+    // The ingest start in cfg is this boot's (main.ts resolves a tail-mode or
+    // negative contract startBlock to this boot's head), so only an omitted
+    // start follows it; set ones are floored at block 0.
+    it('resolves to a cursor (block 0 at the earliest), or to "this far behind the head"', () => {
       expect(insightsStart(cfgWith())).toEqual({ cursor: 49n });
       expect(insightsStart(cfgWith(100))).toEqual({ cursor: 99n });
-      expect(insightsStart(cfgWith(10))).toEqual({ cursor: 49n });
-      expect(insightsStart(cfgWith(-5))).toEqual({ behindHead: 5n, floor: 49n });
+      expect(insightsStart(cfgWith(10))).toEqual({ cursor: 9n });
+      expect(insightsStart(cfgWith(0))).toEqual({ cursor: -1n });
+      expect(insightsStart(cfgWith(-5))).toEqual({ behindHead: 5n, floor: -1n });
     });
 
     it('relative: the first round writes the cursor that far behind the ingest cursor', async () => {
       await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
-      deps.start = { behindHead: 5n, floor: 99n };
+      deps.start = { behindHead: 5n, floor: -1n };
       await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n), transferRow(118, 2, 1n)], [], 120n);
       while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
       expect((await insights()).map((r) => r.block_number)).toEqual(['118']); // 115 < 118, 110 skipped
       expect(await getInsightsCursor(pool, SCHEMA)).toBe(120n);
     });
 
-    it('relative: a young indexer clamps to the ingest start', async () => {
+    it('relative: more blocks than the chain has start at block 0', async () => {
       await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
-      deps.start = { behindHead: 1_000n, floor: 99n };
+      deps.start = { behindHead: 1_000n, floor: -1n };
       await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n), transferRow(118, 2, 1n)], [], 120n);
       while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
       expect((await insights()).map((r) => r.block_number)).toEqual(['110', '118']);
     });
 
     it('an existing cursor is never moved by the start setting', async () => {
-      deps.start = { behindHead: 5n, floor: 99n }; // beforeEach already wrote cursor 99
+      deps.start = { behindHead: 5n, floor: -1n }; // beforeEach already wrote cursor 99
       await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n)], [], 120n);
       while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
       expect((await insights()).map((r) => r.block_number)).toEqual(['110']);
@@ -433,6 +437,10 @@ describe('insights', () => {
       expect(await getInsightsCursor(pool, SCHEMA)).toBeNull();
       await prepareInsights({ ...base, cfg: cfgWith(60) });
       expect(await getInsightsCursor(pool, SCHEMA)).toBe(59n);
+      // below this boot's ingest start (49): written as set, not raised to it
+      await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
+      await prepareInsights({ ...base, cfg: cfgWith(10) });
+      expect(await getInsightsCursor(pool, SCHEMA)).toBe(9n);
     });
   });
 });

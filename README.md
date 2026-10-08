@@ -135,10 +135,13 @@ per-minute quota that ingest alone runs into, so give insights endpoints of
 their own. The header Secret must hold one line of printable ASCII (a
 trailing newline is dropped).
 
-Lanes start at `insights.startBlock`: omitted, at the indexer's own start;
-a block number, there; a negative number, that many blocks before the head
-at the moment insights first run — for a full-history indexer, that is once
-the backfill has caught up. It takes effect once per schema.
+Lanes start at `insights.startBlock`: omitted, at the indexer's start as
+resolved at the boot that enabled insights (for a tail-mode or negative
+contract `startBlock`, that boot's head); a block number, there; a negative
+number, that many blocks before the head at the moment insights first run —
+for a full-history indexer, that is once the backfill has caught up. A set
+start is never later than you asked, and never before block 0. It takes
+effect once per schema.
 
 **How good is it?** For USDC on Arc the sentence the model reads is
 byte-for-byte Radar's (a test pins this against 1,200 captured mainnet

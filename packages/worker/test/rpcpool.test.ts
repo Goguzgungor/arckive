@@ -1,8 +1,10 @@
 import { createServer, type Server } from 'node:http';
+import { pino } from 'pino';
 import { HttpRequestError, SocketClosedError, type PublicClient } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  CHUNK, RpcPool, checkPoolChain, createRpcPool, endpointLabel, isTransportFailure, type Call, type PoolEndpoint, type RequestOutcome,
+  CHUNK, InsightRpcError, RpcPool, checkPoolChain, createRpcPool, endpointLabel, isTransportFailure,
+  type Call, type PoolEndpoint, type RequestOutcome,
 } from '../src/rpcpool.js';
 
 const NO_PACE = { startMs: 0, minMs: 0, maxMs: 0 };
@@ -95,7 +97,9 @@ describe('RpcPool', () => {
     const { pool, requests } = harness([ep('a'), ep('b')]);
     const [r] = await pool.all([async () => { throw refused(); }]);
     expect(r!.status).toBe('rejected');
-    expect((r as PromiseRejectedResult).reason.message).toMatch(/personal token/);
+    const reason = (r as PromiseRejectedResult).reason;
+    expect(reason).toBeInstanceOf(InsightRpcError);
+    expect(reason.message).toMatch(/^1:b\.example: .*personal token/);
     expect(requests.map(([e]) => e)).toEqual([0, 1]);
   });
 
@@ -315,8 +319,24 @@ describe('RpcPool over HTTP (viem batching)', () => {
     await restsAndFallsThrough(() => ({ status: 429, json: rpcError }), 'rate_limited');
   });
 
-  it('a single error object answering a batch rests the endpoint', async () => {
-    await restsAndFallsThrough(() => ({ status: 200, json: rpcError }));
+  it('a single rate-limit error object answering a batch is a rate limit: rest, back off, move on', async () => {
+    await restsAndFallsThrough(() => ({ status: 200, json: rpcError }), 'rate_limited');
+  });
+
+  it('a single error object that reads as a rate limit only by its message, or at top level, is one too', async () => {
+    await restsAndFallsThrough(
+      () => ({ status: 200, json: { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Too Many Requests' } } }),
+      'rate_limited',
+    );
+    await restsAndFallsThrough(() => ({ status: 200, json: { code: 429, message: 'slow down' } }), 'rate_limited');
+    await restsAndFallsThrough(() => ({ status: 200, json: { message: 'API rate limit exceeded' } }), 'rate_limited');
+  });
+
+  it('a single error object answering a batch that is not a rate limit rests the endpoint as a failure', async () => {
+    await restsAndFallsThrough(
+      () => ({ status: 200, json: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } } }),
+      'failed',
+    );
   });
 
   it('an HTTP 503 with a JSON-RPC error body rests the endpoint', async () => {
@@ -328,6 +348,31 @@ describe('RpcPool over HTTP (viem batching)', () => {
       status: 200,
       json: body.filter((_, k) => k !== 1).map((r) => ({ jsonrpc: '2.0', id: r.id, result: '0xbad' })),
     }));
+  });
+
+  // viem's messages carry `URL: <url>`; an insight endpoint's path may be its API key
+  it('the final rejection names the endpoint by label and never carries its URL', async () => {
+    const refusal = (body: Array<{ id: number }>) => ({
+      status: 200,
+      json: body.map((r) => ({ jsonrpc: '2.0', id: r.id, error: { code: -32000, message: 'Archive requests require a personal token' } })),
+    });
+    for (const answer of [() => ({ status: 503 }), refusal]) {
+      const a = await rpcServer(answer);
+      const outcomes: RequestOutcome[] = [];
+      const pool = createRpcPool([`${a.url}/v1/SECRETKEY`], [], { pace: NO_PACE, onRequest: (_, o) => outcomes.push(o) });
+      const [r] = await pool.all([bal(1)]);
+      expect(outcomes).toEqual(['failed']); // classified as before
+      const reason = (r as PromiseRejectedResult).reason as Error;
+      expect(reason).toBeInstanceOf(InsightRpcError);
+      expect(reason.message).toMatch(/^0:127\.0\.0\.1:\d+: /);
+      const serialised = [
+        reason.message,
+        String(reason.stack),
+        JSON.stringify(reason, Object.getOwnPropertyNames(reason)),
+        JSON.stringify(pino.stdSerializers.err(reason)),
+      ];
+      for (const text of serialised) expect(text).not.toContain('SECRETKEY');
+    }
   });
 
   it('a batch answered with an empty array moves every call on and rests the endpoint', async () => {

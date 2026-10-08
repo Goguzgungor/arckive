@@ -95,20 +95,24 @@ export function insightTargets(defs: EventDef[], tokens: ReadonlyMap<string, Tok
 }
 
 // Where lanes begin (spec.insights.startBlock). Omitted: the indexer's own
-// start. Absolute: that block, never before the indexer's start. Negative:
-// that many blocks before the head when the loop first runs — a
-// full-history indexer backfills for hours before insights run (they wait
-// for Live), and a head read at pod start would by then be hours old, older
-// than some providers serve without a token.
+// start. Absolute: that block. Negative: that many blocks before the head
+// when the loop first runs — a full-history indexer backfills for hours
+// before insights run (they wait for Live), and a head read at pod start
+// would by then be hours old, older than some providers serve without a
+// token.
+//
+// Set starts are floored at block 0, not at the ingest start: initialCursor
+// reads the start main.ts resolved for THIS boot, which for a tail-mode or
+// negative contract startBlock is this boot's head. An absolute start enabled
+// at a later boot, or a negative one resolved after a restart, would be
+// raised to that head and silently skip the rows ingested before it.
 export type InsightsStart = { cursor: bigint } | { behindHead: bigint; floor: bigint };
 
 export function insightsStart(cfg: WorkerConfig): InsightsStart {
-  const floor = initialCursor(cfg);
   const at = cfg.insights?.startBlock;
-  if (at === undefined) return { cursor: floor };
-  if (at < 0) return { behindHead: BigInt(-at), floor };
-  const cursor = BigInt(at) - 1n;
-  return { cursor: cursor > floor ? cursor : floor };
+  if (at === undefined) return { cursor: initialCursor(cfg) };
+  if (at < 0) return { behindHead: BigInt(-at), floor: -1n };
+  return { cursor: BigInt(at) - 1n };
 }
 
 function callOf(ctx: TxContext | null, called: ReadonlyMap<string, CalledContract>): CallInfo | null {

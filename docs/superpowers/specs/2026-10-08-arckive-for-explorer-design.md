@@ -109,8 +109,10 @@ A new `RpcPool` replaces the single insights client. Its interface:
 ```ts
 type Call<T> = (client: PublicClient) => Promise<T>;
 interface RpcPool {
-  // Each result in input order: fulfilled, or rejected with the last
-  // endpoint's error after every endpoint was tried.
+  // Each result in input order: fulfilled, or rejected after every endpoint
+  // was tried, with an InsightRpcError: the last endpoint's label and viem's
+  // shortMessage, no cause — viem's full message quotes the URL, which may
+  // hold an API key.
   all<T>(calls: readonly Call<T>[]): Promise<PromiseSettledResult<T>[]>;
   backOffShared(): void; // slows the endpoints ingest also uses
 }
@@ -137,7 +139,7 @@ interface RpcPool {
 
   | Answer | Endpoint | The call |
   |---|---|---|
-  | Rate limit (`isRateLimited`: -32005 or HTTP 429) | rests, its pacer backs off | next endpoint |
+  | Rate limit (`isRateLimited`: -32005 or HTTP 429; one error object answering a batch that says so counts as a 429) | rests, its pacer backs off | next endpoint |
   | Transport failure (timeout, connection, HTTP ≥ 500, unparsable body) | rests | next endpoint |
   | `ResponseBodyTooLargeError` | none | the chunk is halved and retried on the same endpoint; a single call that is still too large fails |
   | Any other JSON-RPC error, or `null`/not found | none | next endpoint |
@@ -193,14 +195,20 @@ explorer wants, "lanes from launch on": a full-history Indexer backfills for
 hours, insights run only once ingest is `Live`, and a head resolved at pod
 start would by then be hours old — older than beamrpc serves.
 
-The start becomes the initial insights cursor (`start − 1`), clamped to be
-no earlier than the ingest start, and like the ingest cursor it is written
-only when the schema's `_insights_cursor` row does not exist yet: it takes
-effect once, and later edits change nothing (the CRD description says so).
-An absolute or omitted start is written by `bootstrapInsights`, as today. A
+The start becomes the initial insights cursor (`start − 1`), and like the
+ingest cursor it is written only when the schema's `_insights_cursor` row
+does not exist yet: it takes effect once, and later edits change nothing
+(the CRD description says so). A set start is floored at block 0 (cursor
+`−1`), not at the ingest start: the ingest start a worker knows is the one
+`main.ts` resolved for **this boot** — for a tail-mode or negative contract
+`startBlock`, this boot's head — so an absolute start enabled at a later
+boot, or a negative one resolved after a restart, would be raised to that
+head and silently skip the rows ingested before it. An omitted start is the
+ingest start as resolved at the boot that enables insights, as today.
+An absolute or omitted start is written by `bootstrapInsights`. A
 negative one is written by the loop's first round, which runs only while
 ingest is `Live` and so reads the ingest cursor as the head:
-`max(ingest cursor − |n|, ingest start − 1)`, inserted with `ON CONFLICT DO
+`max(ingest cursor − |n|, −1)`, inserted with `ON CONFLICT DO
 NOTHING`. Until then `prepareRound` finds no cursor and waits instead of
 throwing. While ingest is below an absolute start, `planRange(insights
 cursor, ingest cursor)` is empty and the loop waits.
@@ -337,10 +345,11 @@ Unit (vitest, no network):
 Database (testcontainers Postgres, as the existing DB tests):
 
 - `insights.startBlock`: absolute — a fresh schema's insights cursor is
-  `startBlock − 1`, clamped to the ingest start, and the loop waits until
-  ingest passes it; negative — no cursor until the first `Live` round, which
-  writes `ingest cursor − |n|` (clamped); either way a second bootstrap or
-  round with a different value leaves an existing cursor alone.
+  `startBlock − 1`, even below this boot's ingest start, and the loop waits
+  until ingest passes it; negative — no cursor until the first `Live` round,
+  which writes `ingest cursor − |n|` (no lower than `−1`); either way a
+  second bootstrap or round with a different value leaves an existing cursor
+  alone.
 - `storage.addressIndexes`: indexes exist on the parent and on a partition
   created after bootstrap; `EXPLAIN` of `WHERE from_id = $1 ORDER BY
   block_number DESC, log_index DESC LIMIT 25` uses them; a schema created
