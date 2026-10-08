@@ -70,8 +70,8 @@ const MAX_BAR = 24;
 // heights on a square-root scale so a quiet day still shows beside a busy one,
 // and any nonzero day at least 1 px. Bars are centred in their slots.
 // Floats are fine here: these are pixels, not amounts.
-export function chartBars(daysIn: DayBar[], width = 840, half = 82): { bars: ChartBar[]; barWidth: number } {
-  if (!daysIn.length) return { bars: [], barWidth: 0 };
+export function chartBars(daysIn: DayBar[], width = 840, half = 82): { bars: ChartBar[]; barWidth: number; pitch: number } {
+  if (!daysIn.length) return { bars: [], barWidth: 0, pitch: 0 };
   const byDay = new Map(daysIn.map((d) => [d.day, d]));
   const start = Date.parse(`${daysIn[0]!.day}T00:00:00Z`);
   const end = Date.parse(`${daysIn.at(-1)!.day}T00:00:00Z`);
@@ -93,10 +93,22 @@ export function chartBars(daysIn: DayBar[], width = 840, half = 82): { bars: Cha
       outValue: unitsToDecimal(d?.outValue ?? '0'),
     };
   });
-  return { bars, barWidth };
+  return { bars, barWidth, pitch };
 }
 
-// what a pointer resting on a day reads
-export function barTitle(b: ChartBar): string {
-  return `${b.day} · in ${fmtAmount(b.inValue)} USDC · out ${fmtAmount(b.outValue)} USDC`;
+export interface DayReadout {
+  date: string;
+  in: string;
+  out: string;
+  quiet: boolean; // nothing moved that day
+}
+
+// What the chart reads out for a day the pointer or the arrow keys rest on.
+export function dayReadout(b: ChartBar): DayReadout {
+  return {
+    date: fmtDay(b.day),
+    in: fmtAmount(b.inValue),
+    out: fmtAmount(b.outValue),
+    quiet: b.inH === 0 && b.outH === 0,
+  };
 }

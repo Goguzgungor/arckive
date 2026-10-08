@@ -7,18 +7,21 @@ export interface LaneMeta {
   plural: string;
 }
 
-const FAINT = '#8b8f97';
+// Inks are CSS custom properties (app/globals.css) so each theme sets its own:
+// the light values are the spec's, the dark ones the same hues lifted for a
+// dark page.
+const FAINT = 'var(--faint)';
 
 export const LANE_META: Readonly<Record<string, LaneMeta>> = {
-  swap: { label: 'Swap', ink: '#7442d1', plural: 'swaps' },
-  bridge: { label: 'Bridge', ink: '#0b7fb0', plural: 'bridge transfers' },
-  liquidity: { label: 'Liquidity', ink: '#1d8a57', plural: 'liquidity changes' },
-  vault: { label: 'Vault', ink: '#8d55e8', plural: 'vault moves' },
-  lending: { label: 'Lending', ink: '#a87800', plural: 'lending moves' },
-  signed_payment: { label: 'Signed payment', ink: '#2a7fa8', plural: 'signed payments' },
-  payment: { label: 'Payment', ink: '#3550c8', plural: 'payments' },
+  swap: { label: 'Swap', ink: 'var(--l-swap)', plural: 'swaps' },
+  bridge: { label: 'Bridge', ink: 'var(--l-bridge)', plural: 'bridge transfers' },
+  liquidity: { label: 'Liquidity', ink: 'var(--l-liquidity)', plural: 'liquidity changes' },
+  vault: { label: 'Vault', ink: 'var(--l-vault)', plural: 'vault moves' },
+  lending: { label: 'Lending', ink: 'var(--l-lending)', plural: 'lending moves' },
+  signed_payment: { label: 'Signed payment', ink: 'var(--l-signed_payment)', plural: 'signed payments' },
+  payment: { label: 'Payment', ink: 'var(--l-payment)', plural: 'payments' },
   spam: { label: 'Dust', ink: FAINT, plural: 'dust' },
-  issuance: { label: 'Mint / burn', ink: '#c06a12', plural: 'mints and burns' },
+  issuance: { label: 'Mint / burn', ink: 'var(--l-issuance)', plural: 'mints and burns' },
   uncertain: { label: 'Uncertain', ink: FAINT, plural: 'uncertain movements' },
   no_transfer: { label: 'No transfer', ink: FAINT, plural: 'events without a transfer' },
 };

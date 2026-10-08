@@ -1,9 +1,33 @@
+/* Two editions: day (paper) and night. The page follows the system until the
+   reader picks one with the masthead's switch, which sets data-theme on <html>
+   (before paint, from localStorage: app/layout.tsx). The night block is
+   written twice because CSS cannot share it between the media query and the
+   attribute. Lane inks (--l-*) live here too: lib/lanes.ts names them. */
 :root {
+  color-scheme: light;
   --paper: #f4f1ea; --sheet: #faf8f3; --ink: #15171b; --dim: #5b616c; --faint: #8b8f97; --hair: #ddd6c9; --rule: #c9c1b2;
   --in: #1d8a57; --out: #b2412f; --live: #1f9d63; --late: #a87800;
+  --l-swap: #7442d1; --l-bridge: #0b7fb0; --l-liquidity: #1d8a57; --l-vault: #8d55e8; --l-lending: #a87800;
+  --l-signed_payment: #2a7fa8; --l-payment: #3550c8; --l-issuance: #c06a12;
   --serif: var(--font-serif), Georgia, serif;
   --sans: var(--font-sans), system-ui, sans-serif;
   --mono: var(--font-mono), ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --paper: #121110; --sheet: #1b1a18; --ink: #ece7dd; --dim: #a9a397; --faint: #78736a; --hair: #2a2825; --rule: #3c3934;
+    --in: #4cc38a; --out: #e5735c; --live: #4cc38a; --late: #d9a93a;
+    --l-swap: #a98bf0; --l-bridge: #4fb6e3; --l-liquidity: #4cc38a; --l-vault: #b994f5; --l-lending: #d9a93a;
+    --l-signed_payment: #6bb3d8; --l-payment: #8b9cf5; --l-issuance: #ee9a4f;
+  }
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --paper: #121110; --sheet: #1b1a18; --ink: #ece7dd; --dim: #a9a397; --faint: #78736a; --hair: #2a2825; --rule: #3c3934;
+  --in: #4cc38a; --out: #e5735c; --live: #4cc38a; --late: #d9a93a;
+  --l-swap: #a98bf0; --l-bridge: #4fb6e3; --l-liquidity: #4cc38a; --l-vault: #b994f5; --l-lending: #d9a93a;
+  --l-signed_payment: #6bb3d8; --l-payment: #8b9cf5; --l-issuance: #ee9a4f;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
@@ -20,7 +44,10 @@ a { color: inherit; text-decoration: none; }
 .search input:focus { border-color: var(--ink); }
 .search input::placeholder { color: var(--faint); font-family: var(--sans); }
 .search .hint { position: absolute; left: 0; top: 42px; margin: 0; font-size: 12px; color: var(--out); z-index: 2; background: var(--paper); }
-.net { justify-self: end; font-size: 12px; color: var(--dim); white-space: nowrap; }
+.net { justify-self: end; display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--dim); white-space: nowrap; }
+.theme { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--rule); border-radius: 50%; background: none; color: var(--dim); cursor: pointer; }
+.theme:hover, .theme:focus-visible { color: var(--ink); border-color: var(--ink); outline: none; }
+.theme svg { width: 14px; height: 14px; }
 .status b { font-weight: 600; color: var(--faint); }
 .status.live b { color: var(--live); }
 .status.behind b { color: var(--late); }
@@ -128,8 +155,25 @@ dl.facts dd.parties .addr { display: table; margin-bottom: 4px; }
 .stats .n { font: 30px var(--serif); font-variant-numeric: tabular-nums; margin-top: 4px; }
 .stats .n.in { color: var(--in); }
 .stats .n.out { color: var(--out); }
-svg.chart { display: block; width: 100%; height: auto; }
+/* The day under the pointer (or the arrow keys), else the latest, read out
+   over the chart; while one is picked the other days step back. */
+.readout { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline; min-height: 26px; margin: 0 0 4px; font: 12px var(--mono); color: var(--faint); }
+.readout .d { font: 500 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+.readout .d em { font-style: normal; letter-spacing: .04em; text-transform: none; font-weight: 400; color: var(--faint); margin-left: 6px; }
+.readout b { font: 400 18px var(--serif); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.readout .in b { color: var(--in); }
+.readout .out b { color: var(--out); }
+svg.chart { display: block; width: 100%; height: auto; touch-action: pan-y; }
+svg.chart:focus { outline: none; }
+svg.chart:focus-visible { outline: 1px solid var(--ink); outline-offset: 6px; }
 svg.chart text { font: 11px var(--mono); fill: var(--faint); }
+svg.chart .axis { stroke: var(--ink); }
+svg.chart .in { fill: var(--in); }
+svg.chart .out { fill: var(--out); opacity: .85; }
+svg.chart .band { fill: var(--hair); opacity: .7; }
+svg.chart .day { transition: opacity .12s ease; }
+svg.chart.picking .day { opacity: .3; }
+svg.chart.picking .day.on { opacity: 1; }
 .hist .hrow { display: grid; grid-template-columns: 124px 46px 1fr 140px minmax(104px, auto) 92px; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--hair); align-items: baseline; font-size: 13px; }
 .hist .t { font: 12px var(--mono); color: var(--faint); }
 .hist .dir { font: 600 10.5px var(--sans); letter-spacing: .12em; }
