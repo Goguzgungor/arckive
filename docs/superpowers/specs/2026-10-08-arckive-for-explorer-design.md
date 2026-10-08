@@ -397,3 +397,38 @@ metric.
 - With the generation filter, a Deployment deleted by hand comes back at the
   next resync (≤ 5 min), not on the next status patch. That was only ever an
   accident of the storm.
+
+## Measured (k3d, 2026-10-08)
+
+Images built from this branch; operator and worker on the Mac's k3d
+cluster; PostgreSQL 17 (`manifests/arc-mainnet/k8s/postgres.yaml`). Two
+Indexers instead of three (the user dropped the testnet one: with the gate,
+worker status patches no longer drive reconciles, so the Indexer count does
+not change what goal 5 tests). The user stopped the run before the planned
+one-hour and two-hour windows, so goals 1, 3 and 5 rest on short windows.
+
+| Goal | Result | Window |
+|---|---|---|
+| 1. Live lanes within seconds | p95 `insights_blocks_behind` **2** (max 3; target ≤ 10) | 401 s live, 79 samples every 5 s |
+| 2. Catch-up | **≈ 20×** chain rate: insights ~41 blocks/s vs chain ~2.0 blocks/s; 2,000 blocks closed in about a minute | start of the throughput run |
+| 3. No rate-limit loop | **0 %** rate-limited (762 requests: 756 ok on beamrpc, 3 refused there and answered by blockdaemon) | same run |
+| 4. Ingest untouched | ingest Live within 20 s of start, no ingest change in the diff | — |
+| 5. Operator stays up | 93 → 94 Mi, 0 restarts, 5 reconciles (2 Indexers added, 1 spec patch, resync) | 8 min — **short** |
+| 6. Lanes from a chosen block | `insights.startBlock: -2000` resolved at the first Live round to head − 2,000 (24,814,513); nothing classified before | — |
+| 7. Address lookups | **not measured yet**: needs ≥ 5M rows; the explorer's backfill is still in the empty early history | — |
+
+The leak behind goal 5 was reproduced without a cluster before the fix:
+30 `kubernetes-fluent-client` GETs against a local HTTPS server opened 30
+TLS connections, all 30 still open after the loop.
+
+Backfill notes (not an A2 goal): the explorer's full-history `getLogs` on
+`rpc.mainnet.arc.io` runs into its per-minute quota (`-32005 rate limit
+exceeded`) and averages ~970 blocks/s (2,000-block bursts, then backoff).
+Of the other chainlist endpoints for 5042, only dRPC serves archive logs
+for free, capped at ~100 blocks a request; adding it to `network.rpc` made
+the backfill ~9× slower, because ingest's `RangeSizer` span is shared by all
+endpoints and dRPC's cap shrinks it for `rpc.mainnet.arc.io` too. QuickNode's
+Arc endpoint is quota-limited like the public one; blockdaemon is pruned;
+beamrpc needs a token for archive reads. A per-endpoint span would let a
+capped endpoint help without slowing the others — a follow-up, not part of
+this change.
