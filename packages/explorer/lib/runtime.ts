@@ -115,10 +115,20 @@ export async function bootRuntime(rt: Runtime, exit: (code: number) => void = (c
   }
   if (stopped) return;
   stops.push(rt.tailer.start(), rt.rollup.start(log));
-  const timer = setInterval(() => {
-    refresh(rt).catch((err) => log.warn({ err: errText(err) }, 'refresh failed'));
-  }, REFRESH_MS);
-  stops.push(() => clearInterval(timer));
+  // Each refresh starts 5 s after the last one ended: on a slow database an
+  // interval would stack refreshes on the jobs pool behind each other.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const again = (): void => {
+    timer = setTimeout(() => {
+      refresh(rt)
+        .catch((err) => log.warn({ err: errText(err) }, 'refresh failed'))
+        .finally(() => {
+          if (!stopped) again();
+        });
+    }, REFRESH_MS);
+  };
+  again();
+  stops.push(() => clearTimeout(timer));
   rt.ready = true;
   log.info({ schema: rt.t.schema, lanes: rt.insights.on }, 'explorer ready');
 }

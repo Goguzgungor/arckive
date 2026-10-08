@@ -3,7 +3,9 @@ import { getRuntime } from '../../../lib/runtime.js';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// Readiness for Kubernetes, and the numbers the real test reads.
+// Not the readiness probe (that one only checks the port is serving: while
+// the database is down the pages say so themselves). It reports the numbers
+// the real test reads: head, released block, rollup, streams, tailer timings.
 export async function GET(): Promise<Response> {
   try {
     const rt = getRuntime();

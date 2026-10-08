@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startDb, type TestDb } from './fixture/db.ts';
 import * as R from './fixture/rows.ts';
 import { Hub, type Sink } from '../lib/hub.js';
@@ -92,6 +92,18 @@ describe('tailer (lanes on)', () => {
     expect(hellosIn(viewer.got)[1].blocks.at(-1).n).toBe(R.CURSOR);
     // the rolling minute was rebuilt, not folded a second time
     expect(tailer.window.stats(0).count).toBe(count);
+  });
+
+  it('warns when a read returns as many rows as its limit (the rest of the range is not on the tape)', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const tailer = new Tailer({ pool: db.explorer, t: db.t, hub: new Hub(10), holdMs: 0, lanes: () => true, log });
+      (tailer as unknown as { maxRows: number }).maxRows = 3;
+      await tailer.init();
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ rows: 3 }), expect.stringMatching(/row limit/));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('publishes stats on its timer and stops cleanly', async () => {

@@ -54,6 +54,7 @@ export class Tailer {
   lastReleased: number | null = null;
   window = new RollingWindow();
   private maxGap = MAX_GAP;
+  private maxRows = MAX_ROWS;
   readonly #timings: number[] = [];
 
   constructor(private readonly d: TailerDeps) {}
@@ -68,7 +69,19 @@ export class Tailer {
      JOIN ${t.addresses} fa ON fa.id = x.from_id
      JOIN ${t.addresses} ta ON ta.id = x.to_id
      ${lanes ? `LEFT JOIN ${t.insights} i ON i.block_number = x.block_number AND i.log_index = x.log_index` : ''}
-     WHERE ${where} ORDER BY ${order} LIMIT ${MAX_ROWS}`;
+     WHERE ${where} ORDER BY ${order} LIMIT ${this.maxRows}`;
+  }
+
+  // The released range's movements in block and log order. A range that
+  // reaches the row limit is cut short and the rest never reaches the tape:
+  // say so, it means the skip-ahead is too wide for the chain's traffic.
+  async #moves(from: number, to: number): Promise<MoveRow[]> {
+    const r = await this.d.pool.query<MoveRow>(
+      this.#movesSql('x.block_number > $1 AND x.block_number <= $2', 'x.block_number, x.log_index'),
+      [from, to],
+    );
+    if (r.rows.length >= this.maxRows) this.d.log.warn({ from, to, rows: r.rows.length }, 'tailer read hit its row limit; later movements in the range are not on the tape');
+    return r.rows;
   }
 
   #group(rows: MoveRow[]): { msgs: BlockMsg[]; win: WindowBlock[] } {
@@ -117,11 +130,7 @@ export class Tailer {
   // The last CATCHUP blocks up to `to` as the hub's buffer and a fresh hello
   // to every open stream; they are folded into the rolling minute.
   async #reseed(to: number): Promise<void> {
-    const r = await this.d.pool.query<MoveRow>(
-      this.#movesSql('x.block_number > $1 AND x.block_number <= $2', 'x.block_number, x.log_index'),
-      [to - CATCHUP, to],
-    );
-    const { msgs, win } = this.#group(r.rows);
+    const { msgs, win } = this.#group(await this.#moves(to - CATCHUP, to));
     for (const b of win) this.window.add(b);
     this.d.hub.reseed(msgs, to);
     this.lastReleased = to;
@@ -146,11 +155,7 @@ export class Tailer {
       // Far behind (a stall, a restart): the last CATCHUP blocks as a fresh
       // hello rather than the gap replayed at viewers.
       if (to - this.lastReleased > this.maxGap) return await this.#reseed(to);
-      const r = await this.d.pool.query<MoveRow>(
-        this.#movesSql('x.block_number > $1 AND x.block_number <= $2', 'x.block_number, x.log_index'),
-        [this.lastReleased, to],
-      );
-      const { msgs, win } = this.#group(r.rows);
+      const { msgs, win } = this.#group(await this.#moves(this.lastReleased, to));
       for (const b of win) this.window.add(b);
       this.d.hub.publishBlocks(msgs);
       this.lastReleased = to;
