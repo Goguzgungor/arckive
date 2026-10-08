@@ -1,4 +1,4 @@
-import { fmtInt, fmtTime, fmtWhole, pct } from './format.js';
+import { fmtAmount, fmtInt, fmtTime, fmtWhole, pct } from './format.js';
 import { LANES_ALWAYS, LANE_ORDER, laneMeta } from './lanes.js';
 import type { Part } from './parts.js';
 import type { Hello, StatsMsg } from './types.js';
@@ -13,11 +13,18 @@ export function lanesPaused(s: StatsMsg | null): boolean {
 // behindAt: the newest block's time while the tape is behind. The rolling
 // minute is the chain's last minute, not the clock's: a tape a minute behind
 // must not call it "the last minute".
+// Under 100 USDC two decimals, so a quiet minute never reads "0 USDC" (dust
+// is "<0.01"); from 100 up whole USDC.
+function minuteTotal(usdc: string): string {
+  const whole = usdc.replace(/^-/, '').split('.')[0]!.replace(/^0+(?=\d)/, '');
+  return whole.length <= 2 ? fmtAmount(usdc) : fmtWhole(usdc);
+}
+
 export function homeHeadline(s: StatsMsg | null, behindAt: number | null = null): Part[] {
   if (!s || s.count === 0) return ['Listening to Arc…'];
   const lead = behindAt === null ? 'In the last minute ' : `In the minute to ${fmtTime(behindAt).slice(0, 5)} UTC `;
   const parts: Part[] = [
-    lead, { b: `${fmtWhole(s.usdc)} USDC` }, ' moved across Arc in ', { b: fmtInt(s.count) },
+    lead, { b: `${minuteTotal(s.usdc)} USDC` }, ' moved across Arc in ', { b: fmtInt(s.count) },
     s.count === 1 ? ' movement' : ' movements',
   ];
   if (lanesPaused(s)) return [...parts, '.'];
