@@ -241,6 +241,29 @@ The worker serves `:9090/metrics` (Prometheus) and `:9090/healthz`:
 Insight failures never mark the indexer `Degraded`: `/healthz` and the CR phase
 describe ingest only.
 
+## Explorer
+
+`packages/explorer` is the Arckive Explorer: native USDC and the Uniswap v4
+PoolManager on Arc mainnet, read from an Indexer's own tables
+(`manifests/arc-mainnet/k8s/explorer.yaml`). The home page is a live tape
+of every USDC movement as it lands (Server-Sent Events from one database
+tailer per process); every row opens a transaction page (who paid whom, the
+swap's two sides, the lane Laya read), and every address has a page over its
+whole history (daily totals folded by the explorer itself).
+
+| Env | Default | |
+|---|---|---|
+| `DATABASE_URL` | — | the `explorer` role's DSN (`manifests/arc-mainnet/k8s/explorer-role.sql`) |
+| `ARCKIVE_SCHEMA` | `idx_arc_explorer` | the Indexer's schema |
+| `USDC_TABLE` / `POOL_TABLE_PREFIX` | `usdc_transfer` / `poolmanager_` | its tables |
+| `ARC_RPC` | `https://rpc.mainnet.arc.io` | pool tokens' `symbol()` / `decimals()`, read once |
+| `LANE_HOLD_MS` | `8000` | how long a row waits for its lane |
+| `MAX_STREAMS` | `2000` | open live streams per process |
+
+Run it against a database with `pnpm --filter @arckive/explorer dev`, or
+build the image with `docker build --target explorer -t arckive-explorer:dev .`
+and apply `manifests/arc-mainnet/k8s/explorer-app.yaml`.
+
 ## Development
 
 ```bash
