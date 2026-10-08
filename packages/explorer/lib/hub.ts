@@ -66,12 +66,12 @@ export class Hub {
   subscribe(sink: Sink, lastEventId: number | null): (() => void) | null {
     if (this.full()) return null;
     this.#sinks.add(sink);
-    let ok = sink.send(RETRY);
+    let ok = this.#send(sink, RETRY);
     if (lastEventId !== null && lastEventId >= this.#trimmedThrough) {
-      for (const b of this.#blocks) if (ok && b.n > lastEventId) ok = sink.send(frame('block', b, b.n));
-      if (ok && this.#stats) ok = sink.send(frame('stats', this.#stats));
+      for (const b of this.#blocks) if (ok && b.n > lastEventId) ok = this.#send(sink, frame('block', b, b.n));
+      if (ok && this.#stats) ok = this.#send(sink, frame('stats', this.#stats));
     } else if (ok) {
-      ok = sink.send(frame('hello', this.hello(), this.newest() ?? undefined));
+      ok = this.#send(sink, frame('hello', this.hello(), this.newest() ?? undefined));
     }
     if (!ok) this.#drop(sink);
     return () => {
@@ -99,11 +99,26 @@ export class Hub {
   }
 
   #broadcast(chunk: string): void {
-    for (const s of this.#sinks) if (!s.send(chunk)) this.#drop(s);
+    for (const s of this.#sinks) if (!this.#send(s, chunk)) this.#drop(s);
   }
 
+  // A closed or cancelled stream throws on enqueue; one such viewer must not
+  // abort the fan-out for the rest, so a throw counts as "stopped reading".
+  #send(s: Sink, chunk: string): boolean {
+    try {
+      return s.send(chunk);
+    } catch {
+      return false;
+    }
+  }
+
+  // Closing an already-closed stream can throw too; the sink is gone either way.
   #drop(s: Sink): void {
     this.#sinks.delete(s);
-    s.close();
+    try {
+      s.close();
+    } catch {
+      // already closed
+    }
   }
 }

@@ -81,4 +81,42 @@ describe('Hub', () => {
     off();
     expect(hub.subscribe(sink(), null)).not.toBeNull();
   });
+
+  it('survives a sink whose send throws during a publish', () => {
+    const hub = new Hub(10);
+    const bad = sink();
+    const good = sink();
+    hub.subscribe(bad, null);
+    hub.subscribe(good, null);
+    bad.send = () => { throw new Error('stream closed'); };
+    expect(() => hub.publishBlock(block(1))).not.toThrow();
+    expect(bad.closed).toBe(true);
+    expect(good.got.at(-1)).toBe(frame('block', block(1), 1));
+    expect(hub.size).toBe(1);
+    expect(hub.newest()).toBe(1);
+  });
+
+  it('does not count a sink whose first send throws on subscribe', () => {
+    const hub = new Hub(1);
+    const bad = sink();
+    bad.send = () => { throw new Error('stream closed'); };
+    expect(() => hub.subscribe(bad, null)).not.toThrow();
+    expect(hub.size).toBe(0);
+    expect(bad.closed).toBe(true);
+    expect(hub.subscribe(sink(), null)).not.toBeNull();
+  });
+
+  it('removes a sink whose close throws', () => {
+    const hub = new Hub(10);
+    const bad = sink(false);
+    bad.close = () => { throw new Error('already closed'); };
+    hub.subscribe(bad, null);
+    expect(hub.size).toBe(0);
+    const bad2 = sink();
+    hub.subscribe(bad2, null);
+    bad2.send = () => false;
+    bad2.close = () => { throw new Error('already closed'); };
+    expect(() => hub.publishBlock(block(1))).not.toThrow();
+    expect(hub.size).toBe(0);
+  });
 });
