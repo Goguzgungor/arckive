@@ -638,6 +638,17 @@ table {
   font-size: 22px;
 }
 
+.radar-body .lede + .lede {
+  margin-top: 12px;
+}
+
+.radar-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
 /* ———— compare ———— */
 
 .compare {
