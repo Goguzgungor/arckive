@@ -62,6 +62,21 @@ describe('Tokens', () => {
     expect(r.rows).toEqual([{ symbol: null, decimals: null }]);
   });
 
+  it('remembers an RPC outage for a minute instead of asking on every page view', async () => {
+    const down = `0x${'9'.repeat(40)}`;
+    const other = `0x${'a'.repeat(40)}`;
+    let now = 1_000_000;
+    const reader = fakeReader({ [down]: 'unavailable', [other]: 'unavailable' });
+    const tokens = new Tokens(db.explorer, reader, () => now);
+    expect(await tokens.get([down])).toEqual({ [down]: { symbol: null, decimals: null } });
+    now += 59_000;
+    expect(await tokens.get([down, other])).toEqual({ [down]: { symbol: null, decimals: null }, [other]: { symbol: null, decimals: null } });
+    expect(reader.calls).toEqual([down]);
+    now += 1_001;
+    await tokens.get([down]);
+    expect(reader.calls).toEqual([down, down]);
+  });
+
   it('does not store a read the RPC could not answer', async () => {
     const down = `0x${'8'.repeat(40)}`;
     expect(await new Tokens(db.explorer, fakeReader({ [down]: 'unavailable' })).get([down])).toEqual({ [down]: { symbol: null, decimals: null } });

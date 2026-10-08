@@ -44,8 +44,10 @@ async function attempt<T>(f: () => Promise<T>): Promise<T | null | 'unavailable'
   }
 }
 
+// One try, 2 s: a page waits on this read, and a retry would double the wait
+// on an RPC that is already failing.
 export function rpcTokenReader(rpcUrl: string): TokenReader {
-  const client = createPublicClient({ transport: http(rpcUrl, { timeout: 4000, retryCount: 1 }) });
+  const client = createPublicClient({ transport: http(rpcUrl, { timeout: 2000, retryCount: 0 }) });
   return {
     async read(a) {
       const address = a as `0x${string}`;
@@ -59,12 +61,21 @@ export function rpcTokenReader(rpcUrl: string): TokenReader {
   };
 }
 
+// After an RPC read could not be answered, no reads for this long.
+const OUTAGE_MS = 60_000;
+
 // Pool currencies' symbol and decimals, read over ARC_RPC the first time a
-// page needs them and kept in explorer.tokens.
+// page needs them and kept in explorer.tokens. An unanswered read (a rate
+// limit, a timeout) is remembered in memory for a minute: during an outage
+// every page view would otherwise wait on the RPC again, and Arc's public
+// RPC counts each call against its per-minute quota.
 export class Tokens {
+  #downUntil = 0;
+
   constructor(
     private readonly pool: pg.Pool,
     private readonly reader: TokenReader,
+    private readonly now: () => number = Date.now,
   ) {}
 
   async get(addresses: string[]): Promise<Record<string, TokenMeta>> {
@@ -81,8 +92,14 @@ export class Tokens {
     for (const r of known.rows) out[bytesToHex(r.address)] = { symbol: r.symbol, decimals: r.decimals };
     await Promise.all(
       wanted.filter((a) => !out[a]).map(async (a) => {
+        // remembered, not extended: a busy page must not keep the outage open
+        if (this.now() < this.#downUntil) {
+          out[a] = { symbol: null, decimals: null };
+          return;
+        }
         const meta = await this.reader.read(a);
         if (meta === 'unavailable') {
+          this.#downUntil = this.now() + OUTAGE_MS;
           out[a] = { symbol: null, decimals: null };
           return;
         }
