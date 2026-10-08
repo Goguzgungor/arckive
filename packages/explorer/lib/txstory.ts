@@ -1,10 +1,11 @@
 import { ZERO_ADDRESS, fmtAmount, fmtFee, fmtInt, fmtTime, shortAddr, shortHash, unitsToDecimal } from './format.js';
 import type { Part } from './parts.js';
 import type { TokenMeta } from './tokens.js';
+import { usdcFace } from './usdc.js';
 import type { PoolInfo, TxData, TxSwap, TxTransfer } from './tx.js';
 
 const abs = (v: bigint): bigint => (v < 0n ? -v : v);
-const usdc = (raw: string | bigint): string => `${fmtAmount(unitsToDecimal(raw))} USDC`;
+const usdc = (raw: string | bigint, decimals = 18): string => `${fmtAmount(unitsToDecimal(raw, decimals))} USDC`;
 const plural = (n: number, one: string, many: string): string => `${fmtInt(n)} ${n === 1 ? one : many}`;
 
 export function isChain(ts: TxTransfer[]): boolean {
@@ -20,11 +21,14 @@ function andList(addresses: string[]): Part[] {
   return out;
 }
 
-// The USDC side of a swap, as the swapper's delta; null when neither currency is native USDC.
-function usdcDelta(s: TxSwap, pool: PoolInfo | undefined): bigint | null {
+// The USDC side of a swap, as the swapper's delta and that currency's
+// decimals (native 18, the ERC-20 face 6); null when neither currency is USDC.
+function usdcDelta(s: TxSwap, pool: PoolInfo | undefined): { delta: bigint; decimals: number } | null {
   if (!pool) return null;
-  if (pool.currency0 === ZERO_ADDRESS) return BigInt(s.amount0);
-  if (pool.currency1 === ZERO_ADDRESS) return BigInt(s.amount1);
+  const f0 = usdcFace(pool.currency0);
+  if (f0) return { delta: BigInt(s.amount0), decimals: f0.decimals };
+  const f1 = usdcFace(pool.currency1);
+  if (f1) return { delta: BigInt(s.amount1), decimals: f1.decimals };
   return null;
 }
 
@@ -32,9 +36,9 @@ export function txHeadline(tx: TxData): Part[] {
   const T = tx.transfers;
   const s = tx.swaps[0];
   if (s) {
-    const d = usdcDelta(s, tx.pools[s.pool]);
-    if (d !== null && d < 0n) return [{ addr: T[0]?.from ?? s.sender }, ' swapped ', { b: usdc(abs(d)) }, ' on Uniswap v4.'];
-    if (d !== null && d > 0n) return [{ addr: T.at(-1)?.to ?? s.sender }, ' swapped for ', { b: usdc(d) }, ' on Uniswap v4.'];
+    const u = usdcDelta(s, tx.pools[s.pool]);
+    if (u !== null && u.delta < 0n) return [{ addr: T[0]?.from ?? s.sender }, ' swapped ', { b: usdc(abs(u.delta), u.decimals) }, ' on Uniswap v4.'];
+    if (u !== null && u.delta > 0n) return [{ addr: T.at(-1)?.to ?? s.sender }, ' swapped for ', { b: usdc(u.delta, u.decimals) }, ' on Uniswap v4.'];
     return ['A swap on Uniswap v4.'];
   }
   if (!T.length) {
@@ -74,9 +78,10 @@ export interface SwapView {
 // A token that does not answer decimals() shows its raw integer: scaling it
 // by a guess would print a wrong amount with confidence.
 function side(address: string, delta: bigint, meta: TokenMeta | undefined): SwapSide {
-  const decimals = address === ZERO_ADDRESS ? 18 : (meta?.decimals ?? null);
+  const face = usdcFace(address);
+  const decimals = face ? face.decimals : (meta?.decimals ?? null);
   const amount = decimals === null ? fmtInt(abs(delta)) : fmtAmount(unitsToDecimal(abs(delta), decimals));
-  const symbol = address === ZERO_ADDRESS ? 'USDC (native)' : (meta?.symbol ?? null);
+  const symbol = face ? face.label : (meta?.symbol ?? null);
   const token = symbol ?? shortAddr(address);
   const note = [symbol ?? `token ${token}`, ...(decimals === null ? ['decimals unknown'] : [])].join(' · ');
   return { amount, token, tokenAddress: address, decimals: decimals !== null, note };
@@ -114,8 +119,9 @@ export function txPath(tx: TxData, tokens: Record<string, TokenMeta>): Part[] {
   if (s) {
     const v = swapView(s, tx.pools[s.pool], tokens);
     const of = (x: SwapSide): string => `${x.decimals ? '' : ' (raw units)'} of ${x.token}.`;
-    if (v.received && v.received.tokenAddress !== ZERO_ADDRESS) out.push(' It came back as ', { b: v.received.amount }, of(v.received));
-    else if (v.paid && v.paid.tokenAddress !== ZERO_ADDRESS) out.push(' It was paid for with ', { b: v.paid.amount }, of(v.paid));
+    // the other side of the swap, not the USDC one
+    if (v.received && !usdcFace(v.received.tokenAddress)) out.push(' It came back as ', { b: v.received.amount }, of(v.received));
+    else if (v.paid && !usdcFace(v.paid.tokenAddress)) out.push(' It was paid for with ', { b: v.paid.amount }, of(v.paid));
   }
   return out;
 }

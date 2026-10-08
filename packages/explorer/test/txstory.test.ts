@@ -72,6 +72,30 @@ describe('other swaps', () => {
     expect(txPath(tx, TOKENS).slice(-3)).toEqual([' It was paid for with ', { b: '13,763,833.33' }, ' of PUMP.']);
   });
 
+  it('knows the ERC-20 face of USDC (0x3600…0000, 6 decimals) in a pool as the USDC side', () => {
+    const erc20 = '0x3600000000000000000000000000000000000000';
+    const pool = { ...POOL, currency0: erc20 };
+    const tx = base({
+      transfers: [t(1, R.SWAP_PAYER, R.POOLMANAGER, 1)],
+      swaps: [{ li: 3, pool: R.SWAP_POOL, sender: R.ROUTER, amount0: '-998', amount1: R.SWAP_RECEIVED, fee: 2500 }],
+      pools: { [R.SWAP_POOL]: pool },
+    });
+    expect(txHeadline(tx)).toEqual([{ addr: R.SWAP_PAYER }, ' swapped ', { b: '<0.01 USDC' }, ' on Uniswap v4.']);
+    const big = { ...tx, swaps: [{ ...tx.swaps[0]!, amount0: '-12340000' }] };
+    expect(txHeadline(big)[2]).toEqual({ b: '12.34 USDC' });
+    const v = swapView(tx.swaps[0]!, pool, { [erc20]: { symbol: 'USDC', decimals: 6 }, ...TOKENS });
+    expect(v.paid).toMatchObject({ token: 'USDC', amount: '<0.01', decimals: true, note: 'USDC' });
+    // the native face is labelled as such
+    expect(swapView(SWAP.swaps[0]!, POOL, TOKENS).paid?.token).toBe('USDC (native)');
+    // "came back as" is about the other side only
+    expect(txPath(tx, { [erc20]: { symbol: 'USDC', decimals: 6 }, ...TOKENS }).slice(-3)).toEqual([' It came back as ', { b: '13,763,833.33' }, ' of PUMP.']);
+    const rev = base({
+      swaps: [{ li: 3, pool: R.SWAP_POOL, sender: R.ROUTER, amount0: '5000000', amount1: '-7', fee: 2500 }],
+      pools: { [R.SWAP_POOL]: pool },
+    });
+    expect(txPath(rev, TOKENS).join('')).not.toMatch(/USDC/);
+  });
+
   it('falls back when the pool is unknown or the token has no decimals', () => {
     const tx = base({ swaps: SWAP.swaps });
     expect(txHeadline(tx)).toEqual(['A swap on Uniswap v4.']);

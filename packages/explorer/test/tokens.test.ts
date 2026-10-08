@@ -47,6 +47,13 @@ describe('Tokens', () => {
     expect(reader.calls).toEqual([]);
   });
 
+  it('answers the ERC-20 face of USDC (0x3600…0000) without a call, with 6 decimals', async () => {
+    const reader = fakeReader({});
+    const erc20 = '0x3600000000000000000000000000000000000000';
+    expect(await new Tokens(db.explorer, reader).get([erc20.toUpperCase().replace('0X', '0x')])).toEqual({ [erc20]: { symbol: 'USDC', decimals: 6 } });
+    expect(reader.calls).toEqual([]);
+  });
+
   it('reads a token once and keeps it', async () => {
     const reader = fakeReader({ [SWAP_TOKEN]: { symbol: 'PUMP', decimals: 18 } });
     const tokens = new Tokens(db.explorer, reader);

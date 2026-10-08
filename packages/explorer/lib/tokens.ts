@@ -4,7 +4,7 @@ import {
   createPublicClient, erc20Abi, http,
 } from 'viem';
 import { hexToBytes, bytesToHex } from './db.js';
-import { ZERO_ADDRESS } from './format.js';
+import { usdcFace } from './usdc.js';
 
 export interface TokenMeta {
   symbol: string | null;
@@ -17,8 +17,12 @@ export interface TokenReader {
   read(address: string): Promise<ReadResult>;
 }
 
-// In a v4 pool, address(0) is the chain's native currency: on Arc, USDC with 18 decimals.
-const NATIVE: TokenMeta = { symbol: 'USDC', decimals: 18 };
+// USDC in either face (address(0), the native currency with 18 decimals, and
+// the ERC-20 at 0x3600…0000 with 6) is answered without an RPC call.
+const known = (a: string): TokenMeta | null => {
+  const f = usdcFace(a);
+  return f ? { symbol: f.symbol, decimals: f.decimals } : null;
+};
 
 // Only a revert or an empty answer means "not a token"; a transport failure
 // (a rate limit, a timeout) is asked again on a later page view, never stored.
@@ -81,15 +85,16 @@ export class Tokens {
   async get(addresses: string[]): Promise<Record<string, TokenMeta>> {
     const out: Record<string, TokenMeta> = {};
     const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))].filter((a) => {
-      if (a === ZERO_ADDRESS) out[a] = NATIVE;
-      return a !== ZERO_ADDRESS;
+      const meta = known(a);
+      if (meta) out[a] = meta;
+      return !meta;
     });
     if (!wanted.length) return out;
-    const known = await this.pool.query<{ address: Buffer; symbol: string | null; decimals: number | null }>(
+    const stored = await this.pool.query<{ address: Buffer; symbol: string | null; decimals: number | null }>(
       'SELECT address, symbol, decimals FROM explorer.tokens WHERE address = ANY($1::bytea[])',
       [wanted.map(hexToBytes)],
     );
-    for (const r of known.rows) out[bytesToHex(r.address)] = { symbol: r.symbol, decimals: r.decimals };
+    for (const r of stored.rows) out[bytesToHex(r.address)] = { symbol: r.symbol, decimals: r.decimals };
     await Promise.all(
       wanted.filter((a) => !out[a]).map(async (a) => {
         // remembered, not extended: a busy page must not keep the outage open
