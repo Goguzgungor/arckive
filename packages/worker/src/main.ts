@@ -17,8 +17,8 @@ import { PhaseTracker } from './status.js';
 import { subscribeNewHeads } from './ws.js';
 import { crStatusTargetFromEnv, reportFatalToCr, startCrStatusLoop, type CrStatusTarget } from './crstatus.js';
 import { prepareInsights, runInsightsLoop } from './insights.js';
-import { Pacer } from './pacer.js';
-import { INSIGHTS_RPC_PACE, createContextSource, createInsightsRpc, readTokenInfo } from './txcontext.js';
+import { INSIGHTS_RPC_PACE, checkPoolChain, createRpcPool } from './rpcpool.js';
+import { createContextSource, insightsRpc, readTokenInfo } from './txcontext.js';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -69,7 +69,9 @@ async function main(): Promise<void> {
     cfg,
     defs,
     schema: schemaName(cfg.indexerName),
-    store: createStore(schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor),
+    store: createStore(
+      schemaName(cfg.indexerName), defs, cfg.storage.partitionBlocks, compactor, cfg.storage.addressIndexes ?? false,
+    ),
     metrics,
     phase,
     headSignal,
@@ -79,18 +81,31 @@ async function main(): Promise<void> {
   await bootstrapIndexer(deps);
 
   // Insights (optional) run beside ingest, woken by each committed range.
+  // Their reads use insights.rpc, or else the last http endpoint of
+  // network.rpc (insightsRpc), never ingest's whole list.
   const insightsWake = new HeadSignal();
-  const insightsPacer = new Pacer(INSIGHTS_RPC_PACE);
-  const insights = cfg.insights
+  const insightUrls = cfg.insights
+    ? await checkPoolChain(cfg.insights.rpc ?? [insightsRpc(rpcs)], cfg.network.chainId, log)
+    : [];
+  const insightsPool = insightUrls.length
+    ? createRpcPool(insightUrls, rpcs, {
+        pace: INSIGHTS_RPC_PACE,
+        log,
+        onRequest: (endpoint, outcome) => metrics.insightsRpcRequests.inc({ endpoint: String(endpoint), outcome }),
+      })
+    : null;
+  if (cfg.insights && !insightsPool) log.error('insights: every insight endpoint is on another chain — insights stay off');
+  if (insightsPool) log.info({ endpoints: insightsPool.endpoints }, 'insights rpc pool');
+  const insights = cfg.insights && insightsPool
     ? await prepareInsights({
         cfg, pool, schema: deps.schema, defs, abis, metrics, log, wake: insightsWake,
-        context: createContextSource(createInsightsRpc(rpcs), { pacer: insightsPacer }),
+        context: createContextSource(insightsPool),
         // native USDC has no symbol()/decimals() to read (core insights/tokens.ts)
         readToken: async (address, fallback) =>
           knownToken(cfg.network.chainId, address) ?? readTokenInfo(client, address, fallback),
         headerLine: process.env['INSIGHTS_HEADER'],
         ingestPhase: () => phase.phase,
-        rpcPacer: insightsPacer,
+        rpcPool: insightsPool,
         compactor,
       })
     : null;

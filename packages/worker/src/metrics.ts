@@ -72,6 +72,12 @@ export function createMetrics(indexerName: string) {
       labelNames: ['stage'] as const,
       registers: [registry],
     }),
+    insightsRpcRequests: new Counter({
+      name: 'arckive_insights_rpc_requests_total',
+      help: 'requests the insight RPC pool sent, by endpoint index and outcome (ok, rate_limited, failed)',
+      labelNames: ['endpoint', 'outcome'] as const,
+      registers: [registry],
+    }),
   };
 }
 

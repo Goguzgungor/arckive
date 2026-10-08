@@ -157,7 +157,7 @@ function errorText(err: unknown): string {
   return parts.join(' | ');
 }
 
-const RATE_LIMIT = /rate.?limit|too many requests|status:? 429|http 429|429 too many/i;
+export const RATE_LIMIT = /rate.?limit|too many requests|status:? 429|http 429|429 too many/i;
 const BODY_TOO_LARGE = /response body exceeded the size limit/i;
 const RANGE_CAP =
   /block range (is )?too (large|wide|big)|block range limit|exceeds? (the )?max(imum)? (block )?range|ranges? over|range (is )?too (large|wide|big)|range limit|max(imum)? (block )?range|exceeds? (the )?max(imum)? (number of )?results|max(imum)? results|retry with (the|a) range|too many (blocks|logs|results)|more than \d+ (results|logs|blocks)|response size|query returned more than|limited to (a )?[\d,]+ (block )?range|up to (a )?[\d,]+ block range|block range (exceeds|should be)|max(imum)? allowed (block )?range|reduc\w* (your |the )?(block )?range/i;

@@ -9,9 +9,11 @@ import {
 } from '@arckive/core';
 import { Partitions, bootstrap, commitBatch, contractMeta, createStore, initCursor, type Store } from '../src/db.js';
 import {
-  InsightsError, insightTargets, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
+  InsightsError, insightTargets, insightsStart, prepareInsights, runInsightsLoop, runInsightsOnce, type InsightsDeps,
 } from '../src/insights.js';
-import { bootstrapInsights, capRange, commitInsights, getInsightsCursor, type InsightRow } from '../src/insightsdb.js';
+import {
+  bootstrapInsights, capRange, commitInsights, getInsightsCursor, initInsightsCursor, type InsightRow,
+} from '../src/insightsdb.js';
 import { LayaError } from '../src/laya.js';
 import { createMetrics } from '../src/metrics.js';
 import { HeadSignal } from '../src/signal.js';
@@ -71,8 +73,8 @@ function fakeContext(contexts: Record<string, TxContext | null>): ContextSource 
   };
 }
 
-function fakePacer() {
-  return { backOffs: 0, backOff() { this.backOffs++; } };
+function fakePool() {
+  return { backOffs: 0, backOffShared() { this.backOffs++; } };
 }
 
 function fakeClassifier() {
@@ -116,6 +118,7 @@ describe('insights', () => {
     classifier = fakeClassifier();
     deps = {
       pool, schema: SCHEMA,
+      start: { cursor: 99n },
       targets: insightTargets(defs, new Map([[TOKEN, { label: 'TKN', decimals: 6 }]])),
       called: new Map([[VAULT, { name: 'vault', functions: new Map([['0x12345678', 'depositFor']]) }]]),
       context: fakeContext({
@@ -132,7 +135,7 @@ describe('insights', () => {
       intervalMs: 60_000,
       wake: new HeadSignal(),
       ingestPhase: () => 'Live',
-      rpcPacer: fakePacer(),
+      rpcPool: fakePool(),
       partitions: new Partitions(SCHEMA, 1_000_000n),
     };
     askedParties.length = 0;
@@ -295,7 +298,7 @@ describe('insights', () => {
       cfg, pool, schema: SCHEMA, defs, abis: [[], vaultAbi],
       metrics: createMetrics('prep'), log: pino({ level: 'silent' }), wake: new HeadSignal(),
       context: fakeContext({}), readToken: async () => ({ label: 'TKN', decimals: 6 }),
-      ingestPhase: () => 'Live' as const, rpcPacer: fakePacer(),
+      ingestPhase: () => 'Live' as const, rpcPool: fakePool(),
     };
     await expect(prepareInsights({ ...base, headerLine: 'nonsense secret' })).rejects.toThrow(/INSIGHTS_HEADER/);
     const prepared = await prepareInsights({ ...base, headerLine: 'Authorization: Bearer x' });
@@ -322,8 +325,8 @@ describe('insights', () => {
   });
 
   it('slows its RPC pace while ingest is Degraded', async () => {
-    const pacer = fakePacer();
-    deps.rpcPacer = pacer;
+    const pacer = fakePool();
+    deps.rpcPool = pacer;
     deps.ingestPhase = () => 'Degraded';
     deps.intervalMs = 20;
     const ctrl = new AbortController();
@@ -373,5 +376,71 @@ describe('insights', () => {
     const err = new InsightsError('rpc', { cause: new Error('boom') });
     expect(err.stage).toBe('rpc');
     expect(err.message).toContain('boom');
+  });
+  describe('insights.startBlock', () => {
+    const cfgWith = (startBlock?: number) => parseWorkerConfig({
+      indexerName: 'ins',
+      network: { chainId: 31337, rpc: ['http://127.0.0.1:1'] },
+      contracts: [
+        { name: 'tok', address: TOKEN, abiInline: [], startBlock: 50 },
+        { name: 'vault', address: VAULT, abiInline: [], startBlock: 70 },
+      ],
+      insights: { laya: { url: 'https://gate.example' }, ...(startBlock === undefined ? {} : { startBlock }) },
+    });
+
+    // The ingest start in cfg is this boot's (main.ts resolves a tail-mode or
+    // negative contract startBlock to this boot's head), so only an omitted
+    // start follows it; set ones are floored at block 0.
+    it('resolves to a cursor (block 0 at the earliest), or to "this far behind the head"', () => {
+      expect(insightsStart(cfgWith())).toEqual({ cursor: 49n });
+      expect(insightsStart(cfgWith(100))).toEqual({ cursor: 99n });
+      expect(insightsStart(cfgWith(10))).toEqual({ cursor: 9n });
+      expect(insightsStart(cfgWith(0))).toEqual({ cursor: -1n });
+      expect(insightsStart(cfgWith(-5))).toEqual({ behindHead: 5n, floor: -1n });
+    });
+
+    it('relative: the first round writes the cursor that far behind the ingest cursor', async () => {
+      await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
+      deps.start = { behindHead: 5n, floor: -1n };
+      await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n), transferRow(118, 2, 1n)], [], 120n);
+      while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
+      expect((await insights()).map((r) => r.block_number)).toEqual(['118']); // 115 < 118, 110 skipped
+      expect(await getInsightsCursor(pool, SCHEMA)).toBe(120n);
+    });
+
+    it('relative: more blocks than the chain has start at block 0', async () => {
+      await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
+      deps.start = { behindHead: 1_000n, floor: -1n };
+      await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n), transferRow(118, 2, 1n)], [], 120n);
+      while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
+      expect((await insights()).map((r) => r.block_number)).toEqual(['110', '118']);
+    });
+
+    it('an existing cursor is never moved by the start setting', async () => {
+      deps.start = { behindHead: 5n, floor: -1n }; // beforeEach already wrote cursor 99
+      await commitBatch(pool, store, [transferRow(110, 1, 5_000_000n)], [], 120n);
+      while (await runInsightsOnce(deps, 'laya-test')) { /* catch up */ }
+      expect((await insights()).map((r) => r.block_number)).toEqual(['110']);
+      await initInsightsCursor(pool, SCHEMA, 7n);
+      expect(await getInsightsCursor(pool, SCHEMA)).toBe(120n);
+    });
+
+    it('prepareInsights writes an absolute start at once and a relative one not yet', async () => {
+      const base = {
+        pool, schema: SCHEMA, defs, abis: [[], []],
+        metrics: createMetrics('start'), log: pino({ level: 'silent' }), wake: new HeadSignal(),
+        context: fakeContext({}), readToken: async () => ({ label: 'TKN', decimals: 6 }),
+        ingestPhase: () => 'Live' as const, rpcPool: fakePool(), headerLine: undefined,
+      };
+      await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
+      await prepareInsights({ ...base, cfg: cfgWith(-5) });
+      expect(await getInsightsCursor(pool, SCHEMA)).toBeNull();
+      await prepareInsights({ ...base, cfg: cfgWith(60) });
+      expect(await getInsightsCursor(pool, SCHEMA)).toBe(59n);
+      // below this boot's ingest start (49): written as set, not raised to it
+      await pool.query(`DELETE FROM ${SCHEMA}._insights_cursor`);
+      await prepareInsights({ ...base, cfg: cfgWith(10) });
+      expect(await getInsightsCursor(pool, SCHEMA)).toBe(9n);
+    });
   });
 });

@@ -64,4 +64,15 @@ describe('Indexer CRD manifest', () => {
       description: 'Blocks per range partition of every table (storage layout 2)',
     });
   });
+
+  it('storage.addressIndexes and insights.rpc/startBlock match zod', () => {
+    const spec = v.schema.openAPIV3Schema.properties.spec.properties as Record<
+      string, { properties: Record<string, Record<string, unknown>> }
+    >;
+    expect(spec['storage']!.properties['addressIndexes']).toMatchObject({ type: 'boolean', default: false });
+    expect(spec['insights']!.properties['rpc']).toMatchObject({
+      type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', pattern: '^https?://' },
+    });
+    expect(spec['insights']!.properties['startBlock']).toMatchObject({ type: 'integer' });
+  });
 });

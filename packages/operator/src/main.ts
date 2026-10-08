@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { K8s } from 'kubernetes-fluent-client';
-import { WatchPhase } from 'kubernetes-fluent-client/dist/fluent/shared-types.js';
 import { Indexer } from './kinds.js';
 import { createKubeApi } from './kube.js';
+import { connectionFromKubeConfig, createKubeHttp } from './kubehttp.js';
 import { reconcile, type ReconcileDeps } from './reconcile.js';
+import { ReconcileGate, type ReconcileResult } from './gate.js';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -14,15 +15,20 @@ async function main(): Promise<void> {
   const resyncMs = Number(process.env['RESYNC_INTERVAL_MS'] ?? 300_000);
   const healthPort = Number(process.env['HEALTH_PORT'] ?? 8080);
 
-  const deps: ReconcileDeps = { kube: createKubeApi(), workerImage, log };
+  // one keep-alive client for every get/apply/patch (kubehttp.ts); the
+  // fluent client below is used only for the watch
+  const kubeHttp = createKubeHttp(await connectionFromKubeConfig());
+  const deps: ReconcileDeps = { kube: createKubeApi(kubeHttp), workerImage, log };
 
-  const safeReconcile = async (cr: Indexer): Promise<void> => {
+  const safeReconcile = async (cr: Indexer): Promise<ReconcileResult> => {
     try {
-      await reconcile(deps, cr);
+      return await reconcile(deps, cr);
     } catch (err) {
       log.error({ err, indexer: cr.metadata?.name }, 'reconcile error');
+      return 'failed';
     }
   };
+  const gate = new ReconcileGate(safeReconcile);
 
   const health = createServer((req, res) => {
     if (req.url === '/healthz') {
@@ -34,10 +40,10 @@ async function main(): Promise<void> {
   });
   health.listen(healthPort);
 
-  // cleanup of deleted CRs is handled by ownerReferences + GC; nothing to do on Deleted
+  // Status-only events are dropped by the gate (gate.ts); cleanup of deleted
+  // CRs is handled by ownerReferences + GC.
   const watcher = K8s(Indexer).Watch((cr, phase) => {
-    if (phase === WatchPhase.Deleted) return;
-    void safeReconcile(cr);
+    void gate.watch(cr, phase);
   });
   await watcher.start();
 
@@ -45,7 +51,7 @@ async function main(): Promise<void> {
     deps.kube
       .listIndexers()
       .then(async (crs) => {
-        for (const cr of crs) await safeReconcile(cr);
+        for (const cr of crs) await gate.resync(cr);
       })
       .catch((err: unknown) => log.error({ err }, 'resync error'));
   }, resyncMs);
@@ -53,7 +59,9 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     log.info('shutdown signal received');
     clearInterval(resync);
+    gate.close(); // pending waiting-retries (gate.ts)
     watcher.close();
+    kubeHttp.close();
     health.close();
   };
   process.on('SIGTERM', shutdown);

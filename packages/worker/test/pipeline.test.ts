@@ -270,4 +270,49 @@ describe('pipeline', () => {
     expect(r.rows[0].c).toBeGreaterThanOrEqual(5);
     expect(sizer.size).toBeLessThanOrEqual(2);
   });
+
+  it('a Live worker one block behind stays Live; a range that cannot reach the head sets Backfilling', async () => {
+    const tracker = new PhaseTracker();
+    const seen: string[] = [];
+    let head = 5n;
+    const fake = {
+      getBlock: async () => ({ number: head }),
+      getLogs: async () => {
+        seen.push(tracker.phase);
+        return [];
+      },
+    } as unknown as PipelineDeps['client'];
+    const cfg2 = parseWorkerConfig({
+      indexerName: 'phase',
+      network: { chainId: 31337, rpc: [anvil.url] },
+      contracts: [{ name: 'emitter', address: contractAddress, abiPath: 'unused' }],
+      polling: { batchBlocks: 2, intervalMs: 100 },
+    });
+    const d2: PipelineDeps = {
+      ...deps, client: fake, cfg: cfg2, schema: 'idx_phase', store: createStore('idx_phase', deps.defs, 1_000_000),
+      metrics: createMetrics('phase'), phase: tracker,
+    };
+    await bootstrapIndexer(d2);
+
+    // cursor -1, head 5, span 2: blocks 0..1 cannot reach the head
+    expect(await runOnce(d2)).toBe(true);
+    expect(seen).toEqual(['Backfilling']);
+    while (await runOnce(d2)) { /* 2..3, then 4..5 */ }
+    expect(tracker.phase).toBe('Live');
+
+    // the head moves one block: a live tail stays Live through its round
+    seen.length = 0;
+    head = 6n;
+    expect(await runOnce(d2)).toBe(true);
+    expect(seen).toEqual(['Live']);
+    expect(tracker.phase).toBe('Live');
+
+    // recovering from Degraded still reports Backfilling while it works
+    seen.length = 0;
+    tracker.set('Degraded', 'rpc down');
+    head = 7n;
+    expect(await runOnce(d2)).toBe(true);
+    expect(seen).toEqual(['Backfilling']);
+    expect(tracker.phase).toBe('Live');
+  });
 });

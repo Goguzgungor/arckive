@@ -11,12 +11,13 @@ const q = (id: string) => `"${id}"`;
 // slower than re-indexing from the chain, so it is refused, never mixed.
 export class LayoutError extends Error {}
 
-async function assertLayout(client: pg.PoolClient, schema: string): Promise<void> {
+// Whether the schema already existed: a fresh one has no _cursor yet.
+async function assertLayout(client: pg.PoolClient, schema: string): Promise<boolean> {
   const r = await client.query(
     'SELECT to_regclass($1) IS NOT NULL AS has_cursor, to_regclass($2) IS NOT NULL AS has_meta',
     [`${q(schema)}._cursor`, `${q(schema)}._meta`],
   );
-  if (!r.rows[0].has_cursor) return; // a fresh schema
+  if (!r.rows[0].has_cursor) return false; // a fresh schema
   const layout: string | undefined = r.rows[0].has_meta
     ? (await client.query(`SELECT value FROM ${q(schema)}._meta WHERE key = 'layout'`)).rows[0]?.value
     : undefined;
@@ -25,7 +26,14 @@ async function assertLayout(client: pg.PoolClient, schema: string): Promise<void
       `schema ${schema} uses storage layout ${layout ?? '1'}; drop the schema or rename the Indexer to re-index`,
     );
   }
+  return true;
 }
+
+// _meta keys added after layout 2 shipped, with the value a schema
+// bootstrapped before them has in effect. A schema created without address
+// indexes has none, so asking it for them is a different value — refused
+// like any other.
+export const LEGACY_META: Readonly<Record<string, string>> = { address_indexes: 'false' };
 
 // Every _meta key written here is fixed for the schema's life: rows carry
 // neither the contract address nor the partition span, so changing either
@@ -41,13 +49,16 @@ export async function bootstrap(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await assertLayout(client, schema);
+    const existed = await assertLayout(client, schema);
     for (const s of controlStatements) await client.query(s);
-    for (const t of tables) for (const s of t.statements) await client.query(s);
+    // _meta before the tables: a refused value must build nothing first —
+    // CREATE INDEX on a partitioned table cannot run CONCURRENTLY, so building
+    // address indexes over existing rows would hold ingest for its duration.
     for (const [key, value] of Object.entries({ ...meta, layout: STORAGE_LAYOUT })) {
+      const first = existed && Object.hasOwn(LEGACY_META, key) ? LEGACY_META[key]! : value;
       await client.query(
         `INSERT INTO ${q(schema)}._meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
-        [key, value],
+        [key, first],
       );
       const stored: string = (await client.query(`SELECT value FROM ${q(schema)}._meta WHERE key = $1`, [key])).rows[0].value;
       if (stored !== value) {
@@ -56,6 +67,7 @@ export async function bootstrap(
         );
       }
     }
+    for (const t of tables) for (const s of t.statements) await client.query(s);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -247,12 +259,14 @@ export interface Store {
   schema: string;
   tables: ReadonlyMap<string, TableSpec>; // event tables by name
   partitions: Partitions;
+  addressIndexes: boolean; // storage.addressIndexes, recorded in _meta
 }
 
 export function createStore(
   schema: string, defs: EventDef[], partitionBlocks: number, compactor?: Pick<Compactor, 'enqueue'>,
+  addressIndexes = false,
 ): Store {
-  const specs = defs.map((d) => buildEventTable(schema, d));
+  const specs = defs.map((d) => buildEventTable(schema, d, { addressIndexes }));
   return {
     schema,
     tables: new Map(specs.map((s) => [s.table, s])),
@@ -261,6 +275,7 @@ export function createStore(
       BigInt(partitionBlocks),
       compactor ? (table, n) => compactor.enqueue(schema, partitionName(table, n)) : undefined,
     ),
+    addressIndexes,
   };
 }
 

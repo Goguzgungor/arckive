@@ -34,6 +34,10 @@ export const IndexerSpecSchema = z.object({
       }),
     }),
     partitionBlocks: z.number().int().min(10_000).default(2_000_000),
+    // Index every address param as (<p>_id, block_number, log_index): "the
+    // latest rows of this address" reads an index backwards instead of
+    // sorting every row of a busy address. Fixed when the schema is created.
+    addressIndexes: z.boolean().default(false),
   }),
   contracts: z
     .array(
@@ -80,6 +84,18 @@ export const IndexerSpecSchema = z.object({
           .object({ name: z.string().min(1), key: z.string().min(1).default('header') })
           .optional(),
       }),
+      // Endpoints for insight reads only, in priority order. http(s) only:
+      // insight reads go out as JSON-RPC batches. Absent: the last http(s)
+      // entry of network.rpc.
+      rpc: z
+        .array(z.string().regex(/^https?:\/\//i, 'insights.rpc entries must be http(s)://'))
+        .min(1)
+        .max(8)
+        .optional(),
+      // First block that gets lanes. Omitted: the indexer's own start; >= 0:
+      // that block; negative: that many blocks before the head when the
+      // insight loop first runs. Takes effect once per schema.
+      startBlock: z.number().int().optional(),
     })
     .optional(),
 });
@@ -124,8 +140,21 @@ export function renderWorkerConfig(crName: string, spec: IndexerSpec): WorkerCon
       };
     }),
     polling: spec.polling,
-    storage: { partitionBlocks: spec.storage.partitionBlocks },
-    ...(spec.insights ? { insights: { laya: { url: spec.insights.laya.url } } } : {}),
+    // New fields travel only when set, so a spec that does not use them keeps
+    // its config hash — and its running worker.
+    storage: {
+      partitionBlocks: spec.storage.partitionBlocks,
+      ...(spec.storage.addressIndexes ? { addressIndexes: true } : {}),
+    },
+    ...(spec.insights
+      ? {
+          insights: {
+            laya: { url: spec.insights.laya.url },
+            ...(spec.insights.rpc ? { rpc: spec.insights.rpc } : {}),
+            ...(spec.insights.startBlock !== undefined ? { startBlock: spec.insights.startBlock } : {}),
+          },
+        }
+      : {}),
   });
 }
 

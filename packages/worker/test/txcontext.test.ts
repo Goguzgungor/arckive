@@ -8,10 +8,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRANSFER_TOPIC, ZERO_ADDRESS, factsOf, protocolOf } from '@arckive/core';
 import { createRpc } from '../src/rpc.js';
-import { Pacer } from '../src/pacer.js';
-import { createServer } from 'node:http';
-import { isRateLimited } from '../src/pacer.js';
-import { createContextSource, createInsightsRpc, insightsRpc, isContractCode, readTokenInfo, tokenLabel } from '../src/txcontext.js';
+import { CHUNK, RpcPool, createRpcPool, type PoolEndpoint } from '../src/rpcpool.js';
+import { createContextSource, insightsRpc, isContractCode, readTokenInfo, tokenLabel } from '../src/txcontext.js';
 import { startAnvil, type AnvilHandle } from './helpers/anvil.js';
 
 const PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
@@ -54,20 +52,6 @@ describe('insightsRpc', () => {
     expect(insightsRpc(['https://a', 'https://b', 'wss://c'])).toBe('https://b');
     expect(insightsRpc(['wss://a', 'wss://b'])).toBe('wss://b');
     expect(insightsRpc(['https://only'])).toBe('https://only');
-  });
-
-  it('lets a rate limit through on the first answer: no retries, no fallback', async () => {
-    let hits = 0;
-    const server = createServer((_req, res) => { hits++; res.writeHead(429).end(); });
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-    const { port } = server.address() as { port: number };
-    try {
-      const err = await createInsightsRpc([`http://127.0.0.1:${port}`]).getBlockNumber().catch((e: unknown) => e);
-      expect(isRateLimited(err)).toBe(true);
-      expect(hits).toBe(1);
-    } finally {
-      server.close();
-    }
   });
 });
 
@@ -112,6 +96,8 @@ describe('txcontext (anvil)', () => {
   let swapTx: `0x${string}`;
   let swapBlock: bigint;
   let wallet: ReturnType<typeof makeWallet>;
+  const NO_PACE = { startMs: 0, minMs: 0, maxMs: 0 };
+  const poolOf = (onRequest?: () => void) => createRpcPool([anvil.url], [], { pace: NO_PACE, onRequest });
 
   beforeAll(async () => {
     execSync('forge build', { cwd: FIXTURE, stdio: 'inherit' });
@@ -136,7 +122,7 @@ describe('txcontext (anvil)', () => {
   afterAll(() => anvil.stop());
 
   it('reads the selector, every log and the pool’s factory', async () => {
-    const ctx = (await createContextSource(client).contexts([{ txHash: swapTx, blockNumber: swapBlock }])).get(swapTx)!;
+    const ctx = (await createContextSource(poolOf()).contexts([{ txHash: swapTx, blockNumber: swapBlock }])).get(swapTx)!;
     expect(ctx.to).toBe(pool.toLowerCase());
     expect(ctx.selector).toBe(toFunctionSelector('swap(address,address,uint256)'));
     expect(ctx.sender).toBe(sender.toLowerCase());
@@ -150,11 +136,11 @@ describe('txcontext (anvil)', () => {
 
   it('a transaction the node does not have has no context', async () => {
     const missing = `0x${'11'.repeat(32)}`;
-    const got = await createContextSource(client).contexts([{ txHash: missing, blockNumber: swapBlock }]);
+    const got = await createContextSource(poolOf()).contexts([{ txHash: missing, blockNumber: swapBlock }]);
     expect(got.get(missing)).toBeNull();
   });
 
-  it('reads a block once for all of its transactions, through the pacer', async () => {
+  it('reads a block and its receipts in one request for all of its transactions', async () => {
     // two transfers mined into one block
     await client.request({ method: 'evm_setAutomine' as never, params: [false] as never });
     const a = artifact('Token').abi as never;
@@ -165,26 +151,84 @@ describe('txcontext (anvil)', () => {
     const block = (await wallet.waitForTransactionReceipt({ hash: h1 })).blockNumber;
     expect((await wallet.waitForTransactionReceipt({ hash: h2 })).blockNumber).toBe(block);
 
-    let calls = 0;
-    const counting = new Pacer({ startMs: 0, minMs: 0, maxMs: 0 });
-    const run = counting.run.bind(counting);
-    counting.run = (fn) => { calls++; return run(fn); };
-    const got = await createContextSource(client, { pacer: counting }).contexts([
+    let requests = 0;
+    const got = await createContextSource(poolOf(() => requests++)).contexts([
       { txHash: h1, blockNumber: block },
       { txHash: h2, blockNumber: block },
     ]);
     expect(got.get(h1)?.selector).toBe(toFunctionSelector('transfer(address,uint256)'));
     expect(got.get(h2)?.topics).toEqual([TRANSFER_TOPIC]);
-    expect(calls).toBe(2); // the block and its receipts — not two calls per transaction
+    expect(requests).toBe(1); // the block and its receipts, one batch
   });
 
   it('tells wallets from contracts and skips the zero address', async () => {
-    const kinds = await createContextSource(client).partyKinds([sender.toLowerCase(), pool.toLowerCase(), ZERO_ADDRESS]);
+    const kinds = await createContextSource(poolOf()).partyKinds([sender.toLowerCase(), pool.toLowerCase(), ZERO_ADDRESS]);
     expect(kinds).toEqual({ [sender.toLowerCase()]: false, [pool.toLowerCase()]: true });
   });
 
   it('reads symbol and decimals, and falls back for what is not a token', async () => {
     expect(await readTokenInfo(client, token, 'tok')).toEqual({ label: 'TKN', decimals: 6 });
     expect(await readTokenInfo(client, sender, 'mytoken')).toEqual({ label: 'mytoken', decimals: null });
+  });
+});
+
+describe('txcontext on the pool (fake chain)', () => {
+  const POOL = '0x' + 'cc'.repeat(20);
+  const FACTORY = '0x' + 'dd'.repeat(20);
+  const SENDER = '0x' + 'a1'.repeat(20);
+  const txh = (n: bigint) => `0x${n.toString(16).padStart(64, '0')}`;
+
+  function chain(opts: { failBlock?: bigint; failFactory?: boolean } = {}) {
+    const asked = { factory: 0, code: 0 };
+    const client = {
+      getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
+        if (blockNumber === opts.failBlock) throw new Error('block unavailable');
+        return { transactions: [{ hash: txh(blockNumber), to: POOL, input: '0x12345678', from: SENDER, value: 0n }] };
+      },
+      getBlockReceipts: async ({ blockNumber }: { blockNumber: bigint }) => [
+        { transactionHash: txh(blockNumber), logs: [{ topics: [V3_SWAP], address: POOL }] },
+      ],
+      call: async () => {
+        asked.factory++;
+        if (opts.failFactory) throw new Error('no factory()');
+        return { data: `0x${'00'.repeat(12)}${FACTORY.slice(2)}` };
+      },
+      getCode: async () => {
+        asked.code++;
+        return '0x';
+      },
+    } as unknown as PublicClient;
+    let requests = 0;
+    const endpoint: PoolEndpoint = { url: 'https://fake.example', client, shared: false, chunk: CHUNK };
+    const pool = new RpcPool([endpoint], { pace: { startMs: 0, minMs: 0, maxMs: 0 }, onRequest: () => requests++ });
+    return { pool, asked, requests: () => requests };
+  }
+  const refs = (n: number) => Array.from({ length: n }, (_, i) => ({ txHash: txh(BigInt(i + 1)), blockNumber: BigInt(i + 1) }));
+
+  it('a round of 7 blocks is one request for blocks, one for factories, one for parties', async () => {
+    const c = chain();
+    const src = createContextSource(c.pool);
+    const got = await src.contexts(refs(7));
+    expect(c.requests()).toBe(2);
+    expect(got.get(txh(3n))?.factories).toEqual({ [POOL]: FACTORY });
+    await src.partyKinds([POOL, '0x' + 'a2'.repeat(20)]);
+    expect(c.requests()).toBe(3);
+  });
+
+  it('a block that fails everywhere rejects the round', async () => {
+    const c = chain({ failBlock: 4n });
+    await expect(createContextSource(c.pool).contexts(refs(7))).rejects.toThrow(/block unavailable/);
+  });
+
+  it('a pool whose factory() fails is not asked again for ten minutes', async () => {
+    const c = chain({ failFactory: true });
+    const clock = { t: 0 };
+    const src = createContextSource(c.pool, { now: () => clock.t });
+    expect((await src.contexts(refs(1))).get(txh(1n))?.factories).toEqual({});
+    await src.contexts(refs(1));
+    expect(c.asked.factory).toBe(1);
+    clock.t += 600_001;
+    await src.contexts(refs(1));
+    expect(c.asked.factory).toBe(2);
   });
 });

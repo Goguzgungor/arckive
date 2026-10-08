@@ -394,4 +394,71 @@ describe('db (storage layout 2)', () => {
     expect(t.rows[0].from_id).toBe(addrs.rows[0].id);
     expect(a.rows[0].owner_id).toBe(addrs.rows[0].id);
   });
+
+  describe('address indexes', () => {
+    const S = 'idx_addr';
+    const indexDefs = async (table: string): Promise<string[]> =>
+      (await pool.query('SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2', [S, table]))
+        .rows.map((r: { indexdef: string }) => r.indexdef);
+    const fresh = async () => {
+      await pool.query(`DROP SCHEMA IF EXISTS ${S} CASCADE`);
+      const st = createStore(S, defs, 1000, undefined, true);
+      await bootstrap(pool, S, buildControlTables(S), [...st.tables.values()], { ...META, address_indexes: 'true' });
+      await initCursor(pool, S, 9n);
+      return st;
+    };
+
+    it('are on the parent and on every partition, including ones created later', async () => {
+      const st = await fresh();
+      await commitBatch(pool, st, [row(10, 0)], [], 10n); // partition 0
+      await commitBatch(pool, st, [row(2500, 0)], [], 2500n); // partition 2, created after bootstrap
+      for (const table of ['usdc_transfer', 'usdc_transfer_p0', 'usdc_transfer_p2']) {
+        const idx = await indexDefs(table);
+        expect(idx.some((d) => d.includes('(from_id, block_number, log_index)'))).toBe(true);
+        expect(idx.some((d) => d.includes('(to_id, block_number, log_index)'))).toBe(true);
+        expect(idx.some((d) => d.endsWith('(from_id)'))).toBe(false);
+      }
+    });
+
+    it('give "latest 25 for this address" in index order, without a sort', async () => {
+      const st = await fresh();
+      await commitBatch(pool, st, Array.from({ length: 300 }, (_, i) => row(10 + i, 0)), [], 400n);
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL enable_seqscan = off');
+        await c.query('SET LOCAL enable_sort = off');
+        const plan = JSON.stringify((await c.query(
+          `EXPLAIN (FORMAT JSON) SELECT block_number, log_index FROM ${S}.usdc_transfer
+           WHERE from_id = (SELECT id FROM ${S}._addresses WHERE address = $1)
+           ORDER BY block_number DESC, log_index DESC LIMIT 25`,
+          [hex('0x' + '1'.repeat(40))],
+        )).rows[0]['QUERY PLAN']);
+        await c.query('ROLLBACK');
+        expect(plan).toContain('"Scan Direction":"Backward"');
+        expect(plan).toContain('from_id_block_number_log_index_idx');
+        expect(plan).not.toContain('"Node Type":"Sort"');
+      } finally {
+        c.release();
+      }
+    });
+
+    it('address_indexes is fixed for the schema; a schema from before the key counts as false', async () => {
+      // beforeEach bootstrapped SCHEMA with META, which has no address_indexes:
+      // the shape of a schema created before the key existed
+      const on = createStore(SCHEMA, defs, 1000, undefined, true);
+      await expect(
+        bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...on.tables.values()], { ...META, address_indexes: 'true' }),
+      ).rejects.toBeInstanceOf(LayoutError);
+      await bootstrap(pool, SCHEMA, buildControlTables(SCHEMA), [...store.tables.values()], { ...META, address_indexes: 'false' });
+      const meta = await pool.query(`SELECT value FROM ${SCHEMA}._meta WHERE key = 'address_indexes'`);
+      expect(meta.rows).toEqual([{ value: 'false' }]);
+      // and the other way round: created with true, asked for false
+      await fresh();
+      const off = createStore(S, defs, 1000);
+      await expect(
+        bootstrap(pool, S, buildControlTables(S), [...off.tables.values()], { ...META, address_indexes: 'false' }),
+      ).rejects.toBeInstanceOf(LayoutError);
+    });
+  });
 });

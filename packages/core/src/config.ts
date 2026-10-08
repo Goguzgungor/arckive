@@ -48,7 +48,11 @@ export const WorkerConfigSchema = z.object({
   // partition: vacuum and index builds stay per range, and a retention
   // window, if one is ever wanted, is a DROP TABLE.
   storage: z
-    .object({ partitionBlocks: z.number().int().min(10_000).default(2_000_000) })
+    .object({
+      partitionBlocks: z.number().int().min(10_000).default(2_000_000),
+      // absent = false; see IndexerSpecSchema.storage.addressIndexes
+      addressIndexes: z.boolean().optional(),
+    })
     .default({}),
   // Laya insights (optional): where the model gate is. The header that
   // authenticates to it is a secret and arrives as INSIGHTS_HEADER, never here.
@@ -57,6 +61,12 @@ export const WorkerConfigSchema = z.object({
       laya: z.object({
         url: z.string().regex(/^https?:\/\//i, 'insights.laya.url must be http(s)://'),
       }),
+      rpc: z
+        .array(z.string().regex(/^https?:\/\//i, 'insights.rpc entries must be http(s)://'))
+        .min(1)
+        .max(8)
+        .optional(),
+      startBlock: z.number().int().optional(),
     })
     .optional(),
 });

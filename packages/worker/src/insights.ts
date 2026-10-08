@@ -6,12 +6,12 @@ import {
 } from '@arckive/core';
 import { Partitions, getCursor, type Compactor } from './db.js';
 import {
-  bootstrapInsights, capRange, commitInsights, getInsightsCursor, readEventRows,
+  bootstrapInsights, capRange, commitInsights, getInsightsCursor, initInsightsCursor, readEventRows,
   type EventRow, type EventSource, type InsightRow,
 } from './insightsdb.js';
 import { LayaClient, LayaError, parseHeaderLine } from './laya.js';
 import type { Metrics } from './metrics.js';
-import type { Pacer } from './pacer.js';
+import type { RpcPool } from './rpcpool.js';
 import { initialCursor, sleep } from './pipeline.js';
 import type { Phase } from './status.js';
 import type { ContextSource } from './txcontext.js';
@@ -43,6 +43,7 @@ export type Classifier = Pick<LayaClient, 'classify' | 'identity'>;
 export interface InsightsDeps {
   pool: pg.Pool;
   schema: string;
+  start: InsightsStart; // used once, if the schema has no insights cursor yet
   targets: InsightTarget[];
   called: ReadonlyMap<string, CalledContract>; // indexed contract address -> name + functions
   context: ContextSource;
@@ -55,8 +56,8 @@ export interface InsightsDeps {
   // Read, never set: insights run only while ingest is Live. While it
   // backfills or is Degraded, the RPC budget is ingest's.
   ingestPhase: () => Phase;
-  // the pacer every insight RPC call goes through (txcontext.ts)
-  rpcPacer: Pick<Pacer, 'backOff'>;
+  // the pool every insight RPC call goes through (rpcpool.ts)
+  rpcPool: Pick<RpcPool, 'backOffShared'>;
   partitions: Partitions; // _insights partitions this process has created (db.ts)
 }
 
@@ -93,6 +94,27 @@ export function insightTargets(defs: EventDef[], tokens: ReadonlyMap<string, Tok
   });
 }
 
+// Where lanes begin (spec.insights.startBlock). Omitted: the indexer's own
+// start. Absolute: that block. Negative: that many blocks before the head
+// when the loop first runs — a full-history indexer backfills for hours
+// before insights run (they wait for Live), and a head read at pod start
+// would by then be hours old, older than some providers serve without a
+// token.
+//
+// Set starts are floored at block 0, not at the ingest start: initialCursor
+// reads the start main.ts resolved for THIS boot, which for a tail-mode or
+// negative contract startBlock is this boot's head. An absolute start enabled
+// at a later boot, or a negative one resolved after a restart, would be
+// raised to that head and silently skip the rows ingested before it.
+export type InsightsStart = { cursor: bigint } | { behindHead: bigint; floor: bigint };
+
+export function insightsStart(cfg: WorkerConfig): InsightsStart {
+  const at = cfg.insights?.startBlock;
+  if (at === undefined) return { cursor: initialCursor(cfg) };
+  if (at < 0) return { behindHead: BigInt(-at), floor: -1n };
+  return { cursor: BigInt(at) - 1n };
+}
+
 function callOf(ctx: TxContext | null, called: ReadonlyMap<string, CalledContract>): CallInfo | null {
   const contract = ctx?.to ? called.get(ctx.to) : undefined;
   if (!ctx || !contract) return null;
@@ -111,8 +133,18 @@ export interface PreparedRound {
 
 export async function prepareRound(deps: InsightsDeps): Promise<PreparedRound | null> {
   const { pool, schema, metrics } = deps;
-  const [done, ingested] = await at('db', Promise.all([getInsightsCursor(pool, schema), getCursor(pool, schema)]));
-  if (done === null || ingested === null) throw new Error('no insights cursor — call bootstrapInsights first');
+  const [stored, ingested] = await at('db', Promise.all([getInsightsCursor(pool, schema), getCursor(pool, schema)]));
+  if (ingested === null) throw new Error('no ingest cursor — call bootstrapIndexer first');
+  let done = stored;
+  if (done === null) {
+    if (!('behindHead' in deps.start)) throw new Error('no insights cursor — call bootstrapInsights first');
+    // Rounds run only while ingest is Live, so its cursor is the head.
+    const from = ingested - deps.start.behindHead;
+    await at('db', initInsightsCursor(pool, schema, from > deps.start.floor ? from : deps.start.floor));
+    done = await at('db', getInsightsCursor(pool, schema));
+    deps.log.info({ cursor: String(done) }, 'insights start resolved against the head');
+    if (done === null) throw new Error('insights cursor missing after initInsightsCursor');
+  }
   metrics.insightsBlocksBehind.set(Number(ingested > done ? ingested - done : 0n));
   const range = planRange(done, ingested, deps.batchBlocks);
   if (!range) return null;
@@ -197,7 +229,7 @@ export async function runInsightsLoop(deps: InsightsDeps, signal: AbortSignal): 
       // Degraded is ingest failing — often on the endpoint's rate limit, which
       // insights share — so insights slow down too; while it backfills they
       // only wait their turn.
-      if (phase === 'Degraded') deps.rpcPacer.backOff();
+      if (phase === 'Degraded') deps.rpcPool.backOffShared();
       await deps.wake.wait(deps.intervalMs, signal);
       continue;
     }
@@ -251,7 +283,7 @@ export interface PrepareInsightsInput {
   readToken: (address: string, fallback: string) => Promise<TokenInfo>;
   headerLine: string | undefined; // INSIGHTS_HEADER
   ingestPhase: () => Phase;
-  rpcPacer: Pick<Pacer, 'backOff'>;
+  rpcPool: Pick<RpcPool, 'backOffShared'>;
   compactor?: Pick<Compactor, 'enqueue'>; // absent: finished partitions are not rebuilt
   fetch?: typeof fetch;
 }
@@ -284,7 +316,8 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     ]),
   );
 
-  await bootstrapInsights(input.pool, input.schema, initialCursor(cfg));
+  const start = insightsStart(cfg);
+  await bootstrapInsights(input.pool, input.schema, 'cursor' in start ? start.cursor : null);
   // names the header, never its value
   input.log.info(
     { url: cfg.insights.laya.url, header: header?.name ?? null, tokens: Object.fromEntries(tokens) },
@@ -293,6 +326,7 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
   return {
     pool: input.pool,
     schema: input.schema,
+    start,
     targets: insightTargets(input.defs, tokens),
     called,
     context: input.context,
@@ -308,6 +342,6 @@ export async function prepareInsights(input: PrepareInsightsInput): Promise<Insi
     intervalMs: cfg.polling.intervalMs,
     wake: input.wake,
     ingestPhase: input.ingestPhase,
-    rpcPacer: input.rpcPacer,
+    rpcPool: input.rpcPool,
   };
 }

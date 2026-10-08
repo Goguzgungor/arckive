@@ -7,6 +7,12 @@
 # one log covers USDC without double counting. Zero-value ERC-20 transfers
 # (often address-poisoning spam) and ERC-20 self-transfers have no native twin
 # and are not indexed here; index 0x3600…0000 too if they must appear. Needs a Secret pg-dsn (see ../../arc-testnet/k8s/pg-dsn-secret.example.yaml).
+#
+# Lanes (spec.insights) are added later, once the backfill nears the head,
+# with an insights block whose startBlock is negative (e.g. -2000: lanes from
+# 2,000 blocks before the head when insights first run). Without it they
+# would start at the indexer's start — block 0 here — and classify the whole
+# history.
 apiVersion: arckive.org/v1alpha1
 kind: Indexer
 metadata:
@@ -21,6 +27,9 @@ spec:
     mode: External
     external:
       dsnSecretRef: { name: pg-dsn, key: url }
+    # "latest movements of this address" for the explorer's address pages;
+    # fixed when the schema is created
+    addressIndexes: true
   polling:
     batchBlocks: 2000
     intervalMs: 1000

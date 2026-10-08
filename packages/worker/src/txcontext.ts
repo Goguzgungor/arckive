@@ -1,9 +1,9 @@
 import {
   AbiDecodingZeroDataError, BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError,
-  createPublicClient, erc20Abi, http, webSocket, type PublicClient,
+  erc20Abi, type PublicClient,
 } from 'viem';
 import { FACTORY_CALL, POOL_TOPICS, ZERO_ADDRESS, type TokenInfo, type TxContext } from '@arckive/core';
-import { Pacer, type PaceLimits } from './pacer.js';
+import type { RpcPool } from './rpcpool.js';
 
 // What the insight loop needs to know about a transaction beyond its own
 // event: the function called, every event logged, who deployed the pools it
@@ -11,12 +11,8 @@ import { Pacer, type PaceLimits } from './pacer.js';
 // from radar/radar/arc.py (_items), which reads per transaction; this reads
 // per block — one block and its receipts — because on Arc mainnet a block
 // with USDC events carried 3.1 such transactions on average, so per block is
-// a third of the calls on an RPC budget shared with ingest.
+// a third of the calls; the pool (rpcpool.ts) sends a round's blocks ten to a request.
 
-// Every RPC call made for insights goes through one pacer, one at a time:
-// four a second to start, as fast as twenty a second on an endpoint that
-// takes it, as slow as one per 8 s on one that does not (see pacer.ts).
-export const INSIGHTS_RPC_PACE: PaceLimits = { startMs: 250, minMs: 50, maxMs: 8000 };
 const CACHE_MAX = 50_000;
 // A pool that cannot answer factory() fails the same way every time; asked
 // again only after this long.
@@ -35,21 +31,11 @@ export function isContractCode(code: string | undefined): boolean {
 // rank: false), so the first of them carries its load. Insights take the last
 // http endpoint (the last ws one if there is no http): given more than one,
 // they spend another endpoint's rate limit than the one ingest depends on.
+// `spec.insights.rpc` replaces this choice with a list of its own.
 export function insightsRpc(rpcs: readonly string[]): string {
   const httpUrls = rpcs.filter((u) => /^https?:\/\//i.test(u));
   const pool = httpUrls.length ? httpUrls : rpcs;
   return pool[pool.length - 1]!;
-}
-
-// One endpoint, no fallback, no transport retries: a rate-limit answer has to
-// reach the pacer (pacer.ts) to slow it down. Behind viem's fallback it would
-// be retried on the next endpoint — ingest's — and count as a success.
-export function createInsightsRpc(rpcs: readonly string[]): PublicClient {
-  const url = insightsRpc(rpcs);
-  const transport = /^wss?:\/\//i.test(url)
-    ? webSocket(url, { timeout: 10_000, retryCount: 0 })
-    : http(url, { timeout: 10_000, retryCount: 0 });
-  return createPublicClient({ transport });
 }
 
 // symbol() is text anyone deploying a token chooses, and it lands in the
@@ -137,20 +123,24 @@ class Lru<V> {
 
 export interface ContextSourceOptions {
   now?: () => number;
-  pacer?: Pick<Pacer, 'run'>;
 }
 
-export function createContextSource(client: PublicClient, opts: ContextSourceOptions = {}): ContextSource {
+const fullBlock = (c: PublicClient, blockNumber: bigint) => c.getBlock({ blockNumber, includeTransactions: true });
+const blockReceipts = (c: PublicClient, blockNumber: bigint) => c.getBlockReceipts({ blockNumber });
+type FullBlock = Awaited<ReturnType<typeof fullBlock>>;
+type Receipts = Awaited<ReturnType<typeof blockReceipts>>;
+
+// One round's reads go through the pool in three batches at most: every
+// block with its receipts, then the new pools' factory(), then the new
+// parties' code.
+export function createContextSource(pool: Pick<RpcPool, 'all'>, opts: ContextSourceOptions = {}): ContextSource {
   const now = opts.now ?? Date.now;
-  const pacer = opts.pacer ?? new Pacer(INSIGHTS_RPC_PACE);
   const codes = new Lru<boolean>(CACHE_MAX);
   const factories = new Lru<string>(CACHE_MAX);
   const unreadable = new Map<string, number>(); // pool -> when factory() may be asked again
 
   // The wanted transactions of one block, from the block and its receipts.
-  async function readBlock(blockNumber: bigint, wanted: ReadonlySet<string>, out: Map<string, TxContext>): Promise<void> {
-    const block = await pacer.run(() => client.getBlock({ blockNumber, includeTransactions: true }));
-    const receipts = await pacer.run(() => client.getBlockReceipts({ blockNumber }));
+  function collect(block: FullBlock, receipts: Receipts, wanted: ReadonlySet<string>, out: Map<string, TxContext>): void {
     const byHash = new Map(receipts.map((r) => [r.transactionHash.toLowerCase(), r]));
     for (const tx of block.transactions) {
       const hash = tx.hash.toLowerCase();
@@ -170,22 +160,6 @@ export function createContextSource(client: PublicClient, opts: ContextSourceOpt
     }
   }
 
-  // Which exchange a swap happened on is a fact about the pool, not about the
-  // event it logs: Uniswap v3's Swap is logged, byte for byte, by every fork.
-  async function askFactory(pool: string): Promise<void> {
-    try {
-      const { data } = await pacer.run(() => client.call({ to: pool as `0x${string}`, data: FACTORY_CALL }));
-      if (data && data.length >= 42) {
-        factories.set(pool, `0x${data.slice(-40).toLowerCase()}`);
-        unreadable.delete(pool);
-        return;
-      }
-    } catch {
-      // a contract that logs a pool event but has no factory() — retried later
-    }
-    unreadable.set(pool, now() + FACTORY_RETRY_MS);
-  }
-
   return {
     async contexts(txs) {
       const byBlock = new Map<bigint, Set<string>>();
@@ -194,8 +168,19 @@ export function createContextSource(client: PublicClient, opts: ContextSourceOpt
         set.add(t.txHash.toLowerCase());
         byBlock.set(t.blockNumber, set);
       }
+      const blocks = [...byBlock.keys()];
+      const reads = await pool.all<FullBlock | Receipts>(
+        blocks.flatMap((b) => [(c: PublicClient) => fullBlock(c, b), (c: PublicClient) => blockReceipts(c, b)]),
+      );
       const read = new Map<string, TxContext>();
-      for (const [blockNumber, wanted] of byBlock) await readBlock(blockNumber, wanted, read);
+      blocks.forEach((b, k) => {
+        const block = reads[2 * k]!;
+        const receipts = reads[2 * k + 1]!;
+        // every endpoint failed this block: the round fails and is retried
+        if (block.status === 'rejected') throw block.reason;
+        if (receipts.status === 'rejected') throw receipts.reason;
+        collect(block.value as FullBlock, receipts.value as Receipts, byBlock.get(b)!, read);
+      });
 
       const poolsOf = new Map<string, string[]>();
       for (const [hash, c] of read) {
@@ -205,7 +190,20 @@ export function createContextSource(client: PublicClient, opts: ContextSourceOpt
       const ask = [...new Set([...poolsOf.values()].flat())].filter(
         (p) => factories.get(p) === undefined && (unreadable.get(p) ?? 0) <= clock,
       );
-      for (const p of ask) await askFactory(p);
+      // Which exchange a swap happened on is a fact about the pool, not about
+      // the event it logs: Uniswap v3's Swap is logged, byte for byte, by every fork.
+      const answers = await pool.all(ask.map((p) => (c: PublicClient) => c.call({ to: p as `0x${string}`, data: FACTORY_CALL })));
+      ask.forEach((p, k) => {
+        const a = answers[k]!;
+        const data = a.status === 'fulfilled' ? a.value.data : undefined;
+        if (data && data.length >= 42) {
+          factories.set(p, `0x${data.slice(-40).toLowerCase()}`);
+          unreadable.delete(p);
+        } else {
+          // a contract that logs a pool event but has no factory() — retried later
+          unreadable.set(p, clock + FACTORY_RETRY_MS);
+        }
+      });
       if (unreadable.size > 10_000) {
         for (const [p, until] of unreadable) if (until <= clock) unreadable.delete(p);
       }
@@ -225,10 +223,13 @@ export function createContextSource(client: PublicClient, opts: ContextSourceOpt
 
     async partyKinds(addresses) {
       const wanted = [...new Set(addresses)].filter((a) => a !== ZERO_ADDRESS);
-      for (const a of wanted.filter((x) => codes.get(x) === undefined)) {
-        const code = await pacer.run(() => client.getCode({ address: a as `0x${string}` }));
-        codes.set(a, isContractCode(code));
-      }
+      const unknown = wanted.filter((x) => codes.get(x) === undefined);
+      const got = await pool.all(unknown.map((a) => (c: PublicClient) => c.getCode({ address: a as `0x${string}` })));
+      unknown.forEach((a, k) => {
+        const r = got[k]!;
+        if (r.status === 'rejected') throw r.reason;
+        codes.set(a, isContractCode(r.value));
+      });
       const out: Record<string, boolean> = {};
       for (const a of wanted) {
         const v = codes.get(a);

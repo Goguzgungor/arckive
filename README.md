@@ -93,6 +93,8 @@ spec:
     laya:
       url: https://laya-gate.example.com     # /ai/run/batch and /health are appended
       headerSecretRef: { name: laya-gate }   # optional; key defaults to "header"
+    rpc: ["https://rpc.example-a.com", "https://rpc.example-b.com"]   # optional; insight reads only
+    startBlock: -2000                                                   # optional; lanes from 2,000 blocks before the head
 ```
 
 Results land in `idx_<indexer>._insights`, keyed like the event rows:
@@ -119,20 +121,27 @@ the model: if the gate is slow, rate-limited or down, insights fall behind
 The worker sends at most 64 sentences per call and one call a second, and
 caches answers per sentence.
 
-Insights also share your RPC endpoints with ingest, so they take second place
-there too: they read each block once (`eth_getBlockByNumber` +
-`eth_getBlockReceipts` — the endpoint must support the latter), one call at a
-time, and only while ingest is `Live`. Their pace starts at four calls a second
-and adapts: it halves whenever an endpoint answers "rate limited" or ingest is
-failing, and creeps back up (to at most twenty a second) while calls go
-through. Insights use one endpoint, on its own: the last `http(s)` entry in
-`network.rpc` (ingest queries `ws(s)` entries first, then `http(s)` in order).
-List more than one and their reads land on a different endpoint's rate limit
-than ingest's — worth doing: Arc mainnet's public RPC has a per-minute quota
-that ingest alone, polling once a second, already runs into. The header Secret
-must hold one line of printable ASCII (a trailing newline is dropped). History is classified too, once ingest has caught up, from the start
-block the indexer resolved at the boot that enabled insights (for a tail-mode
-or negative `startBlock`, that boot's head).
+Insight reads (`eth_getBlockByNumber` + `eth_getBlockReceipts` per block —
+the endpoint must support the latter — `factory()` per new pool, `eth_getCode`
+per new party) go out as JSON-RPC batches of up to 20 calls, one request at a
+time, and only while ingest is `Live`. List endpoints for them in
+`insights.rpc` (http(s), in priority order); without it they use the last
+`http(s)` entry of `network.rpc`. An endpoint that rate-limits or fails rests
+for 5 s, doubling to 60 s, while the next one carries the load, and a call one
+endpoint refuses is asked of the next. Each endpoint starts at about four
+requests a second, halves that whenever it says "rate limited", and creeps
+back up to at most twenty a second while requests go through. Arc mainnet's public RPC has a
+per-minute quota that ingest alone runs into, so give insights endpoints of
+their own. The header Secret must hold one line of printable ASCII (a
+trailing newline is dropped).
+
+Lanes start at `insights.startBlock`: omitted, at the indexer's start as
+resolved at the boot that enabled insights (for a tail-mode or negative
+contract `startBlock`, that boot's head); a block number, there; a negative
+number, that many blocks before the head at the moment insights first run —
+for a full-history indexer, that is once the backfill has caught up. A set
+start is never later than you asked, and never before block 0. It takes
+effect once per schema.
 
 **How good is it?** For USDC on Arc the sentence the model reads is
 byte-for-byte Radar's (a test pins this against 1,200 captured mainnet
@@ -182,13 +191,17 @@ DISTINCT`).
   When ingest moves into the next partition, the worker rebuilds the finished
   partition's indexes once in the background (`REINDEX TABLE CONCURRENTLY`);
   a restart does not revisit earlier partitions.
+- `spec.storage.addressIndexes: true` indexes every address parameter as
+  `(<param>_id, block_number, log_index)`, so "the latest rows of this
+  address" reads an index instead of sorting all of that address's rows.
+  Like `partitionBlocks` it is fixed when the schema is created.
 - Insights keep one narrow row per event in `_insights`, each distinct label
   once in `_labels` and each sentence once in `_sentences`; `_insights_full`
   joins them.
 - Every `_meta` key bootstrap writes (`layout`, `contract:<table>`,
-  `partition_blocks`) is fixed for the schema's life: a different value (a
-  contract's address or `partitionBlocks` changed under the same Indexer)
-  raises `LayoutError`; drop the schema or rename the Indexer.
+  `partition_blocks`, `address_indexes`) is fixed for the schema's life: a
+  different value (a contract's address or `partitionBlocks` changed under the
+  same Indexer) raises `LayoutError`; drop the schema or rename the Indexer.
 
 Upgrading from layout 1: see the breaking-change note under Quickstart.
 
@@ -223,7 +236,8 @@ The worker serves `:9090/metrics` (Prometheus) and `:9090/healthz`:
 `arckive_ws_connected`, `arckive_head_notifications_total`, and with insights
 `arckive_insights_blocks_behind`, `arckive_insights_classified_total{lane}`,
 `arckive_insights_model_calls_total`, `arckive_insights_cache_hits_total`,
-`arckive_insights_errors_total{stage}` (`stage` = `model`, `rpc` or `db`).
+`arckive_insights_errors_total{stage}` (`stage` = `model`, `rpc` or `db`),
+`arckive_insights_rpc_requests_total{endpoint,outcome}`.
 Insight failures never mark the indexer `Degraded`: `/healthz` and the CR phase
 describe ingest only.
 

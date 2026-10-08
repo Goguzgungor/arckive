@@ -1,0 +1,48 @@
+# The explorer's database: PostgreSQL 17 on a local-path volume. The
+# password Secret is created by hand (never committed):
+#   kubectl create secret generic pg-explorer-auth --from-literal=password=<random>
+# and the worker's DSN Secret from it:
+#   kubectl create secret generic pg-dsn \
+#     --from-literal=url=postgres://arckive:<random>@pg-explorer:5432/explorer
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-explorer
+spec:
+  selector: { app: pg-explorer }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-explorer
+spec:
+  serviceName: pg-explorer
+  replicas: 1
+  selector:
+    matchLabels: { app: pg-explorer }
+  template:
+    metadata:
+      labels: { app: pg-explorer }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          # Backfill writes for hours: a larger WAL keeps checkpoints apart.
+          args: ["-c", "shared_buffers=512MB", "-c", "max_wal_size=4GB"]
+          env:
+            - { name: POSTGRES_USER, value: arckive }
+            - { name: POSTGRES_DB, value: explorer }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: pg-explorer-auth, key: password } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "arckive", "-d", "explorer"] }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: { requests: { storage: 100Gi } }

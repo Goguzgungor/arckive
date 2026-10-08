@@ -46,7 +46,11 @@ export function initialCursor(cfg: WorkerConfig): bigint {
 export async function bootstrapIndexer(deps: PipelineDeps): Promise<void> {
   await bootstrap(
     deps.pool, deps.schema, buildControlTables(deps.schema), [...deps.store.tables.values()],
-    { ...contractMeta(deps.defs), partition_blocks: String(deps.store.partitions.size) },
+    {
+      ...contractMeta(deps.defs),
+      partition_blocks: String(deps.store.partitions.size),
+      address_indexes: String(deps.store.addressIndexes),
+    },
   );
   await initCursor(deps.pool, deps.schema, initialCursor(deps.cfg));
 }
@@ -73,7 +77,13 @@ export async function runOnce(deps: PipelineDeps): Promise<boolean> {
     phase.set('Live');
     return false;
   }
-  phase.set('Backfilling');
+  // Backfilling means one round cannot reach the head. A live tail is a block
+  // or two behind after every new block (~0.5 s on Arc); flipping to
+  // Backfilling for each of those rounds paused the insight loop, which runs
+  // only while ingest is Live, and made .status flap. A worker that is not
+  // Live yet — starting, or recovering from Degraded — still reports
+  // Backfilling while it works.
+  if (range.toBlock < finalized || phase.phase !== 'Live') phase.set('Backfilling');
 
   const byKey = new Map(defs.map((d) => [`${d.address}:${d.topic0}`, d]));
   const startBlocks = new Map(cfg.contracts.map((c) => [c.address.toLowerCase(), BigInt(c.startBlock ?? 0)]));
