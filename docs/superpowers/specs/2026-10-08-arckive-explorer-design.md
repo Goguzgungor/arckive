@@ -1,10 +1,10 @@
 # Arckive Explorer — a live, Etherscan-grade view of what Arckive indexes on Arc
 
-Date: 2026-10-08. Status: draft, awaiting review.
+Date: 2026-10-08. Status: approved.
 
-Sub-project B. A (storage layout 2) is merged; A2
-(`2026-10-08-arckive-for-explorer-design.md`: lanes within seconds,
-`insights.startBlock`, `storage.addressIndexes`, operator OOM) lands first.
+Sub-project B. A (storage layout 2, PR #26) and A2
+(`2026-10-08-arckive-for-explorer-design.md`, PR #27: lanes within seconds,
+`insights.startBlock`, `storage.addressIndexes`, operator OOM) are merged.
 C moves `radar.arckive.org` to this app and retires the Dokploy `radar`
 service. D adds natural-language search.
 
@@ -82,39 +82,51 @@ Arc RPCs ──▶ worker (Indexer arc-explorer) ──▶ Postgres 17 (k3d, PVC
   connects as its own role, `explorer`, with `USAGE` + `SELECT` on that
   schema (granted on the partitioned parents and views, which is all a query
   through them needs) and ownership of a schema of its own, `explorer`. The
-  worker creates its schema and tables after the database exists, so the
-  init script sets the worker role's default privileges (`ALTER DEFAULT
-  PRIVILEGES FOR ROLE arckive GRANT USAGE ON SCHEMAS / SELECT ON TABLES TO
-  explorer`) instead of granting on objects that are not there yet.
+  database already runs (`manifests/arc-mainnet/k8s/postgres.yaml`, created
+  in A2's real test), so the role comes from a SQL file applied once by hand
+  with `psql` (`manifests/arc-mainnet/k8s/explorer-role.sql`, idempotent):
+  it creates the role, grants `USAGE`/`SELECT` on `idx_arc_explorer` and its
+  existing tables and views, and sets the worker role's default privileges
+  (`ALTER DEFAULT PRIVILEGES FOR ROLE arckive IN SCHEMA idx_arc_explorer
+  GRANT SELECT ON TABLES TO explorer`) for tables the worker adds later.
   `statement_timeout` 5 s for the role; a pool of 10 connections.
 - **Configuration** (env, read with bracket notation, validated with zod at
   start): `DATABASE_URL`, `ARCKIVE_SCHEMA` (`idx_arc_explorer`),
-  `USDC_TABLE` (`usdc_transfer`), `POOL_TABLE_PREFIX` (`uniswap_v4_`),
+  `USDC_TABLE` (`usdc_transfer`), `POOL_TABLE_PREFIX` (`poolmanager_`),
   `ARC_RPC` (token metadata reads), `LANE_HOLD_MS` (8000),
   `MAX_STREAMS` (2000), `PORT`. At start the explorer checks that the tables
   and columns it reads exist and stops with a clear error otherwise.
 
 ## The explorer's Indexer
 
-`manifests/explorer/indexer.yaml`, created during A2's real test and kept:
+`manifests/arc-mainnet/k8s/explorer.yaml`, created during A2's real test
+and running since (its backfill on the public endpoint's quota takes many
+hours):
 
 - `usdc`: `0xfffffffffffffffffffffffffffffffffffffffe`, `Transfer`,
   `startBlock: 0`.
-- `uniswap-v4`: PoolManager `0x8366a39cc670b4001a1121b8f6a443a643e40951`,
-  every event, `startBlock` = its deployment block.
-- `network.rpc`: `https://rpc.mainnet.arc.io` (full history, 2,000-block
-  `getLogs`); `insights.rpc`: blockdaemon, beamrpc, then the public endpoint;
-  `insights.startBlock: -2000`; `insights.laya` the gate with its header
-  Secret; `storage.addressIndexes: true`; `partitionBlocks` default.
+- `poolmanager`: PoolManager `0x8366a39cc670b4001a1121b8f6a443a643e40951`,
+  `Initialize`, `ModifyLiquidity`, `Swap`, `Donate`, `startBlock: 0` (one
+  `getLogs` covers both contracts, so a later start saves nothing).
+- `network.rpc`: `https://rpc.mainnet.arc.io` only (full history,
+  2,000-block `getLogs`; a range-capped second endpoint slows the shared
+  span, A2 Measured); `storage.addressIndexes: true`; `partitionBlocks`
+  default.
+- Lanes are added when the explorer goes live: an `insights` block with
+  `rpc` blockdaemon, beamrpc, then the public endpoint, `startBlock: -2000`
+  and `laya` the gate with its header Secret (created by the user; the token
+  is never read here). Until then `_insights` is empty and the explorer
+  shows rows without lanes.
 
 Tables: `usdc_transfer(block_number, tx_hash, log_index, from_id, to_id,
-value)`; `uniswap_v4_initialize`, `uniswap_v4_swap`,
-`uniswap_v4_modify_liquidity`, `uniswap_v4_donate`, and the PoolManager's
-ERC-6909 events; `_blocks`, `_addresses`, `_insights`, `_labels`,
-`_sentences`, `_cursor`, `_insights_cursor`.
+value)`; `poolmanager_initialize`, `poolmanager_swap`,
+`poolmanager_modify_liquidity`, `poolmanager_donate`; `_blocks`,
+`_addresses`, `_insights`, `_labels`, `_sentences`, `_cursor`,
+`_insights_cursor` (the last five exist once insights are on).
 
-Size, from layout 2's measurements: ~13 GB of history, ~3 GB of address
-indexes, then ~0.6 GB a day (transfers 0.29, pool events 0.09, lanes 0.18,
+Size, from layout 2's measurements: ~13 GB of history, ~1–2 GB more for the
+ordered address indexes (20–50 bytes per transfer row over single-column
+ones), then ~0.6 GB a day (transfers 0.29, pool events 0.09, lanes 0.18,
 blocks 0.02). A 100 GB volume holds about 140 days after launch; the
 explorer's footer shows the database size so the limit is seen coming.
 
@@ -219,7 +231,7 @@ table):
 - **How the money moved** — the transfers in log order as a chain of nodes
   and arrows when they form one and number ≤ 6, else the event list only.
 - **Swap box** for each v4 `Swap`: paid and received, in each currency's
-  symbol and decimals (pool from `uniswap_v4_initialize` by pool id;
+  symbol and decimals (pool from `poolmanager_initialize` by pool id;
   `amount0`/`amount1` read as Uniswap v4's swapper-side deltas — negative is
   paid into the pool — checked against a known mainnet swap in tests).
 - **Events in this transaction** — every indexed row, in log order.
@@ -324,15 +336,15 @@ Times in UTC, labelled.
 
 ## Deployment
 
-`manifests/explorer/`: Postgres 17 StatefulSet with a 100 Gi `local-path`
-volume and the `explorer` role created by an init script; Secrets for the
-worker's DSN, the explorer's DSN, the Laya header and the tunnel token
-(created by hand, never committed); the Indexer; the explorer Deployment
-and Service; a `cloudflared` Deployment routing a preview hostname (picked
-with the user at deploy time) to the Service. Images are built locally and
-imported with `k3d image import`, like the worker and operator in tests.
-Restarting the k3d cluster and creating DNS records are done with the
-user's go-ahead.
+Next to the Indexer and the database in `manifests/arc-mainnet/k8s/`:
+`explorer-role.sql` (above, applied once by hand with `psql`) and
+`explorer-app.yaml` — the explorer Deployment (one replica, the image built
+locally and imported with `k3d image import`, like the worker and operator
+in tests) and its Service, with its DSN in a Secret `explorer-dsn` created by
+hand and never committed. Publishing it — the tunnel or host that serves a
+preview hostname, its token, DNS records — and the Laya header Secret for
+lanes are done with the user at deploy time. Restarting the k3d cluster is
+done with the user's go-ahead.
 
 ## Risks
 
