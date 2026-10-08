@@ -32,7 +32,7 @@ Arc RPCs ──WS newHeads + poll fallback──▶ [ Worker ] ──single tx�
 | Path | Purpose |
 |---|---|
 | `packages/core` | `@arckive/core` — pure logic shared by operator and worker: zod schemas (CRD spec + worker config), ABI→event extraction, DDL generation, log decoding, naming, range planning. **No Kubernetes, Postgres or RPC dependencies** (only `viem` + `zod`). |
-| `packages/operator` | `@arckive/operator` — watches `Indexer` CRs via `kubernetes-fluent-client`, renders desired K8s resources, patches CR conditions. |
+| `packages/operator` | `@arckive/operator` — watches `Indexer` CRs via `kubernetes-fluent-client` (the watch only), renders desired K8s resources, patches CR conditions. Gets, applies and status patches go through its own keep-alive client, `operator/src/kubehttp.ts`. |
 | `packages/worker` | `@arckive/worker` — one process per `Indexer`: resolves ABIs, bootstraps tables, runs the ingest loop, serves `/metrics` + `/healthz`, patches `.status`. Also hosts the benchmark and demo scripts under `scripts/`. |
 | `e2e` | `@arckive/e2e` — kind-based end-to-end test (`kind.test.ts`) plus its fixtures/manifests. |
 | `charts/arckive` | Helm chart for the operator. `crds/indexer.yaml` is the CRD source of truth. |
@@ -237,6 +237,17 @@ runs `getFinalizedBlockNumber` in parallel with `getLogs` and commits only up to
   than one already seen for that Indexer is ignored (a resync list can be
   older than a watch event). A failed (or throwing) reconcile is retried on
   the next event. Deleted CRs are ignored — `ownerReferences` handle cleanup.
+- A reconcile that finds a Secret or ConfigMap missing returns `waiting`
+  (`InvalidSpec` does not: only a new generation fixes it). The gate keeps
+  the generation — status events still cost nothing — and reruns the latest
+  object it saw for that Indexer after 5 s, doubling to 60 s, until a
+  reconcile succeeds, a newer event reconciles anyway (its wait starts the
+  backoff over) or the CR is deleted; `close()` clears the timers at
+  shutdown. Creating the Secret is no event on the Indexer and manifests are
+  often applied Indexer first (the e2e does): without the retry it would wait
+  for the resync, as long as the e2e waits for `Live`. The gate clears an
+  Indexer's `#running` entry in the same synchronous step that finds no rerun
+  queued — a `.finally` left a gap in which an event was lost.
 - Gets, applies and status patches go through `operator/src/kubehttp.ts`,
   one keep-alive agent per process. kubernetes-fluent-client opens a new
   connection with a 10-minute keep-alive per request (the v3 OOM); it is
@@ -247,8 +258,8 @@ runs `getFinalizedBlockNumber` in parallel with `getLogs` and commits only up to
   watch event; unconditional patching self-feeds into a reconcile storm (OOM).
   Preserve the `unchanged` check in `setCondition`.
 - Validation failures surface as a `Provisioned=False` condition with reason
-  `InvalidSpec` / `MissingAbiConfigMap` / `MissingDsnSecret` — no exceptions
-  thrown at the caller.
+  `InvalidSpec` / `MissingAbiConfigMap` / `MissingDsnSecret` /
+  `MissingInsightsSecret` — no exceptions thrown at the caller.
 - The worker Deployment carries an `arckive.org/config-hash` pod annotation
   (`configHash(workerConfig)`) so config changes trigger a rollout;
   `strategy: Recreate` keeps a single writer per indexer.
@@ -305,21 +316,28 @@ for `UNIQUE NULLS NOT DISTINCT`).
   `rpc.py` model): JSON-RPC batches of up to 20 calls, **one request in
   flight** across the pool, endpoints tried in config order. A rate-limited
   or failed endpoint rests (5 s doubling to 60 s, cleared on the next
-  answer) and its pacer backs off; a call one endpoint refuses (beamrpc's
+  answer), and a rate-limited one's pacer backs off too; a call one endpoint refuses (beamrpc's
   "Archive requests require a personal token", a node that has not seen the
   block) moves to the next endpoint without resting the first; a response
   over viem's size limit is halved on the same endpoint. Every http batch
-  reply is checked before viem maps it (viem maps replies by position): 429
-  is a rate limit; any other non-2xx status, a non-array reply or ids that
+  reply is checked before viem maps it (viem maps replies by position): 429,
+  or one error object answering a batch that reads as a rate limit (-32005,
+  429, or `RATE_LIMIT` text from `rpc.ts`), is a rate limit; any other
+  non-2xx status, any other non-array reply or ids that
   differ from the request's make the endpoint rest and every call of that
   request move on. Endpoints: `spec.insights.rpc`, else the last http entry
   of `network.rpc` (`insightsRpc`); a ws endpoint is asked one call per
   request. Rounds still run only while ingest is `Live`, and while ingest is
   `Degraded` the endpoints it shares are slowed (`backOffShared`). Each pool
   endpoint has its own `Pacer` (`INSIGHTS_RPC_PACE`), one request (batch)
-  at a time: starts at 4 requests/s (`startMs` 250), halves on -32005/429,
-  relaxes 3% per answered request (`RELAX`) up to 20/s (`minMs` 50), as slow
-  as one per 8 s (`maxMs` 8000). A transaction's sender is taken for a wallet
+  at a time: starts at 4 requests/s (`startMs` 250), halves on a rate limit
+  (-32005/429), and relaxes 3% after every request, answered or not
+  (`RELAX`: the pool hands its pacer a settled batch, so a failed request
+  counts as one that went through), up to 20/s (`minMs` 50), as slow as one
+  per 8 s (`maxMs` 8000). A call no endpoint answers is rejected with
+  `InsightRpcError` (endpoint label + viem's `shortMessage`, no `cause`):
+  viem's messages quote the URL, and an insight URL may carry an API key —
+  do not let a raw viem error from the pool reach a log. A transaction's sender is taken for a wallet
   without a `getCode` call (`insights.ts`): only the other transfer parties
   are asked about, so do not add a `getCode` for senders. A round
   whose model call fails is kept and only the model call is retried
@@ -330,6 +348,10 @@ for `UNIQUE NULLS NOT DISTINCT`).
   block; negative = that many blocks before the head **when the insight
   loop first runs** (written by the first round, `initInsightsCursor`). The
   insights cursor is written once per schema; later edits change nothing.
+  Set starts are floored at block 0, not at the ingest start: the ingest
+  start the worker sees is resolved per boot (`main.ts`; this boot's head
+  for a tail-mode or negative contract `startBlock`), and flooring at it
+  would skip rows.
 - Ruled lanes (no model call): `issuance`, `spam`, `uncertain` (Radar's) and
   `no_transfer` — a non-transfer event whose tx logged no Transfer /
   TransferSingle / TransferBatch and sent no value. Added after a 5-contract
