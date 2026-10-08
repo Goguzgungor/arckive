@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addressHeadline, barTitle, chartBars, netOf, topLane } from '../lib/addrstory.js';
+import { addressHeadline, barTitle, chartBars, emptyAddressText, netOf, rollupBehind, topLane } from '../lib/addrstory.js';
 import type { AddressTotals } from '../lib/address.js';
 
 const T = (over: Partial<AddressTotals> = {}): AddressTotals => ({
@@ -31,6 +31,20 @@ describe('address sentences', () => {
   it('nets in minus out exactly', () => {
     expect(netOf(T())).toBe('261.07');
     expect(netOf(T({ inValue: '0', outValue: '5' }))).toBe('-0.000000000000000005');
+  });
+});
+
+describe('an address without totals', () => {
+  it('says the totals are still being added while the rollup is behind', () => {
+    expect(rollupBehind(24_000_000, 24_000_120)).toBe(false); // one round behind is steady state
+    expect(rollupBehind(24_000_000, 24_000_121)).toBe(true);
+    expect(rollupBehind(null, 24_000_121)).toBe(false);
+    expect(emptyAddressText(true, 24_000_000, 25_000_000)).toBe('Totals are still being added (up to block 24,000,000).');
+    expect(emptyAddressText(true, null, 25_000_000)).toBe('Totals are still being added.');
+  });
+  it('says there was no movement once the rollup has caught up, or for an unknown address', () => {
+    expect(emptyAddressText(true, 25_000_000, 25_000_000)).toBe('No USDC movement for this address since 2026-05-15.');
+    expect(emptyAddressText(false, 24_000_000, 25_000_000)).toBe('No USDC movement for this address since 2026-05-15.');
   });
 });
 

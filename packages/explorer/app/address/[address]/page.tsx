@@ -9,7 +9,7 @@ import { Masthead } from '../../../components/Masthead.js';
 import { Parts } from '../../../components/Parts.js';
 import { Status } from '../../../components/Status.js';
 import { addressId, days, history, parseBefore, recent, totals } from '../../../lib/address.js';
-import { addressHeadline, netOf, topLane } from '../../../lib/addrstory.js';
+import { addressHeadline, emptyAddressText, netOf, rollupBehind, topLane } from '../../../lib/addrstory.js';
 import {
   fmtAmount, fmtDateLong, fmtDay, fmtInt, fmtSigned, fmtStamp, pct, shortAddr, unitsToDecimal,
 } from '../../../lib/format.js';
@@ -24,10 +24,6 @@ type Props = {
   params: Promise<{ address: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
-
-// The rollup lags the worker by up to a round (2 s) in steady state; further
-// behind, the totals say how far they reach.
-const ROLLUP_SLACK = 120;
 
 const usdc = (raw: string): string => fmtAmount(unitsToDecimal(raw));
 
@@ -61,7 +57,7 @@ export default async function AddressPage({ params, searchParams }: Props) {
       <>
         {shell}
         <main className="empty">
-          <p className="sub">No USDC movement for this address since 2026-05-15.</p>
+          <p className="sub">{emptyAddressText(id !== null, rt.rolledTo, rt.head?.block ?? null)}</p>
         </main>
       </>
     );
@@ -72,7 +68,7 @@ export default async function AddressPage({ params, searchParams }: Props) {
     history(rt.pool, rt.t, lanesOn, id, before),
     recent(rt.pool, rt.t, lanesOn, id),
   ]);
-  const behind = rt.rolledTo !== null && rt.head !== null && rt.rolledTo < rt.head.block - ROLLUP_SLACK;
+  const behind = rollupBehind(rt.rolledTo, rt.head?.block ?? null);
   const laneTotal = Object.values(rec.lanes).reduce((a, b) => a + b, 0);
   return (
     <>

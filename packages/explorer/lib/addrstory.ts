@@ -31,6 +31,24 @@ export function addressHeadline(a: { address: string; totals: AddressTotals; top
   return parts;
 }
 
+// The rollup lags the worker by up to a round (2 s) in steady state; further
+// behind, the totals say how far they reach.
+const ROLLUP_SLACK = 120;
+
+export function rollupBehind(rolledTo: number | null, headBlock: number | null): boolean {
+  return rolledTo !== null && headBlock !== null && rolledTo < headBlock - ROLLUP_SLACK;
+}
+
+// An address with no totals. A known address (it is in the worker's
+// _addresses) whose rows the rollup has not reached yet must not read as
+// one that never moved USDC; once the rollup has caught up, it is one (it
+// appears in pool events only).
+export function emptyAddressText(known: boolean, rolledTo: number | null, headBlock: number | null): string {
+  if (known && rolledTo === null) return 'Totals are still being added.';
+  if (known && rollupBehind(rolledTo, headBlock)) return `Totals are still being added (up to block ${fmtInt(rolledTo!)}).`;
+  return 'No USDC movement for this address since 2026-05-15.';
+}
+
 export function netOf(t: AddressTotals): string {
   return unitsToDecimal(BigInt(t.inValue) - BigInt(t.outValue));
 }
