@@ -90,8 +90,11 @@ button.linklike { background: none; border: 0; padding: 0; font: inherit; color:
 .node .k { display: block; font: 500 10.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
 .node .v { display: block; font: 13px var(--mono); margin-top: 6px; }
 .node .v.named { font: 500 14px var(--sans); }
-.edge { flex: 1; min-width: 78px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0 6px; }
-.edge .amt { text-align: center; }
+/* an edge is at least as wide as its amount (which never wraps); a chain
+   wider than the column scrolls inside .flow */
+.edge { flex: 1 0 auto; min-width: 78px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0 4px; }
+/* 16 px: a four-node chain of hundreds fits the 1440 px column without scrolling */
+.edge .amt { text-align: center; font-size: 16px; }
 .edge .line { width: 100%; height: 1px; background: var(--ink); position: relative; margin: 6px 0; }
 .edge .line::after { content: ''; position: absolute; right: -1px; top: -4px; border-left: 8px solid var(--ink); border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; }
 .edge .log { font: 11px var(--mono); color: var(--faint); }
