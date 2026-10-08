@@ -15,6 +15,9 @@ export default defineConfig({
     url: 'http://127.0.0.1:3107/api/health',
     timeout: 240_000,
     reuseExistingServer: false,
+    // serve.ts stops the feed, Next and the container on SIGTERM; Playwright's
+    // default is SIGKILL, which would skip that and orphan the container.
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     stdout: 'pipe',
     stderr: 'pipe',
   },
