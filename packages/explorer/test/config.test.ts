@@ -24,7 +24,7 @@ describe('loadConfig', () => {
 
   it('refuses a missing DATABASE_URL', () => {
     expect(() => loadConfig({})).toThrow(ConfigError);
-    expect(() => loadConfig({})).toThrow(/DATABASE_URL/);
+    expect(() => loadConfig({})).toThrow(/DATABASE_URL is required/);
   });
 
   it('refuses identifiers the worker would never write', () => {

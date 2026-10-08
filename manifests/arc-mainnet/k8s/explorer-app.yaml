@@ -28,6 +28,8 @@ spec:
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: explorer-dsn, key: url } }
             - { name: ARCKIVE_SCHEMA, value: idx_arc_explorer }
+            # kubelet sets HOSTNAME to the pod name, which would override the image's 0.0.0.0 and make Next bind to the pod IP only
+            - { name: HOSTNAME, value: 0.0.0.0 }
           ports: [{ containerPort: 3000 }]
           # Serving, not "database up": while the database is down the pages
           # themselves say so, which a removed endpoint could not.

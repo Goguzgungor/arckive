@@ -8,7 +8,7 @@ export class ConfigError extends Error {}
 const Ident = z.string().regex(/^[a-z_][a-z0-9_]*$/, 'must be a lowercase SQL identifier');
 
 const EnvSchema = z.object({
-  DATABASE_URL: z.string().min(1, 'is required'),
+  DATABASE_URL: z.string({ required_error: 'is required' }).min(1, 'is required'),
   ARCKIVE_SCHEMA: Ident.default('idx_arc_explorer'),
   USDC_TABLE: Ident.default('usdc_transfer'),
   POOL_TABLE_PREFIX: Ident.default('poolmanager_'),
