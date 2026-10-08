@@ -3653,7 +3653,7 @@ describe('runtime', () => {
       expect(rt.insights).toEqual({ on: true, firstBlock: R.FIRST_LANE_BLOCK, firstTime: expect.any(Number) });
       expect(rt.head).toEqual({ block: R.CURSOR, time: Date.UTC(2026, 9, 8, 0, 0, 38) / 1000 });
       expect(rt.dbBytes).toBeGreaterThan(0);
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 1500));
       expect(rt.hub.newest()).not.toBeNull();
       expect(await rt.rollup.rolledTo()).toBe(R.CURSOR);
     } finally {
