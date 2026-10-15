@@ -2,6 +2,7 @@ import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { subscribeNewHeads } from '../src/ws.js';
 import { startAnvil, type AnvilHandle } from './helpers/anvil.js';
+import { acceptSubscribe, headFrame, startFakeWs } from './helpers/wsserver.js';
 
 const log = pino({ level: 'silent' });
 
@@ -80,5 +81,89 @@ describe('subscribeNewHeads', () => {
     await until(() => states.includes(false));
     sub.close();
     expect(states.at(-1)).toBe(false);
+  });
+});
+
+describe('subscribeNewHeads against an endpoint anvil cannot imitate', () => {
+  it('frames that are not JSON-RPC text are ignored and the subscription keeps delivering heads', async () => {
+    const srv = await startFakeWs((sock) =>
+      acceptSubscribe(sock, () => {
+        sock.send('<html>502 Bad Gateway</html>');
+        sock.send(Buffer.from([1, 2, 3]));
+        sock.send('null');
+        sock.send('"keepalive"');
+        sock.send(headFrame(7));
+      }),
+    );
+    const heads: bigint[] = [];
+    const states: boolean[] = [];
+    const sub = subscribeNewHeads({
+      wsUrls: [srv.url],
+      onHead: (head) => {
+        if (head) heads.push(head.number);
+      },
+      onStateChange: (c) => states.push(c),
+      log,
+    });
+    await until(() => heads.length >= 1);
+    sub.close();
+    await srv.stop();
+    expect(heads).toEqual([7n]);
+    expect(states).toEqual([true]);
+  });
+
+  it('an eth_subscribe error reply is not a subscription: the endpoint stays down and is retried', async () => {
+    const states: boolean[] = [];
+    // Taken when the client reopens, before anything is said on that socket:
+    // the only state change by then would be the refused reply counted as up.
+    let statesWhenReopened: boolean[] | null = null;
+    const srv = await startFakeWs((sock, n) => {
+      if (n === 2) statesWhenReopened = states.slice();
+      sock.on('message', (data) => {
+        const m = JSON.parse(String(data)) as { id?: number; method?: string };
+        if (m.method !== 'eth_subscribe') return;
+        const reply =
+          n === 1
+            ? { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'method not supported' } }
+            : { jsonrpc: '2.0', id: m.id, result: '0x1' };
+        sock.send(JSON.stringify(reply));
+      });
+    });
+    const sub = subscribeNewHeads({
+      wsUrls: [srv.url],
+      onHead: () => {},
+      onStateChange: (c) => states.push(c),
+      log,
+    });
+    await until(() => states.includes(true), 5_000); // reopened after the 1 s backoff
+    sub.close();
+    await srv.stop();
+    expect(srv.conns.length).toBe(2);
+    expect(statesWhenReopened).toEqual([]);
+    expect(states).toEqual([true]);
+  });
+
+  it('a connection silent for idleMs is dropped and reopened', async () => {
+    const srv = await startFakeWs((sock, n) =>
+      acceptSubscribe(sock, () => {
+        if (n === 2) sock.send(headFrame(9));
+      }),
+    );
+    const states: boolean[] = [];
+    const heads: bigint[] = [];
+    const sub = subscribeNewHeads({
+      wsUrls: [srv.url],
+      idleMs: 300,
+      onHead: (head) => {
+        if (head) heads.push(head.number);
+      },
+      onStateChange: (c) => states.push(c),
+      log,
+    });
+    await until(() => heads.length >= 1, 5_000);
+    sub.close();
+    await srv.stop();
+    expect(srv.conns.length).toBeGreaterThanOrEqual(2);
+    expect(states.slice(0, 3)).toEqual([true, false, true]);
   });
 });
