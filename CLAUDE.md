@@ -230,6 +230,16 @@ runs `getFinalizedBlockNumber` in parallel with `getLogs` and commits only up to
   backoff; index 0 is the *primary* whose heads drive the hot-path target.
   `wsChainId` uses a `settled` flag to break the error→close→error recursion
   seen on Node 22/undici.
+- A WS listener must never throw: the exception surfaces as an
+  `uncaughtException` and ends the worker. `subscribeNewHeads` therefore
+  parses every frame defensively (non-JSON text, binary frames and
+  unreadable head numbers are ignored or become a payload-less wake-up),
+  treats an `eth_subscribe` error reply as a dropped connection (logged
+  with the error, retried with backoff, `ws_connected` stays 0) and drops a
+  connection silent for `idleMs` (60 s): a half-open TCP session never
+  fires `close`, and the raw WebSocket has no ping API. Each connection
+  ends through one `finish` path that detaches the handlers first, so a late
+  `close` cannot schedule a second reconnect.
 - Polling (`polling.intervalMs`) always stays on as a safety net, even with WS.
 
 ### Operator reconciliation

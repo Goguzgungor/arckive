@@ -20,6 +20,8 @@
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^11.0.3",
-    "@types/pg": "^8.15.4"
+    "@types/pg": "^8.15.4",
+    "@types/ws": "^8.18.2",
+    "ws": "^8.22.0"
   }
 }
